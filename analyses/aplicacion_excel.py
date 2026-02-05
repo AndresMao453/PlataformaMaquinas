@@ -177,6 +177,31 @@ def _parse_excel_time_series(s: pd.Series) -> pd.Series:
 
     ss = s.astype(str).str.strip()
 
+    # --- FIX: Hora puede venir float/NaN (Excel/Sheets). Convertir a texto HH:MM ---
+    def _coerce_time_str(x):
+        if pd.isna(x):
+            return ""
+        # Excel suele guardar hora como fracción del día (0..1): 0.5 => 12:00
+        if isinstance(x, (int, float, np.integer, np.floating)):
+            fx = float(x)
+            if 0 <= fx < 1.1:
+                secs = int(round(fx * 24 * 3600))
+                hh = (secs // 3600) % 24
+                mm = (secs % 3600) // 60
+                return f"{hh:02d}:{mm:02d}"
+            # A veces viene como HHMM (ej: 830, 1630)
+            if fx.is_integer():
+                n = int(fx)
+                if 0 <= n <= 2359:
+                    hh = n // 100
+                    mm = n % 100
+                    if 0 <= hh <= 23 and 0 <= mm <= 59:
+                        return f"{hh:02d}:{mm:02d}"
+            return str(x).strip()
+        return str(x).strip()
+
+    ss = ss.map(_coerce_time_str)
+
     mask_time = ss.apply(lambda x: bool(_TIME_RE.match(x)))
     out = pd.Series([None] * len(ss), index=ss.index, dtype="object")
 
