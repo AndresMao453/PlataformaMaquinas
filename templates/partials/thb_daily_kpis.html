@@ -1,0 +1,54 @@
+<div class="card" style="margin-top:14px;">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+    <div>
+      <div class="subtitle" style="margin:0;">Máquina: <b>{{ machine }}</b></div>
+      <div style="font-weight:900; font-size:20px; margin-top:6px;">
+        Indicadores {{ "diarios" if period=="day" else ("semanales" if period=="week" else "mensuales") }}
+        — {{ key_label }}
+      </div>
+    </div>
+    <button class="btn secondary" type="button" onclick="clearResults()">Ocultar</button>
+  </div>
+
+  <div class="kpi-grid" style="margin-top:14px;">
+    <div class="kpi-card kpi--buenas">
+      <p class="kpi-title">Circuitos cortados</p>
+      <p class="kpi-value">{{ "{:,}".format(k.circuitos_cortados).replace(",", ".") }}</p>
+    </div>
+
+    <div class="kpi-card kpi--totales">
+      <p class="kpi-title">Circuitos planeados</p>
+      <p class="kpi-value">{{ "{:,}".format(k.circuitos_planeados).replace(",", ".") }}</p>
+    </div>
+
+    <div class="kpi-card kpi--rechazo">
+      <p class="kpi-title">Circuitos no conformes</p>
+      <p class="kpi-value">{{ "{:,}".format(k.circuitos_no_conformes).replace(",", ".") }}</p>
+    </div>
+
+    <div class="kpi-card kpi--downtime">
+      <p class="kpi-title">Otro tiempo de ciclo (muerto)</p>
+      <p class="kpi-value">{{ k.otro_tiempo_hmm }}</p>
+    </div>
+
+    <div class="kpi-card kpi--buenas">
+      <p class="kpi-title">Tiempo efectivo</p>
+      <p class="kpi-value">{{ k.tiempo_efectivo_hmm }}</p>
+    </div>
+
+    <div class="kpi-card kpi--totales">
+      <p class="kpi-title">Metros cortados</p>
+      <p class="kpi-value">{{ "%.2f"|format(k.metros_cortados) }} m</p>
+    </div>
+
+    <div class="kpi-card kpi--codigos">
+      <p class="kpi-title">Metros planeados</p>
+      <p class="kpi-value">{{ "%.2f"|format(k.metros_planeados) }} m</p>
+    </div>
+
+    <div class="kpi-card kpi--paradas">
+      <p class="kpi-title">Metros extras</p>
+      <p class="kpi-value">{{ "%.2f"|format(k.metros_extras) }} m</p>
+    </div>
+  </div>
+</div>

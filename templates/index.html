@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h1 class="hero-title">
+    <span id="typewriter" class="typewriter"></span>
+  </h1>
+
+  <p class="muted" id="subtitle" style="display:none;">
+    Sube tu archivo Excel para comenzar el análisis.
+  </p>
+
+  <form method="post" enctype="multipart/form-data" id="uploadForm" style="display:none; margin-top:14px;">
+    <input type="file" name="file" accept=".xlsx,.xls" required>
+    <button class="btn" type="submit">Cargar Excel</button>
+  </form>
+</div>
+
+<script>
+  const lines = [
+    "Centro de Analítica de Producción",
+    "¿Qué línea del área de producción deseas analizar hoy?"
+  ];
+
+  const el = document.getElementById("typewriter");
+  const subtitle = document.getElementById("subtitle");
+  const form = document.getElementById("uploadForm");
+
+  let lineIndex = 0, charIndex = 0;
+
+  function typeNextChar() {
+    const current = lines[lineIndex];
+    el.textContent += current[charIndex];
+    charIndex++;
+
+    if (charIndex < current.length) {
+      setTimeout(typeNextChar, 25);
+    } else {
+      if (lineIndex < lines.length - 1) {
+        el.textContent += "\n";
+        lineIndex++;
+        charIndex = 0;
+        setTimeout(typeNextChar, 450);
+      } else {
+        el.classList.add("done");
+        subtitle.style.display = "block";
+        form.style.display = "block";
+      }
+    }
+  }
+
+  typeNextChar();
+</script>
+
+{% endblock %}

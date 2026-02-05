@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="top-header">
+  <div class="card" style="padding:18px 22px;">
+    <div class="title-blue" style="font-size:48px; margin:0;">
+      {{ line_title }}
+    </div>
+    <p class="subtitle" style="margin-top:6px;">{{ line_desc }}</p>
+  </div>
+</div>
+
+<div class="card fade-in" style="margin-top:16px;">
+  <div class="results-header">
+    <div>
+      <div class="subtitle" style="margin:0;">Máquina: <b>{{ machine }}</b></div>
+      <div style="font-weight:950; font-size:20px; margin-top:6px;">
+        Indicadores diarios — {{ day }}
+      </div>
+    </div>
+
+    <div>
+      <a class="btn secondary" href="{{ url_for('corte_config', machine='thb', filename=filename) }}">Volver</a>
+    </div>
+  </div>
+
+  <div class="kpi-grid" style="margin-top:14px;">
+    <div class="kpi-card kpi--buenas">
+      <p class="kpi-title">Circuitos Cortados</p>
+      <p class="kpi-value">{{ kpis.circuitos_cortados }}</p>
+    </div>
+
+    <div class="kpi-card kpi--totales">
+      <p class="kpi-title">Circuitos Planeados</p>
+      <p class="kpi-value">{{ kpis.circuitos_planeados }}</p>
+    </div>
+
+    <div class="kpi-card kpi--rechazo">
+      <p class="kpi-title">Circuitos No Conformes</p>
+      <p class="kpi-value">{{ kpis.circuitos_no_conformes }}</p>
+    </div>
+  </div>
+
+  <div class="kpi-grid" style="margin-top:10px;">
+    <div class="kpi-card kpi--downtime">
+      <p class="kpi-title">Otro Tiempo de Ciclo (Muerto)</p>
+      <p class="kpi-value">{{ kpis.tiempo_muerto_hmm }}</p>
+    </div>
+
+    <div class="kpi-card kpi--buenas">
+      <p class="kpi-title">Tiempo Efectivo (Día)</p>
+      <p class="kpi-value">{{ kpis.tiempo_efectivo_hmm }}</p>
+    </div>
+
+    <div class="kpi-card kpi--totales">
+      <p class="kpi-title">Metros Cortados (Día)</p>
+      <p class="kpi-value">{{ "%.2f"|format(kpis.metros_cortados) }} m</p>
+    </div>
+
+    <div class="kpi-card kpi--codigos">
+      <p class="kpi-title">Metros Planeados (Día)</p>
+      <p class="kpi-value">{{ "%.2f"|format(kpis.metros_planeados) }} m</p>
+    </div>
+
+    <div class="kpi-card kpi--paradas">
+      <p class="kpi-title">Metros Extras (Día)</p>
+      <p class="kpi-value">{{ "%.2f"|format(kpis.metros_extras) }} m</p>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card fade-in" style="padding:18px 22px;">
+  <div class="row" style="align-items:center; justify-content:space-between; gap:18px;">
+    <div>
+      <div class="title-blue" style="font-size:48px; margin:0;">📊 Análisis de Productividad de Corte</div>
+      <p class="subtitle" style="margin-top:6px;">Indicadores diarios (THB) • Día: <b>{{ day }}</b></p>
+    </div>
+    <div>
+      <a class="btn secondary" href="{{ url_for('corte_config', filename=filename, machine=machine) }}">Volver</a>
+    </div>
+  </div>
+</div>
+
+<div class="card fade-in" style="padding:18px 22px;">
+  <div class="kpi-grid">
+    <div class="kpi-card kpi--buenas">
+      <div class="kpi-title">Circuitos Cortados</div>
+      <div class="kpi-value">{{ kpis["Circuitos Cortados"] }}</div>
+    </div>
+
+    <div class="kpi-card kpi--totales">
+      <div class="kpi-title">Circuitos Planeados</div>
+      <div class="kpi-value">{{ kpis["Circuitos Planeados"] }}</div>
+    </div>
+
+    <div class="kpi-card kpi--rechazo">
+      <div class="kpi-title">Circuitos No Conformes</div>
+      <div class="kpi-value">{{ kpis["Circuitos No Conformes"] }}</div>
+    </div>
+
+    <div class="kpi-card kpi--downtime">
+      <div class="kpi-title">Otro Tiempo de Ciclo (Muerto)</div>
+      <div class="kpi-value">{{ kpis["Otro Tiempo de Ciclo (Muerto)"] }}</div>
+    </div>
+
+    <div class="kpi-card kpi--buenas">
+      <div class="kpi-title">Tiempo Efectivo (Día)</div>
+      <div class="kpi-value">{{ kpis["Tiempo Efectivo (Día)"] }}</div>
+    </div>
+
+    <div class="kpi-card kpi--totales">
+      <div class="kpi-title">Metros Cortados (Día)</div>
+      <div class="kpi-value">{{ kpis["Metros Cortados (Día)"] }}</div>
+    </div>
+
+    <div class="kpi-card kpi--codigos">
+      <div class="kpi-title">Metros Planeados (Día)</div>
+      <div class="kpi-value">{{ kpis["Metros Planeados (Día)"] }}</div>
+    </div>
+
+    <div class="kpi-card kpi--paradas">
+      <div class="kpi-title">Metros Extras (Día)</div>
+      <div class="kpi-value">{{ kpis["Metros Extras (Día)"] }}</div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

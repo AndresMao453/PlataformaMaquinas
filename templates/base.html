@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ title or "Plataforma de Análisis" }}</title>
+
+  <!-- ✅ Chart.js necesario para el Pareto -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <style>
+    *{ box-sizing:border-box }
+
+    /* ✅ antes: body tenía max-width:1100px y eso dañaba el centrado/tamaño */
+    body{
+      font-family:system-ui,Arial;
+      margin:0;
+      background:#ffffff;
+      color:#0f172a;
+    }
+
+    /* contenedor general por página */
+    .container{
+      width: min(1400px, 96vw);
+      margin: 0 auto;
+      padding: 24px 0;
+    }
+
+    /* base */
+    .card{
+      padding:16px;
+      border:1px solid #ddd;
+      border-radius:12px;
+      margin-bottom:16px;
+      background:#fff;
+    }
+    .row{
+      display:flex;
+      gap:16px;
+      flex-wrap:wrap;
+      align-items:stretch;
+      justify-content:center;
+    }
+    a{ color:inherit; } /* evita azul default */
+
+    .btn{
+      padding:10px 14px;border-radius:10px;border:1px solid #444;
+      background:#111;color:#fff;cursor:pointer;text-decoration:none;display:inline-block
+    }
+    .btn.secondary{background:#fff;color:#111;border:1px solid #bbb}
+
+    .flash{padding:12px 14px;border-radius:12px;margin:16px auto;width:min(1400px,96vw)}
+    .flash.error{background:#ffe7e7;border:1px solid #ffb3b3}
+
+    input[type="file"], select, input[type="time"]{
+      padding:8px 10px;border-radius:10px;border:1px solid #ccc;outline:none;
+    }
+
+    /* home layout */
+    .page-center{
+      min-height: calc(100vh - 48px);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding: 26px 0;
+    }
+
+    /* ✅ panel más ancho y centrado */
+    .panel{
+      width: min(1500px, 96vw);
+      margin: 0 auto;
+    }
+
+    /* ✅ card principal más grande */
+    .home-card{
+      padding: 34px 38px;
+      border-radius: 20px;
+      box-shadow: 0 12px 26px rgba(0,0,0,0.06);
+      border: 1px solid #e6e6e6;
+    }
+
+    .title-blue{
+      font-size:44px;line-height:1.05;margin:0 0 10px 0;
+      color:#1e66ff;font-weight:950;letter-spacing:-0.8px;
+    }
+    .home-title{
+      font-size: 64px;
+      margin: 0 0 14px 0;
+    }
+
+    .subtitle{color:#555;margin:0;font-size:15px}
+    .home-subtitle{ font-size: 16px; }
+
+    .typewriter{
+      display:inline-block;
+      border-right: 3px solid currentColor;
+      padding-right: 8px;
+      animation: caret 0.9s steps(1) infinite;
+      white-space: pre-line;
+    }
+    .typewriter.done{ border-right:none; animation:none; }
+    @keyframes caret{ 50%{ border-color: transparent; } }
+
+    .fade-in{ animation: fadeInUp .35s ease both; }
+    @keyframes fadeInUp{
+      from{ opacity:0; transform: translateY(8px); }
+      to{ opacity:1; transform: translateY(0); }
+    }
+
+    /* ✅ TARJETAS HOME */
+    .option-card{
+      padding:20px 20px;
+      border:1px solid #e6e6e6;
+      border-radius:20px;
+      min-width:320px;
+      max-width: 360px;
+      text-decoration:none;
+      color:inherit;
+      display:block;
+      position:relative;
+      overflow:hidden;
+      transition: transform .12s ease, box-shadow .12s ease;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.05);
+    }
+    .option-card:hover{
+      transform: translateY(-3px);
+      box-shadow: 0 16px 28px rgba(0,0,0,0.10);
+    }
+    .option-card::before{
+      content:"";
+      position:absolute;
+      inset:0;
+      opacity:.12;
+    }
+    .option-card.corte::before{ background: linear-gradient(135deg, #1e66ff, #67b7ff); }
+    .option-card.aplicacion::before{ background: linear-gradient(135deg, #00a87e, #7ff0d7); }
+    .option-card.continuidad::before{ background: linear-gradient(135deg, #ff8a00, #ffd36a); }
+
+    .pill{
+      display:inline-block;
+      font-size:12px;
+      padding:5px 12px;
+      border-radius:999px;
+      border:1px solid rgba(0,0,0,0.15);
+      background: rgba(255,255,255,0.78);
+      margin-bottom:10px;
+    }
+    .option-title{ font-weight:950; font-size:24px; margin: 6px 0 8px 0; }
+    .option-desc{ color:#374151; font-size:14px; margin:0; }
+
+    /* ======= RESTO DE TU CSS (máquinas, periodos, etc.) ======= */
+    .machine-grid{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px}
+    .machine-card{
+      flex:1;min-width:260px;border:1px solid #e6e6e6;border-radius:16px;
+      padding:14px;cursor:pointer;transition:.12s;
+      box-shadow:0 6px 14px rgba(0,0,0,.04);
+      background:#fff;
+    }
+    .machine-card:hover{transform:translateY(-2px);box-shadow:0 12px 22px rgba(0,0,0,.08)}
+    .machine-card.selected{outline:3px solid rgba(30,102,255,.35)}
+    .machine-card.hp{background:rgba(30,102,255,0.10)}
+    .machine-card.thb{background:rgba(0,168,126,0.10)}
+    .machine-name{font-weight:950;font-size:22px;margin-bottom:4px}
+    .machine-desc{margin:0;font-size:13px;color:#333}
+
+    .period-card{
+      border:1px solid #e6e6e6;border-radius:16px;padding:12px;cursor:pointer;background:#fff;
+      box-shadow:0 6px 14px rgba(0,0,0,.04);transition:.12s;min-height:82px;
+      display:flex;flex-direction:column;justify-content:flex-end
+    }
+    .period-card:hover{transform:translateY(-2px);box-shadow:0 12px 22px rgba(0,0,0,.08)}
+    .period-card.selected{outline:3px solid rgba(30,102,255,.35)}
+    .period-title{font-weight:950;font-size:16px}
+    .period-desc{margin:4px 0 0 0;font-size:13px;color:#444}
+
+    .time-grid{
+      display:grid;
+      grid-template-columns: 1fr 1fr 1fr 360px 160px;
+      gap:14px;
+      align-items:stretch;
+      margin-top:8px;
+    }
+    .select-box{display:flex;flex-direction:column;justify-content:flex-end;gap:6px}
+    .select-box select{height:52px;padding:10px 12px;border-radius:12px;border:1px solid #d6d6d6;background:#fff}
+    .action-box{display:flex;align-items:flex-end;justify-content:flex-start}
+
+    .thb-filters{
+      display:grid;
+      grid-template-columns: 360px 180px 180px 160px;
+      gap:14px;
+      align-items:end;
+      margin-top:12px;
+    }
+    .thb-filters select{height:52px;border-radius:12px}
+    .thb-filters input[type="time"]{height:52px;border-radius:12px;padding:10px 12px}
+
+    @media (max-width: 1100px){
+      .home-title{ font-size: 52px; }
+      .option-card{ min-width: 280px; }
+
+      .time-grid{grid-template-columns:1fr 1fr 1fr}
+      .select-box{grid-column:1/3}
+      .action-box{grid-column:3/4;justify-content:flex-end}
+      .thb-filters{grid-template-columns:1fr 1fr;}
+    }
+    @media (max-width: 760px){
+      .home-card{ padding: 26px 22px; }
+      .home-title{ font-size: 40px; }
+
+      .time-grid{grid-template-columns:1fr}
+      .thb-filters{grid-template-columns:1fr}
+    }
+
+    /* ====== VIDA UI (selector periodo + filtros) ====== */
+    :root{
+      --blue:#1e66ff;
+      --blueSoft: rgba(30,102,255,.18);
+      --border:#e6e6e6;
+      --text:#0f172a;
+      --muted:#6b7280;
+    }
+
+    .card{
+      border:1px solid var(--border);
+      box-shadow: 0 12px 26px rgba(0,0,0,.06);
+    }
+
+    h3{
+      font-size: 20px;
+      letter-spacing: -0.2px;
+    }
+
+    .period-card{
+      position:relative;
+      overflow:hidden;
+      border-radius:18px;
+      border:1px solid var(--border);
+      background: linear-gradient(180deg, #ffffff 0%, #fbfcff 100%);
+      box-shadow: 0 10px 18px rgba(0,0,0,.05);
+    }
+
+    .period-card::after{
+      content:"";
+      position:absolute;
+      inset:-1px;
+      opacity:0;
+      transition: opacity .15s ease;
+      background: radial-gradient(800px 180px at 20% 0%, rgba(30,102,255,.16), transparent 60%);
+      pointer-events:none;
+    }
+
+    .period-card:hover{
+      transform: translateY(-3px);
+      box-shadow: 0 18px 30px rgba(0,0,0,.10);
+    }
+
+    .period-card:hover::after{ opacity:1; }
+
+    .period-card.selected{
+      outline:none;
+      border-color: rgba(30,102,255,.55);
+      box-shadow: 0 18px 34px rgba(30,102,255,.14);
+    }
+
+    .period-title{
+      font-size: 16px;
+      font-weight: 950;
+      color: var(--text);
+    }
+
+    .period-desc{
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .select-box label b{
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    .select-box select,
+    .thb-filters select,
+    .thb-filters input[type="time"]{
+      border:1px solid #dbe2ee;
+      background: #fff;
+      box-shadow: 0 8px 18px rgba(0,0,0,.04);
+      transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+    }
+
+    .select-box select:hover,
+    .thb-filters select:hover,
+    .thb-filters input[type="time"]:hover{
+      transform: translateY(-1px);
+      box-shadow: 0 14px 26px rgba(0,0,0,.08);
+    }
+
+    .select-box select:focus,
+    .thb-filters select:focus,
+    .thb-filters input[type="time"]:focus{
+      suggests: none;
+      border-color: rgba(30,102,255,.55);
+      box-shadow: 0 0 0 6px var(--blueSoft), 0 14px 26px rgba(0,0,0,.08);
+    }
+
+    #thbFilters{
+      margin-top: 14px;
+    }
+    .thb-filters{
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, #ffffff 0%, #fbfcff 100%);
+      box-shadow: 0 12px 24px rgba(0,0,0,.06);
+    }
+
+    .btn.secondary{
+      border-radius: 12px;
+      border: 1px solid #dbe2ee;
+      box-shadow: 0 10px 18px rgba(0,0,0,.05);
+    }
+    .btn.secondary:hover{
+      transform: translateY(-1px);
+      box-shadow: 0 16px 28px rgba(0,0,0,.10);
+    }
+
+    @keyframes popIn {
+      from{ opacity:0; transform: translateY(6px); }
+      to{ opacity:1; transform: translateY(0); }
+    }
+    #thbFilters[style*="display: block"] .thb-filters{
+      animation: popIn .18s ease both;
+    }
+
+    /* ✅ bloque pareto (solo estilos opcionales) */
+    .pareto-card{
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, #ffffff 0%, #fbfcff 100%);
+      box-shadow: 0 12px 24px rgba(0,0,0,.06);
+      margin-top: 10px;
+    }
+
+    /* ✅ HOME: Ciclo/Aplicadores */
+    .option-card.ciclo{
+      background:#f3efff;                         /* moradito suave */
+      border:1px solid rgba(124,58,237,.18);
+    }
+    .option-card.ciclo::before{
+      background: linear-gradient(135deg, #7c3aed, #c084fc);
+    }
+    .option-card.ciclo .pill{
+      background: rgba(124,58,237,.12);
+      border: 1px solid rgba(124,58,237,.25);
+      color:#5b21b6;
+    }
+
+
+
+  </style>
+</head>
+
+<body>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for cat,msg in messages %}
+        <div class="flash {{cat}}">{{ msg }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <div class="container">
+    {% block content %}{% endblock %}
+  </div>
+
+</body>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</html>

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2>Previsualización</h2>
+  <p><b>Archivo:</b> {{ filename }} | <b>Hoja:</b> {{ sheet }}</p>
+  <div style="overflow:auto;max-height:520px">
+    {{ table_html | safe }}
+  </div>
+  <div style="margin-top:12px">
+    <a class="btn secondary" href="{{ url_for('home') }}">Volver al inicio</a>
+  </div>
+</div>
+{% endblock %}

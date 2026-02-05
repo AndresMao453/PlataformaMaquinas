@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-center">
+  <div class="panel">
+    <div class="card fade-in">
+      <h1 class="title-blue">
+        <span id="typeTitle" class="typewriter"></span>
+      </h1>
+
+      <p class="subtitle">
+        <span id="typeSub" class="typewriter"></span>
+      </p>
+
+      <div class="row" style="margin-top:22px; justify-content:center;">
+
+        <!-- ✅ Disponible -->
+        <a class="option-card corte" href="{{ url_for('line_start', line_key='corte') }}">
+          <div class="pill">Disponible</div>
+          <div class="option-title">Corte</div>
+          <p class="option-desc">Productividad, tiempos, KPIs y validaciones.</p>
+        </a>
+
+        <!-- ✅ AHORA DISPONIBLE (entra a /line/aplicacion) -->
+        <a class="option-card aplicacion" href="{{ url_for('line_start', line_key='aplicacion') }}">
+          <div class="pill">Disponible</div>
+          <div class="option-title">Aplicación</div>
+          <p class="option-desc">Crimpados, paradas y métricas operativas.</p>
+        </a>
+
+        <!-- 🚧 Próximamente (sin navegar) -->
+        <a class="option-card continuidad" href="#"
+           onclick="event.preventDefault(); alert('🚧 Continuidad: próximamente.');">
+          <div class="pill">Próximamente</div>
+          <div class="option-title">Continuidad</div>
+          <p class="option-desc">Resultados / Fallas de Continuidad.</p>
+        </a>
+
+        </div>  <!-- CIERRA la row de Corte/Aplicación/Continuidad -->
+
+        <div class="row" style="margin-top:16px; justify-content:center;">
+          <a class="option-card ciclo" href="{{ url_for('line_start', line_key='ciclo_aplicadores') }}">
+            <div class="pill">Disponible</div>
+            <div class="option-title">Ciclo/Aplicadores</div>
+            <p class="option-desc">Terminales usados (agregado de 4 máquinas) y métricas de ciclo.</p>
+          </a>
+          <style>
+          /* HOME: Ciclo/Aplicadores (tu clase real: line-card ciclo-card) */
+          a.line-card.ciclo-card{
+            background:#f3efff !important;
+            border:1px solid rgba(124,58,237,.18) !important;
+          }
+
+          a.line-card.ciclo-card .pill{
+            background: rgba(124,58,237,.12) !important;
+            border: 1px solid rgba(124,58,237,.25) !important;
+            color:#5b21b6 !important;
+          }
+          </style>
+
+        </div>
+
+
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const titleText = "Centro de Analítica de Producción";
+  const subText   = "Selecciona la línea del área de producción que deseas analizar:";
+
+  const elTitle = document.getElementById("typeTitle");
+  const elSub = document.getElementById("typeSub");
+
+  function type(el, text, speed=18){
+    el.textContent = "";
+    el.classList.remove("done");
+    let i = 0;
+    function step(){
+      el.textContent += text[i];
+      i++;
+      if(i < text.length) setTimeout(step, speed);
+      else el.classList.add("done");
+    }
+    step();
+  }
+
+  type(elTitle, titleText, 16);
+  setTimeout(() => type(elSub, subText, 10), 520);
+</script>
+
+{% endblock %}

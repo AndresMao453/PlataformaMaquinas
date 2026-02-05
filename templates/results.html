@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card" style="padding:18px 22px;">
+  <div class="title-blue" style="font-size:44px; margin:0;">
+    {{ analysis_title }}
+  </div>
+  <p class="subtitle" style="margin-top:6px;">
+    Máquina: <b>{{ result.machine or "" }}</b>
+    {% if result.period and result.period_value %}
+      — Periodo: <b>{{ result.period }}</b> (<b>{{ result.period_value }}</b>)
+    {% endif %}
+    {% if result.operator %} — Operaria: <b>{{ result.operator }}</b>{% endif %}
+    {% if result.time_start and result.time_end %}
+      — Hora: <b>{{ result.time_start }}</b> a <b>{{ result.time_end }}</b>
+    {% endif %}
+  </p>
+</div>
+
+{# =========================
+   PRIORIDAD 1: result.display (tu estructura vieja)
+   ========================= #}
+{% if result.display %}
+
+  <div class="kpi-grid" style="margin-top:14px;">
+    <div class="kpi-card kpi-green">
+      <div class="kpi-title">CIRCUITOS CORTADOS</div>
+      <div class="kpi-value">{{ result.display.circuits_cut }}</div>
+    </div>
+
+    <div class="kpi-card kpi-cyan">
+      <div class="kpi-title">CIRCUITOS PLANEADOS</div>
+      <div class="kpi-value">{{ result.display.circuits_planned }}</div>
+    </div>
+
+    <div class="kpi-card kpi-red">
+      <div class="kpi-title">CIRCUITOS NO CONFORMES</div>
+      <div class="kpi-value">{{ result.display.circuits_nonconforming }}</div>
+    </div>
+
+    <div class="kpi-card kpi-blue">
+      <div class="kpi-title">OTRO TIEMPO DE CICLO (MUERTO)</div>
+      <div class="kpi-value">{{ result.display.dead_time }}</div>
+    </div>
+
+    <div class="kpi-card kpi-green2">
+      <div class="kpi-title">TIEMPO EFECTIVO</div>
+      <div class="kpi-value">{{ result.display.effective_time }}</div>
+    </div>
+
+    <div class="kpi-card kpi-cyan2">
+      <div class="kpi-title">METROS CORTADOS</div>
+      <div class="kpi-value">{{ result.display.meters_cut }}</div>
+    </div>
+
+    <div class="kpi-card kpi-purple">
+      <div class="kpi-title">METROS PLANEADOS</div>
+      <div class="kpi-value">{{ result.display.meters_planned }}</div>
+    </div>
+
+    <div class="kpi-card kpi-blue2">
+      <div class="kpi-title">METROS EXTRAS</div>
+      <div class="kpi-value">{{ result.display.meters_extra }}</div>
+    </div>
+  </div>
+
+{# =========================
+   PRIORIDAD 2: result.kpis_ui (tu estructura nueva)
+   ========================= #}
+{% elif result.kpis_ui %}
+
+  <div class="kpi-grid" style="margin-top:14px;">
+    {% for k, v in result.kpis_ui.items() %}
+      <div class="kpi-card">
+        <div class="kpi-title">{{ k }}</div>
+        <div class="kpi-value">{{ v }}</div>
+      </div>
+    {% endfor %}
+  </div>
+
+{# =========================
+   FALLBACK: debug
+   ========================= #}
+{% else %}
+
+  <div class="card" style="margin-top:14px;">
+    <h2 style="margin:0 0 8px 0;">Resultado (debug)</h2>
+    <pre style="white-space:pre-wrap">{{ result | tojson(indent=2) }}</pre>
+  </div>
+
+{% endif %}
+
+<div class="card" style="margin-top:14px;">
+  <a class="btn secondary" href="{{ url_for('home') }}">Volver al inicio</a>
+</div>
+
+{% endblock %}

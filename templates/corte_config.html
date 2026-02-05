@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="top-header">
+  <div class="card" style="padding:18px 22px;">
+    <div class="title-blue" style="font-size:48px; margin:0;">
+      {{ line_title }}
+    </div>
+    <p class="subtitle" style="margin-top:6px;">{{ line_desc }}</p>
+  </div>
+</div>
+
+<div class="card fade-in" style="margin-top:16px;">
+  <div class="config-row">
+    <div class="left-block">
+      <p class="subtitle" style="margin:0 0 8px 0;">Máquina: <b>{{ machine }}</b></p>
+      <div style="font-weight:900; font-size:18px; margin:0 0 12px 0;">
+        ¿Cómo deseas analizar el tiempo?
+      </div>
+
+      <div class="period-grid">
+        <div class="period-card" data-period="day" onclick="selectPeriod('day', this)">
+          <div class="period-title">🗓️ Por Día</div>
+          <div class="period-desc">Agrupa por fecha.</div>
+        </div>
+        <div class="period-card" data-period="week" onclick="selectPeriod('week', this)">
+          <div class="period-title">🗓️ Por Semana</div>
+          <div class="period-desc">Agrupa semanalmente.</div>
+        </div>
+        <div class="period-card" data-period="month" onclick="selectPeriod('month', this)">
+          <div class="period-title">🗓️ Por Mes</div>
+          <div class="period-desc">Agrupa por mes.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="right-block">
+      <div style="font-weight:900; margin-bottom:6px;">Días disponibles</div>
+      <select id="optionsSelect" disabled onchange="runSelected()">
+        <option value="">Cargando…</option>
+      </select>
+      <div style="margin-top:10px;">
+        <a class="btn secondary" href="{{ url_for('home') }}">Cambiar línea</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const filename = "{{ filename }}";
+  const machine = "{{ machine }}"; // THB o HP
+  let periodsCache = {days:[], weeks:[], months:[]};
+  let currentPeriod = "day";
+
+  const endpoint = (machine === "THB")
+    ? "{{ url_for('api_thb_periods') }}"
+    : "{{ url_for('api_hp_periods') }}";
+
+  async function loadPeriods(){
+    const url = `${endpoint}?filename=${encodeURIComponent(filename)}`;
+    const res = await fetch(url);
+    const data = await res.json();
+
+    if(!data.ok){
+      alert("Error cargando períodos: " + (data.error || "desconocido"));
+      return;
+    }
+    periodsCache.days = data.days || [];
+    periodsCache.weeks = data.weeks || [];
+    periodsCache.months = data.months || [];
+
+    // por defecto: día
+    selectPeriod("day", document.querySelector(".period-card[data-period='day']"));
+  }
+
+  function selectPeriod(period, el){
+    currentPeriod = period;
+    document.querySelectorAll(".period-card").forEach(c => c.classList.remove("selected"));
+    el.classList.add("selected");
+
+    const select = document.getElementById("optionsSelect");
+    select.disabled = false;
+
+    const list = (period === "day") ? periodsCache.days
+               : (period === "week") ? periodsCache.weeks
+               : periodsCache.months;
+
+    select.innerHTML = "";
+    if(!list.length){
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "No hay registros para este periodo";
+      select.appendChild(opt);
+      select.disabled = true;
+      return;
+    }
+
+    const ph = document.createElement("option");
+    ph.value = "";
+    ph.textContent = "Selecciona…";
+    select.appendChild(ph);
+
+    list.forEach(v=>{
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = v;
+      select.appendChild(opt);
+    });
+  }
+
+  function runSelected(){
+    const val = document.getElementById("optionsSelect").value;
+    if(!val) return;
+
+    if(machine === "THB"){
+      if(currentPeriod === "day"){
+        window.location = `/corte/thb/daily?filename=${encodeURIComponent(filename)}&day=${encodeURIComponent(val)}`;
+        return;
+      }
+      alert("Semana/Mes aún en construcción (THB). Por ahora usa Por Día.");
+      return;
+    }
+
+    alert("HP aún en construcción.");
+  }
+
+  loadPeriods();
+</script>
+
+{% endblock %}

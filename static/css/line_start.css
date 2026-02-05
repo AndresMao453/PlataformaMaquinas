@@ -1,0 +1,1485 @@
+/* === KPI CARDS (mismo estilo que results.html) === */
+.kpi-grid{
+  display:grid;
+  grid-template-columns:repeat(12, 1fr);
+  gap:18px;
+  margin-top:14px;
+}
+.kpi-card{
+  border-radius:18px;
+  padding:18px 20px;
+  background:#fff;
+  box-shadow:0 6px 16px rgba(0,0,0,.06);
+  border-left:6px solid #cbd5e1;
+  grid-column: span 4;
+}
+.kpi-title{
+  font-weight:800;
+  letter-spacing:.06em;
+  font-size:.80rem;
+  text-transform:uppercase;
+  margin:0 0 10px 0;
+}
+.kpi-value{
+  font-size:2.35rem;
+  font-weight:900;
+  margin:0;
+  color:#0f172a;
+}
+
+/* Variantes de color */
+.kpi-green{  background:#eefaf3; border-left-color:#22c55e; }
+.kpi-green .kpi-title{ color:#16a34a; }
+
+.kpi-cyan{   background:#eefcff; border-left-color:#06b6d4; }
+.kpi-cyan .kpi-title{ color:#0891b2; }
+
+.kpi-red{    background:#ffeeee; border-left-color:#ef4444; }
+.kpi-red .kpi-title{ color:#dc2626; }
+
+.kpi-blue{   background:#eef2ff; border-left-color:#3b82f6; }
+.kpi-blue .kpi-title{ color:#2563eb; }
+
+.kpi-green2{ background:#eefaf3; border-left-color:#10b981; }
+.kpi-green2 .kpi-title{ color:#059669; }
+
+.kpi-cyan2{  background:#eefcff; border-left-color:#0ea5e9; }
+.kpi-cyan2 .kpi-title{ color:#0284c7; }
+
+.kpi-purple{ background:#f3efff; border-left-color:#8b5cf6; }
+.kpi-purple .kpi-title{ color:#6d28d9; }
+
+.kpi-blue2{  background:#eef2ff; border-left-color:#6366f1; }
+.kpi-blue2 .kpi-title{ color:#4f46e5; }
+
+/* ===== layout de filas ===== */
+.kpi-row-3{ grid-column: span 4; }
+.kpi-row-2{ grid-column: span 6; }
+
+/* ✅ NUEVO: 3 columnas (12/4) */
+.kpi-row-4{ grid-column: span 3; }
+
+@media (max-width: 1100px){
+  .kpi-card{ grid-column: span 6; }
+  .kpi-row-2{ grid-column: span 6; }
+  .kpi-row-3{ grid-column: span 6; }
+  .kpi-row-4{ grid-column: span 6; }  /* ✅ */
+}
+@media (max-width: 760px){
+  .kpi-card{ grid-column: span 12; }
+  .kpi-row-2{ grid-column: span 12; }
+  .kpi-row-3{ grid-column: span 12; }
+  .kpi-row-4{ grid-column: span 12; } /* ✅ */
+}
+
+/* ===== Subcategoría Aplicación / Unión ===== */
+.subcat-wrap{ margin-top:12px; }
+.subcat-grid{ display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; }
+.subcat-card{
+  flex:1; min-width:260px;
+  border:1px solid #e6e6e6;border-radius:16px;
+  padding:14px;cursor:pointer;transition:.12s;
+  box-shadow:0 6px 14px rgba(0,0,0,.04);
+  background:#fff;
+}
+.subcat-card:hover{transform:translateY(-2px);box-shadow:0 12px 22px rgba(0,0,0,.08)}
+.subcat-card.selected{outline:3px solid rgba(30,102,255,.35)}
+.subcat-card.app{background:rgba(0,168,126,0.10)}
+.subcat-card.union{background:rgba(255,138,0,0.10)}
+.subcat-name{font-weight:950;font-size:20px;margin-bottom:4px}
+.subcat-desc{margin:0;font-size:13px;color:#333}
+
+
+
+/* =========================
+   DESHABILITADOS (por ahora)
+   ========================= */
+.subcat-card.disabled{
+  opacity: .55;
+  cursor: not-allowed;
+  filter: grayscale(.15);
+  position: relative;
+}
+
+.soon-badge{
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-size: 12px;
+  font-weight: 900;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(15,23,42,.10);
+  border: 1px solid rgba(15,23,42,.12);
+  color: #0f172a;
+}
+
+
+.inline-title{
+  font-size:44px;line-height:1.05;margin:10px 0 8px 0;
+  color:#1e66ff;font-weight:950;letter-spacing:-0.8px;
+}
+
+/* ===== Tabla referencia códigos Pareto ===== */
+.pareto-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:14px;
+}
+.pareto-table th, .pareto-table td{
+  border-bottom:1px solid #e5e7eb;
+  padding:10px 10px;
+  vertical-align:top;
+}
+.pareto-table th{
+  text-align:left;
+  font-weight:900;
+  color:#0f172a;
+}
+.pareto-muted{
+  color:#6b7280;
+  font-size:13px;
+  margin-top:8px;
+}
+
+/* ===== Productividad por hora (6 por fila) ===== */
+.prod-hour-grid{
+  display:grid;
+  grid-template-columns:repeat(6, minmax(0, 1fr));
+  gap:12px;
+  align-items:stretch;
+}
+
+.ph-card{
+  min-width:0;
+  background:#fff;
+  border-radius:22px;
+  border:2px solid #e5e7eb;
+  padding:12px 10px 10px 10px;
+  box-shadow:0 10px 22px rgba(0,0,0,.06);
+  text-align:center;
+}
+.ph-good{ border-color: rgba(16,185,129,.6); }
+.ph-bad{  border-color: rgba(239,68,68,.55); }
+
+.ph-hour{
+  font-size:18px;
+  font-weight:950;
+  text-decoration:none;
+  color:#1e66ff;
+  margin-bottom:6px;
+}
+.ph-circuits{
+  font-size:34px;
+  font-weight:950;
+  line-height:1;
+  margin:0;
+  color:#0f172a;
+}
+.ph-unit{
+  font-size:16px;
+  font-weight:900;
+  margin-top:2px;
+  color:#0f172a;
+}
+.ph-meters{
+  font-size:13px;
+  font-weight:800;
+  margin-top:6px;
+  color:#0f172a;
+}
+
+.ph-badges{
+  display:flex;
+  gap:10px;
+  justify-content:center;
+  flex-wrap:wrap;
+  margin-top:12px;
+}
+.ph-badge{
+  padding:7px 10px;
+  border-radius:999px;
+  font-weight:900;
+  font-size:12px;
+  border:1px solid rgba(0,0,0,.08);
+}
+.ph-badge.good{ background: rgba(16,185,129,.18); color:#064e3b; }
+.ph-badge.bad{  background: rgba(239,68,68,.14); color:#7f1d1d; }
+
+/* ===== Barra 3 segmentos (Efectivo/Otro/Comida) ===== */
+.ph-bar{ height:10px; border-radius:999px; overflow:hidden; margin:14px 10px 8px 10px; display:flex; }
+.ph-bar .seg{ height:100%; width:0%; }
+.ph-bar .seg.eff{  background: rgba(16,185,129,.35); }
+.ph-bar .seg.other{background: rgba(239,68,68,.22); }
+.ph-bar .seg.meal{ background: rgba(245,158,11,.22); }
+
+/* Badge especial para Comida (código 105) */
+.ph-badge.meal{
+  background: rgba(245,158,11,.14);
+  color:#7c2d12;
+  flex-basis:100%;
+  display:flex;
+  justify-content:center;
+}
+
+/* ✅ PEDIDO: eliminar el texto debajo "Efectivo: .. · Otro: .." */
+.ph-foot{
+  display:none !important;
+}
+
+/* ===== HP/THB: Hora con 0 circuitos (gris apagado) ===== */
+.ph-zero{
+  border-color: rgba(148,163,184,.75) !important;
+  background: rgba(241,245,249,.85) !important;
+  box-shadow: 0 8px 18px rgba(0,0,0,.04) !important;
+  opacity: .95;
+}
+.ph-zero .ph-hour,
+.ph-zero .ph-circuits,
+.ph-zero .ph-unit,
+.ph-zero .ph-meters,
+.ph-zero .ph-foot{
+  color:#64748b !important;
+}
+.ph-zero .ph-badge{
+  background: rgba(148,163,184,.18) !important;
+  color:#475569 !important;
+  border-color: rgba(148,163,184,.35) !important;
+}
+.ph-zero .ph-bar{
+  background: rgba(148,163,184,.22) !important;
+}
+.ph-zero .ph-bar .seg{
+  background: rgba(148,163,184,.28) !important;
+}
+
+/* ===== KPI split (mitad izquierda / mitad derecha con línea) ===== */
+.kpi-split{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:16px;
+  margin-top:2px;
+}
+.kpi-split-left{ flex: 1 1 auto; min-width: 0; }
+.kpi-split-right{
+  flex: 0 0 180px;
+  border-left: 2px solid rgba(15,23,42,.12);
+  padding-left: 16px;
+  text-align:left;
+}
+.kpi-sub-label{
+  font-weight: 900;
+  letter-spacing: .06em;
+  font-size: .78rem;
+  text-transform: uppercase;
+  color:#334155;
+  margin-bottom: 6px;
+}
+.kpi-sub-value{
+  font-size: 1.65rem;
+  font-weight: 950;
+  color:#0f172a;
+  line-height: 1;
+}
+
+@media (max-width: 520px){
+  .kpi-split{ flex-direction: column; align-items: flex-start; }
+  .kpi-split-right{
+    width: 100%;
+    flex: 1 1 auto;
+    border-left: none;
+    border-top: 2px solid rgba(15,23,42,.12);
+    padding-left: 0;
+    padding-top: 12px;
+    margin-top: 10px;
+  }
+}
+
+/* =========================================================
+   Terminales más usadas (Aplicación/Unión)
+   ========================================================= */
+.tu-grid{
+  display:grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap:12px;
+}
+
+.tu-card{
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: 22px;
+  border: 1px solid rgba(99,102,241,.22);
+  background: linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,255,255,.78));
+  box-shadow: 0 10px 25px rgba(15,23,42,.06), inset 0 1px 0 rgba(255,255,255,.78);
+  padding: 12px;
+}
+
+.tu-card::before{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(99,102,241,.28), transparent 46%),
+    radial-gradient(circle at 82% 28%, rgba(59,130,246,.18), transparent 52%),
+    radial-gradient(circle at 50% 92%, rgba(34,197,94,.12), transparent 58%);
+  filter: blur(12px);
+  opacity: .95;
+  z-index: 0;
+  pointer-events:none;
+}
+
+.tu-card *{ position: relative; z-index: 1; }
+
+.tu-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:14px;
+}
+
+.tu-head > :first-child{
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tu-head > :last-child{
+  flex: 0 0 auto;
+  min-width: 132px;
+  text-align:right;
+}
+
+.tu-terminal{
+  display:block;            /* <- antes inline-block */
+  width:100%;
+  max-width:100%;
+  font-size:2.1rem;         /* si quieres más pequeño, baja a 1.9rem */
+  font-weight:950;
+  letter-spacing:-.02em;
+  color:#0b1220;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+
+.tu-total{
+  font-weight: 950;
+  font-size: 22px;
+  line-height: 1.05;
+}
+
+.tu-sub{
+  margin-top: 4px;
+  font-size: 13px;
+  opacity: .75;
+}
+
+.tu-badges{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-top:10px;
+}
+
+.tu-badge{
+  font-size:12px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid rgba(0,0,0,.10);
+  font-weight:800;
+  background: rgba(255,255,255,.65);
+  backdrop-filter: blur(6px);
+}
+
+.tu-bar{
+  margin-top:10px;
+  height:10px;
+  border-radius:999px;
+  overflow:hidden;
+  display:flex;
+  background: rgba(0,0,0,.06);
+}
+
+.tu-seg{ height:100%; }
+
+.tu-muted{
+  margin-top:8px;
+  font-size:12px;
+  opacity:.75;
+}
+
+/* ===== Longitudes del cable (badges) ===== */
+.len-mix{
+  margin-top: 10px;
+}
+
+/* ✅ FIX: texto consistente y sin saltos raros */
+.len-title{
+  margin: 8px 0 6px 0;
+  font-weight: 900;
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.len-badges{
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+/* ✅ FIX: nunca se “rompe” el badge raro */
+.len-badge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+
+  padding:6px 10px;
+  border-radius:999px;
+  font-weight:900;
+  font-size:12px;
+  border:1px solid rgba(0,0,0,.10);
+  background: rgba(255,255,255,.70);
+
+  white-space: nowrap;
+  line-height: 1.1;
+  max-width: 100%;
+}
+
+.len-badge.short{ background: rgba(34,197,94,.14);  color:#064e3b; }
+.len-badge.mid{   background: rgba(59,130,246,.14); color:#1e3a8a; }
+.len-badge.long{  background: rgba(168,85,247,.14); color:#581c87; }
+.len-badge.na{    background: rgba(148,163,184,.18); color:#475569; }
+
+/* ===== Menú Máquina 1 / 2 para Aplicación/Unión ===== */
+.appmach-grid{
+  display:flex;
+  gap:14px;
+  flex-wrap:wrap;
+  margin-top:8px;
+}
+
+.appmach-card{
+  flex:1;
+  min-width:240px;
+  border:1px solid #e6e6e6;
+  border-radius:16px;
+  padding:14px;
+  cursor:pointer;
+  transition:.12s;
+  box-shadow:0 6px 14px rgba(0,0,0,.04);
+  background:#fff;
+}
+
+.appmach-card:hover{
+  transform:translateY(-2px);
+  box-shadow:0 12px 22px rgba(0,0,0,.08);
+}
+
+.appmach-card.selected{
+  outline:3px solid rgba(30,102,255,.35);
+}
+
+.appmach-name{
+  font-weight:950;
+  font-size:18px;
+  margin-bottom:4px;
+}
+
+.appmach-desc{
+  margin:0;
+  font-size:13px;
+  color:#333;
+}
+
+/* Centrar selector Máquina 1/2 en Aplicación/Unión */
+.app-machine-center{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  text-align:center;
+  width:100%;
+}
+
+.app-machine-center .select-box{
+  width: min(760px, 94%);          /* ✅ más grande que antes */
+  margin: 0 auto;
+  text-align:center;              /* ✅ centra el label */
+}
+
+.app-machine-center .select-box label{
+  display:block;
+  text-align:center;              /* ✅ label centrado */
+  margin-bottom:10px;
+
+  /* ✅ PEDIDO: "Selecciona la máquina" más grande + con movimiento */
+  font-size: 24px;
+  font-weight: 950;
+  letter-spacing: -0.4px;
+  color:#0f172a;
+  animation: machineTitleFloat 2.4s ease-in-out infinite;
+}
+
+.app-machine-center select{
+  width: 100%;
+  text-align:left;                /* ✅ texto del select normal */
+
+  /* ✅ un poquito más grande para que se note */
+  font-size: 14px;
+  padding: 14px 14px;
+  border-radius: 16px;
+}
+
+/* ===== Tooltip % sobre la barra (NO se recorta) ===== */
+.ph-bar-wrap{
+  position: relative;
+  overflow: visible; /* clave */
+}
+
+/* si no hay texto, no mostrar tooltip */
+.ph-bar-wrap[data-tip=""]::before,
+.ph-bar-wrap[data-tip=""]::after{
+  display:none;
+}
+
+.ph-bar-wrap::after{
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 10px);
+  transform: translateX(-50%) translateY(4px);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 9999;
+
+  background: rgba(15,23,42,.92);
+  color: #fff;
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+  box-shadow: 0 10px 22px rgba(0,0,0,.18);
+}
+
+.ph-bar-wrap::before{
+  content:"";
+  position:absolute;
+  left:50%;
+  top: calc(100% + 3px);
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events:none;
+  z-index: 9999;
+
+  border: 7px solid transparent;
+  border-bottom-color: rgba(15,23,42,.92);
+}
+
+.ph-bar-wrap:hover::after,
+.ph-bar-wrap:hover::before{
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+
+
+
+/* SOLO agrandar "Selecciona la máquina:" si le pusiste id en HTML */
+#selectMachineTitle{
+  font-size: 24px !important;     /* ✅ más grande */
+  font-weight: 950 !important;
+  opacity: 1 !important;
+  color: #0f172a !important;
+  margin-top: 14px !important;
+  margin-bottom: 10px !important;
+  text-align: center !important;  /* ✅ centrado */
+  animation: machineTitleFloat 2.4s ease-in-out infinite; /* ✅ movimiento */
+}
+
+/* (opcional) si tu título es un h2/h3 dentro del bloque, también lo cubrimos */
+.app-machine-center .machine-title,
+.app-machine-center h2.machine-title,
+.app-machine-center h3.machine-title{
+  text-align:center;
+  animation: machineTitleFloat 2.4s ease-in-out infinite;
+}
+
+/* ✅ Animación del título (movimiento suave) */
+@keyframes machineTitleFloat{
+  0%   { transform: translateY(0px); }
+  50%  { transform: translateY(-3px); }
+  100% { transform: translateY(0px); }
+}
+
+.machine-title{
+  margin: 14px 0 10px;
+  text-align: left; /* si lo quieres centrado cambia a center */
+}
+
+.typer-box{
+  display: inline-grid;   /* overlay sin absolute (no se rompe) */
+}
+
+.typer-box > *{
+  grid-area: 1 / 1;
+  white-space: nowrap;
+}
+
+.typer-ghost{
+  visibility: hidden;     /* ocupa espacio pero no se ve */
+}
+
+.typer-live{
+  position: relative;
+}
+
+.machine-title-center{
+  text-align: center;
+  width: 80%;
+}
+.machine-title-center .typer-box{
+  display: inline-block;
+}
+
+/* Cursor bonito SIN meter caracteres (no raya rara) */
+.typer-live::after{
+  content:"";
+  display:inline-block;
+  width:2px;
+  height:1em;
+  margin-left:6px;
+  vertical-align:-0.12em;
+  background: currentColor;
+  animation: blink 1s step-end infinite;
+}
+
+/* =========================
+   Tooltip % sobre la barra (Productividad por hora)
+   ========================= */
+.ph-bar{
+  position: relative; /* necesario para tooltip */
+}
+
+/* Tooltip */
+.ph-bar::after{
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  top: -28px;
+  transform: translateX(-50%) translateY(2px);
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: .75rem;
+  font-weight: 900;
+  background: rgba(15,23,42,.95);
+  color: #fff;
+  box-shadow: 0 10px 22px rgba(0,0,0,.14);
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  transition: opacity .12s ease, transform .12s ease;
+  z-index: 5;
+}
+
+/* Flechita */
+.ph-bar::before{
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -10px;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: rgba(15,23,42,.95);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s ease;
+  z-index: 5;
+}
+
+/* Mostrar al pasar por la tarjeta o por la barra */
+.ph-card:hover .ph-bar::after,
+.ph-card:hover .ph-bar::before,
+.ph-bar:hover::after,
+.ph-bar:hover::before{
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* (opcional) si no hay tooltip, que no muestre nada */
+.ph-bar[data-tip=""]::after,
+.ph-bar[data-tip=""]::before{
+  display: none;
+}
+
+
+@keyframes blink{
+  50%{ opacity:0; }
+}
+
+@keyframes tuFloat{
+  0%   { transform: translateY(0px); }
+  50%  { transform: translateY(-4px); }
+  100% { transform: translateY(0px); }
+}
+
+/* ✅ responsive del título de máquina */
+@media (max-width: 760px){
+  .app-machine-center .select-box{
+    width: min(680px, 94%);
+  }
+  .app-machine-center .select-box label{
+    font-size: 26px;
+  }
+  #selectMachineTitle{
+    font-size: 26px !important;
+  }
+  .app-machine-center select{
+    font-size: 16px;
+    padding: 12px 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce){
+  .tu-terminal{ animation: none; }
+  .app-machine-center .select-box label{ animation: none; }
+  #selectMachineTitle{ animation: none; }
+  .app-machine-center .machine-title,
+  .app-machine-center h2.machine-title,
+  .app-machine-center h3.machine-title{ animation: none; }
+}
+
+/* === Drawer "Causas de Otro" dentro de tarjeta por hora === */
+.ph-otro-btn{ cursor:pointer; border:none; }
+.ph-otro-panel{
+  display:none;
+  margin:10px 10px 0 10px;
+  padding:10px 12px;
+  border-radius:14px;
+  border:1px solid rgba(15,23,42,.10);
+  background: rgba(15,23,42,.04);
+  text-align:left;
+}
+.ph-otro-panel.open{ display:block; }
+
+.ph-otro-title{
+  font-weight:950;
+  font-size:12px;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+  margin:0 0 8px 0;
+  color:#0f172a;
+}
+.ph-otro-list{
+  margin:0;
+  padding-left:16px;
+  font-size:12px;
+  color:#0f172a;
+}
+.ph-otro-list li{ margin:4px 0; }
+.ph-otro-muted{ opacity:.75; }
+
+
+/* =========================================================
+   ✅ Ciclo/Aplicadores: dejar SOLO "Cambiar línea"
+   ========================================================= */
+body.is-ciclo .analysis-time-block h2{
+  display: none !important;
+}
+
+body.is-ciclo .filters-row{
+  display: none !important; /* Operaria + Ver KPIs + Periodo */
+}
+
+/* opcional: quita el "cajón" grande y deja el botón limpio */
+body.is-ciclo .analysis-time-block{
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  margin: 0 0 10px 0 !important;
+}
+
+.kpi-sub-inline{
+  display:flex;
+  align-items:center;
+  gap:14px;
+}
+
+.kpi-sub-sep{
+  width:1px;
+  height:44px;
+  background:#cbd5e1;
+  opacity:.9;
+}
+
+.kpi-sub-item{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+
+.kpi-sub-label{
+  font-weight:800;
+  letter-spacing:.05em;
+  font-size:.75rem;
+  text-transform:uppercase;
+  opacity:.85;
+}
+
+.kpi-sub-value{
+  font-size:1.6rem;
+  font-weight:900;
+  line-height:1;
+}
+
+/* ===== KPI: divisor interno Parada 105 | No registrado ===== */
+.kpi-sub-flex{
+  display:flex;
+  align-items:center;
+  gap:14px;
+  flex-wrap:wrap;          /* si se pone estrecho, baja sin romper */
+}
+
+.kpi-sub-divider{
+  width:1px;
+  align-self:stretch;
+  background: rgba(15, 23, 42, .25);
+}
+
+.kpi-sub-block{
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  min-width: 90px;
+}
+
+.kpi-sub-small{
+  font-weight:800;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+  font-size:.78rem;
+  opacity:.85;
+  margin-bottom:4px;
+}
+
+.kpi-sub-big{
+  font-size:1.85rem;
+  font-weight:900;
+  line-height:1.05;
+}
+
+/* ===== KPI: Parada 105 | No registrado (misma fila) ===== */
+.kpi-sub-row{
+  display:flex;
+  align-items:baseline;
+  gap:12px;
+  white-space:nowrap;       /* 🔒 evita que baje “No registrado” */
+}
+
+.kpi-sub-105{
+  font-size:1.85rem;
+  font-weight:900;
+  line-height:1.05;
+}
+
+.kpi-sub-divider{
+  width:1px;
+  align-self:stretch;
+  background: rgba(15, 23, 42, .25);
+}
+
+.kpi-sub-nr{
+  display:flex;
+  align-items:baseline;
+  gap:8px;
+}
+
+.kpi-sub-nr-label{
+  font-weight:900;
+  font-size:1.15rem;        /* label más pequeño que el número */
+  opacity:.95;
+}
+
+.kpi-sub-nr-val{
+  font-size:1.85rem;
+  font-weight:900;
+  line-height:1.05;
+}
+
+/* ===== KPI: Parada 105 | No registrado (mismo formato) ===== */
+.kpi-sub-row{
+  display:flex;
+  align-items:flex-end;
+  gap:14px;
+  white-space:nowrap;
+}
+
+.kpi-sub-block{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+
+.kpi-sub-value-big{
+  font-size:1.85rem;
+  font-weight:900;
+  line-height:1.05;
+}
+
+.kpi-sub-divider{
+  width:1px;
+  align-self:stretch;
+  background: rgba(15, 23, 42, .25);
+}
+
+.kpi-pct-small{
+  font-size: 0.95rem;   /* baja el tamaño */
+  font-weight: 800;
+  opacity: .9;
+  letter-spacing: .02em;
+}
+
+/* =========================
+   THB Modal (Tarjetas por hora)
+========================= */
+.ph-circuits.ph-circuits-link{
+  cursor:pointer;
+  user-select:none;
+}
+.ph-circuits.ph-circuits-link:hover{
+  text-decoration: underline;
+}
+
+.thb-modal{
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+.thb-modal-backdrop{
+  position:absolute;
+  inset:0;
+  background: rgba(15, 23, 42, .35);
+}
+.thb-modal-card{
+  position: relative;
+  width: min(760px, calc(100vw - 24px));
+  margin: 48px auto;
+  background: #fff;
+  border-radius: 18px;
+  box-shadow: 0 18px 55px rgba(0,0,0,.18);
+  overflow: hidden;
+}
+.thb-modal-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(0,0,0,.08);
+}
+.thb-modal-title{
+  font-weight: 900;
+  font-size: 1.05rem;
+}
+.thb-modal-sub{
+  font-weight: 700;
+  opacity: .75;
+  margin-top: 2px;
+}
+.thb-modal-close{
+  border:0;
+  background:transparent;
+  font-size: 26px;
+  line-height: 1;
+  cursor:pointer;
+  padding: 2px 10px;
+  border-radius: 10px;
+}
+.thb-modal-close:hover{
+  background: rgba(0,0,0,.06);
+}
+.thb-modal-body{
+  padding: 14px 16px 16px 16px;
+  max-height: min(70vh, 720px);
+  overflow:auto;
+}
+.thb-modal-loading{
+  font-weight: 800;
+  opacity: .75;
+}
+.thb-table{
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .95rem;
+}
+.thb-table th, .thb-table td{
+  border-bottom: 1px solid rgba(0,0,0,.08);
+  padding: 10px 8px;
+  text-align:left;
+}
+.thb-table th{
+  font-weight: 900;
+}
+.thb-muted{
+  opacity: .7;
+  font-weight: 700;
+  margin-top: 10px;
+}
+
+/* =========================
+   THB Side Popover (tarjetas)
+========================= */
+#thbTarjetasSidePop.thb-side-pop{
+  background:#fff;
+  border:1px solid rgba(15,23,42,.12);
+  border-radius:16px;
+  box-shadow:0 14px 34px rgba(0,0,0,.14);
+  overflow:hidden;
+}
+
+#thbTarjetasSidePop .thb-side-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:10px;
+  padding:10px 12px;
+  background:linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+  border-bottom:1px solid rgba(15,23,42,.10);
+}
+
+#thbTarjetasSidePop .thb-side-title{
+  font-weight:950;
+  color:#0f172a;
+  line-height:1.15;
+  letter-spacing:-.01em;
+  font-size:14px;
+}
+
+#thbTarjetasSidePop .thb-side-title .muted{
+  display:block;
+  margin-top:2px;
+  font-weight:800;
+  opacity:.75;
+  font-size:12px;
+}
+
+#thbTarjetasSidePop .thb-side-close{
+  width:34px;
+  height:34px;
+  border-radius:12px;
+  border:1px solid rgba(15,23,42,.12);
+  background:#0f172a;
+  color:#fff;
+  cursor:pointer;
+  font-weight:950;
+  display:grid;
+  place-items:center;
+}
+#thbTarjetasSidePop .thb-side-close:hover{ filter:brightness(1.05); }
+#thbTarjetasSidePop .thb-side-close:active{ transform:scale(.98); }
+
+#thbTarjetasSidePop .thb-side-body{
+  padding:10px 12px;
+  overflow:auto;
+}
+
+#thbTarjetasSidePop .thb-side-table{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+  font-size:13px;
+}
+
+#thbTarjetasSidePop .thb-side-table thead th{
+  position:sticky;
+  top:0;
+  background:#fff;
+  z-index:1;
+  text-align:left;
+  padding:8px 6px;
+  border-bottom:1px solid rgba(15,23,42,.12);
+  font-weight:950;
+  color:#0f172a;
+}
+
+#thbTarjetasSidePop .thb-side-table tbody td{
+  padding:8px 6px;
+  border-bottom:1px dashed rgba(15,23,42,.10);
+  vertical-align:top;
+}
+
+#thbTarjetasSidePop .thb-side-table tbody tr:nth-child(odd){
+  background:#fbfdff;
+}
+
+#thbTarjetasSidePop .thb-idx{
+  width:36px;
+  font-weight:950;
+  opacity:.6;
+}
+
+#thbTarjetasSidePop .thb-cons{
+  font-weight:950;
+  font-variant-numeric:tabular-nums;
+}
+
+#thbTarjetasSidePop .thb-code{
+  font-weight:850;
+  font-variant-numeric:tabular-nums;
+}
+
+#thbTarjetasSidePop .thb-side-footer{
+  margin-top:10px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  font-size:12px;
+  font-weight:900;
+  opacity:.8;
+}
+
+#thbTarjetasSidePop .thb-pill{
+  padding:4px 10px;
+  border-radius:999px;
+  border:1px solid rgba(15,23,42,.12);
+  background:#f8fafc;
+  font-weight:950;
+  opacity:1;
+}
+
+/* % al lado del valor grande en gris (mismo tono de labels tipo "PARADA 105") */
+.kpi-value .kpi-pct{
+  color:#64748b;   /* slate/grey como el label */
+  font-weight:800; /* se mantiene fuerte */
+}
+
+/* =========================
+   Longitudes del cable: barra apilada
+========================= */
+.len-bar-wrap{
+  margin-top: 10px;
+}
+.len-bar{
+  height: 34px;
+  border-radius: 999px;
+  overflow: hidden;
+  display: flex;
+  background: rgba(15,23,42,.08);
+  border: 1px solid rgba(15,23,42,.10);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.06);
+}
+.len-seg{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-weight: 900;
+  font-size: .78rem;
+  white-space: nowrap;
+  padding: 0 8px;
+}
+.len-seg.short{ background: #d1fae5; color:#064e3b; }
+.len-seg.mid  { background: #dbeafe; color:#1e3a8a; }
+.len-seg.long { background: #ede9fe; color:#5b21b6; }
+
+.len-legend{
+  margin-top: 8px;
+  display:flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-weight: 800;
+  color: #334155;
+  font-size: .82rem;
+}
+.len-legend .dot{
+  width:10px; height:10px; border-radius:999px;
+  display:inline-block; margin-right:6px;
+  border:1px solid rgba(15,23,42,.12);
+}
+.len-legend .dot.short{ background:#d1fae5; }
+.len-legend .dot.mid  { background:#dbeafe; }
+.len-legend .dot.long { background:#ede9fe; }
+
+/* Longitudes del cable: SOLO barra apilada */
+.len-bar{
+  height: 34px;
+  border-radius: 999px;
+  overflow: hidden;
+  display: flex;
+  background: rgba(15,23,42,.08);
+  border: 1px solid rgba(15,23,42,.10);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.06);
+  margin-top: 10px;
+}
+.len-seg{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-weight: 900;
+  font-size: .80rem;
+  white-space: nowrap;
+  padding: 0 8px;
+}
+.len-seg.short{ background: #d1fae5; color:#064e3b; }
+.len-seg.mid  { background: #dbeafe; color:#1e3a8a; }
+.len-seg.long { background: #ede9fe; color:#5b21b6; }
+
+/* Título + leyenda en una sola fila */
+.ph-title-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  flex-wrap:wrap;
+}
+
+.ph-legend{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+}
+
+.ph-legend-item{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid rgba(15,23,42,.12);
+  background: rgba(255,255,255,.75);
+  font-weight:900;
+  font-size:.85rem;
+  color:#475569;
+}
+
+.ph-dot{
+  width:10px;
+  height:10px;
+  border-radius:999px;
+}
+.ph-dot.good{ background:#22c55e; }
+.ph-dot.bad{  background:#ef4444; }
+.ph-dot.zero{ background:#94a3b8; }
+
+
+/* Leyenda longitudes (verde/azul/morado) */
+.ph-dot.len-short{ background:#22c55e; } /* verde */
+.ph-dot.len-mid  { background:#3b82f6; } /* azul */
+.ph-dot.len-long { background:#a855f7; } /* morado */
+
+
+/* =========================
+   Barra Longitudes (más llamativa)
+   ========================= */
+.len-bar{
+  display:flex;
+  width:100%;
+  height:22px;                 /* más gruesa */
+  border-radius:999px;
+  overflow:hidden;
+  background:#e5e7eb;          /* base clara */
+  border:1px solid rgba(15,23,42,.12);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.8),
+              0 10px 18px rgba(15,23,42,.08);
+}
+
+/* Segmentos */
+.len-seg{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-weight:900;
+  font-size:.85rem;
+  line-height:1;
+  letter-spacing:.02em;
+  color:#0b1220;               /* texto oscuro por defecto */
+  text-shadow: 0 1px 0 rgba(255,255,255,.45);
+}
+
+/* Colores MUY diferenciados */
+.len-seg.short{
+  background: linear-gradient(90deg, #16a34a, #22c55e); /* verde */
+}
+.len-seg.mid{
+  background: linear-gradient(90deg, #2563eb, #60a5fa); /* azul */
+  color:#06122b;
+}
+.len-seg.long{
+  background: linear-gradient(90deg, #7c3aed, #c084fc); /* morado */
+  color:#12051f;
+}
+
+/* Separadores internos (se nota el corte entre colores) */
+.len-seg + .len-seg{
+  box-shadow: inset 3px 0 0 rgba(255,255,255,.65);
+}
+
+/* Si el segmento es muy pequeño, evita texto amontonado */
+.len-seg{
+  min-width: 28px;             /* para que se vea “algo” */
+}
+.len-seg[style*="width:0%"]{
+  min-width: 0;
+  padding: 0;
+  color: transparent;
+}
+
+/* % dentro de la barra (solo porcentaje) */
+.ph-bar .seg{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  position:relative;
+  font-weight:900;
+  font-size:.78rem;
+  line-height:1;
+  color:rgba(15,23,42,.92);
+  text-shadow:0 1px 0 rgba(255,255,255,.55);
+}
+
+.ph-bar .seg .seg-pct{
+  padding:0 6px;
+  white-space:nowrap;
+}
+
+/* si el segmento es pequeño, ocultar el texto */
+.ph-bar .seg.tiny .seg-pct{
+  display:none;
+}
+
+/* % dentro de la barra (más grande) */
+.ph-bar .seg{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  position:relative;
+  font-weight:950;
+  font-size:1.02rem;   /* 👈 más grande */
+  line-height:1;
+  color:rgba(15,23,42,.95);
+  text-shadow:0 1px 0 rgba(255,255,255,.65);
+}
+
+.ph-bar .seg .seg-pct{
+  padding:0 8px;
+  white-space:nowrap;
+}
+
+/* sube un poco la altura de la barra (si quieres más presencia) */
+.ph-bar{
+  height:18px;         /* 👈 antes estaba más bajita */
+  border-radius:999px;
+}
+
+/* Quitar COMPLETAMENTE el tooltip (la “mancha”) de las barras */
+.ph-bar-wrap::before,
+.ph-bar-wrap::after{
+  content: none !important;
+  display: none !important;
+}
+
+/* % alineado dentro de cada badge */
+.ph-badge{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+
+.ph-badge-pct{
+  font-weight:900;
+}
+
+
+/* =========================
+   Caja "Disponible" (Ciclo/Aplicadores)
+========================= */
+.avail-box{
+  background:#fff;
+  border:1px solid rgba(15,23,42,.10);
+  border-radius:16px;
+  padding:14px 16px;
+  box-shadow:0 8px 22px rgba(0,0,0,.06);
+  max-width:720px;
+}
+
+.avail-pill{
+  display:inline-flex;
+  align-items:center;
+  padding:6px 12px;
+  border-radius:999px;
+  font-weight:900;
+  font-size:.82rem;
+  background:#eefaf3;
+  color:#15803d;
+  border:1px solid rgba(34,197,94,.28);
+}
+
+.avail-title{
+  display:block;
+  margin:10px 0 6px;
+  font-weight:950;
+  font-size:1.15rem;
+  color:#0f172a;
+  text-decoration:none;
+}
+
+.avail-title:hover{ text-decoration:underline; }
+
+.avail-desc{
+  margin:0;
+  color:#475569;
+  font-weight:700;
+  line-height:1.35;
+  text-decoration:none;
+}
+
+.ciclo-card .pill{
+  display:inline-block;
+  padding:6px 14px;
+  border-radius:999px;
+  border:1px solid rgba(15,23,42,.18);
+  font-weight:800;
+  font-size:.9rem;
+  opacity:.9;
+}
+.ciclo-card .line-card-title{
+  margin-top:14px;
+  font-weight:900;
+  font-size:2rem;
+  color:#0f172a;
+}
+
+
+.option-card.ciclo{
+  background:#f3efff;
+  border:1px solid rgba(124,58,237,.18);
+}
+
+.option-card.ciclo .pill{
+  background: rgba(124,58,237,.12);
+  border: 1px solid rgba(124,58,237,.25);
+  color:#5b21b6;
+}
+
+
+/* HOME: Ciclo/Aplicadores */
+a.option-card.ciclo{
+  background:#f3efff !important;
+  border:1px solid rgba(124,58,237,.18) !important;
+}
+
+a.option-card.ciclo .pill{
+  background: rgba(124,58,237,.12) !important;
+  border: 1px solid rgba(124,58,237,.25) !important;
+  color:#5b21b6 !important;
+}
+
+
+

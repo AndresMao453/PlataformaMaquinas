@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <!-- Título con “typewriter” -->
+  <h1 class="hero-title">
+    <span id="typewriter" class="typewriter"></span>
+  </h1>
+
+  <p class="muted" id="subtitle" style="display:none;">
+    Archivo cargado: <b>{{ filename }}</b>. Selecciona la hoja y continúa.
+  </p>
+
+  <!-- Selector de hoja (se mantiene) -->
+  <form method="post" action="{{ url_for('run_analysis') }}" id="mainForm" style="display:none;">
+    <input type="hidden" name="filename" value="{{ filename }}">
+
+    <!-- Como por ahora solo es Corte, lo dejamos fijo -->
+    <input type="hidden" name="analysis_key" value="corte">
+
+    <div class="row" style="margin-top:14px;">
+      <div>
+        <label><b>Hoja del Excel</b></label><br>
+        <select name="sheet" required>
+          {% for s in sheets %}
+            <option value="{{s}}">{{s}}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Tarjeta de línea (solo Corte) -->
+      <div class="line-card">
+        <div class="line-badge">Disponible</div>
+        <div class="line-title">Línea de Corte</div>
+        <div class="line-desc">KPIs, productividad, tiempos y validaciones (según tu modelo).</div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:14px;">
+      <button class="btn" type="submit">Iniciar análisis de Corte</button>
+
+      <button class="btn secondary" type="button"
+        onclick="
+          const f='{{filename}}';
+          const sheet=document.querySelector('select[name=sheet]').value;
+          window.location='{{ url_for('preview') }}?filename='+encodeURIComponent(f)+'&sheet='+encodeURIComponent(sheet);
+        ">
+        Previsualizar hoja
+      </button>
+    </div>
+
+    <p class="muted" style="margin-top:10px;">
+      Próximamente: Aplicación, Continuidad, Paradas, Verificación, etc.
+    </p>
+  </form>
+</div>
+
+<script>
+  // Texto “tipeado”
+  const lines = [
+    "Bienvenido a tu Panel de Análisis de Producción.",
+    "¿Qué línea del área de producción deseas analizar hoy?"
+  ];
+
+  const el = document.getElementById("typewriter");
+  const subtitle = document.getElementById("subtitle");
+  const form = document.getElementById("mainForm");
+
+  let lineIndex = 0, charIndex = 0;
+
+  function typeNextChar() {
+    const current = lines[lineIndex];
+    el.textContent += current[charIndex];
+    charIndex++;
+
+    if (charIndex < current.length) {
+      setTimeout(typeNextChar, 25);
+    } else {
+      // salto de línea entre frases
+      if (lineIndex < lines.length - 1) {
+        el.textContent += "\n";
+        lineIndex++;
+        charIndex = 0;
+        setTimeout(typeNextChar, 450);
+      } else {
+        // cuando termina, mostramos el formulario
+        subtitle.style.display = "block";
+        form.style.display = "block";
+        el.classList.add("done");
+      }
+    }
+  }
+
+  // Arranca al cargar
+  typeNextChar();
+</script>
+
+{% endblock %}
