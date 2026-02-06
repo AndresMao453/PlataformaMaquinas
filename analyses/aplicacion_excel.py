@@ -10,6 +10,18 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+def _s(x: Any) -> str:
+    """String seguro: soporta None/NaN/int/float."""
+    if x is None:
+        return ""
+    try:
+        if pd.isna(x):
+            return ""
+    except Exception:
+        pass
+    return str(x).strip()
+
+
 import config
 from services.excel_loader import load_gsheet_tab_csv
 
@@ -37,8 +49,8 @@ def _pick_gsheet_params(machine: str, machine_id: str) -> Tuple[str, int, int, i
     - UNION M1:      config.GSHEET_ID3 + GSHEET_GID_APLICACION3 / GSHEET_GID_UNION3
     - UNION M2:      config.GSHEET_ID4 + GSHEET_GID_APLICACION4 / GSHEET_GID_UNION4
     """
-    m = (machine or "APLICACION").strip().upper()
-    mid = (machine_id or "").strip()
+    m = (_s(machine) or "APLICACION").upper()
+    mid = _s(machine_id)
 
     ttl_s = int(getattr(config, "GSHEET_TTL_S", 60) or 60)
 
@@ -175,8 +187,6 @@ def _parse_excel_time_series(s: pd.Series) -> pd.Series:
         base = pd.Timestamp("1900-01-01")
         return (base + td).dt.time
 
-    ss = s.astype(str).str.strip()
-
     # --- FIX: Hora puede venir float/NaN (Excel/Sheets). Convertir a texto HH:MM ---
     def _coerce_time_str(x):
         if pd.isna(x):
@@ -200,7 +210,8 @@ def _parse_excel_time_series(s: pd.Series) -> pd.Series:
             return str(x).strip()
         return str(x).strip()
 
-    ss = ss.map(_coerce_time_str)
+    ss = s.map(_coerce_time_str)
+    ss = ss.astype(str).str.strip()
 
     mask_time = ss.apply(lambda x: bool(_TIME_RE.match(x)))
     out = pd.Series([None] * len(ss), index=ss.index, dtype="object")
