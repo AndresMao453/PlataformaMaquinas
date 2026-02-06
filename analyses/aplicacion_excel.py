@@ -35,6 +35,14 @@ _GS_TTL_SEC = int(getattr(config, "GSHEET_TTL_S", 10) or 10)
 ANALYSIS_KEY = "aplicacion_excel"
 ANALYSIS_TITLE = "Análisis Aplicación"
 
+def _s(x: Any) -> str:
+    try:
+        if x is None or pd.isna(x):
+            return ""
+    except Exception:
+        if x is None:
+            return ""
+    return str(x).strip()
 
 # ============================================================
 # ✅ Selector Google Sheet según machine + machine_id
@@ -257,7 +265,7 @@ def _find_header_row(raw: pd.DataFrame, required: set, max_scan: int = 15) -> in
 # Time helpers
 # ============================================================
 def _hhmm_to_seconds(hhmm: str) -> int:
-    hhmm = (hhmm or "").strip()
+    hhmm = _s(hhmm)
     if not hhmm:
         return 0
     parts = hhmm.split(":")
@@ -710,7 +718,7 @@ def run_aplicacion_analysis(
             return float("nan")
 
     def _hhmm_to_seconds_local(hhmm: str) -> int:
-        hhmm = (hhmm or "").strip()
+        hhmm = _s(hhmm)
         if not hhmm:
             return 0
         parts = hhmm.split(":")
