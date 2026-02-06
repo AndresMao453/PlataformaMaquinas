@@ -58,8 +58,7 @@ def _pick_gsheet_params(machine: str, machine_id: str) -> Tuple[str, int, int, i
     - UNION M2:      config.GSHEET_ID4 + GSHEET_GID_APLICACION4 / GSHEET_GID_UNION4
     """
     m = (_s(machine) or "APLICACION").upper()
-    mid = _s(machine_id)
-
+    mid = str(machine_id or "").strip()
     ttl_s = int(getattr(config, "GSHEET_TTL_S", 60) or 60)
 
     # Defaults (Aplicación - Máquina 1)
@@ -709,6 +708,10 @@ def run_aplicacion_analysis(
     time_end: str = "",
     machine_id: str = "",
 ) -> Dict[str, Any]:
+
+    # ✅ FIX: machine_id puede llegar int/float desde Flask -> asegurar string
+    machine_id = str(machine_id or "").strip()
+
     def _timeobj_to_seconds_local(t: Any) -> float:
         if pd.isna(t) or t is None:
             return float("nan")
@@ -842,12 +845,10 @@ def run_aplicacion_analysis(
             return s.strip("_")
 
         def _interval_pair_key(interval_key: str) -> str:
-            # finalizar -> inicio
             if interval_key == "finalizar":
                 return "finalizar→inicio"
-            # reproceso_inicio -> reproceso_fin, prueba_tension_inicio -> prueba_tension_fin, etc
             if interval_key.endswith("_inicio"):
-                base = interval_key[:-6]  # quita "_inicio"
+                base = interval_key[:-6]
                 if base:
                     return f"{interval_key}→{base}_fin"
             return interval_key
@@ -863,11 +864,11 @@ def run_aplicacion_analysis(
             return pair_key
 
         if (
-                par_f is not None
-                and not par_f.empty
-                and "Fecha" in par_f.columns
-                and "Hora de Inicio" in par_f.columns
-                and "downtime_s" in par_f.columns
+            par_f is not None
+            and not par_f.empty
+            and "Fecha" in par_f.columns
+            and "Hora de Inicio" in par_f.columns
+            and "downtime_s" in par_f.columns
         ):
             ptmp = par_f.dropna(subset=["Fecha", "Hora de Inicio"]).copy()
             if not ptmp.empty:
@@ -894,11 +895,11 @@ def run_aplicacion_analysis(
                 end_dt = start_dt + pd.to_timedelta(dur_s, unit="s")
 
                 for s, e, cc, desc, intervalo in zip(
-                        start_dt.tolist(),
-                        end_dt.tolist(),
-                        ptmp["CausaCode"].tolist(),
-                        ptmp["CausaDesc"].tolist(),
-                        ptmp["Tipo de Intervalo"].tolist(),
+                    start_dt.tolist(),
+                    end_dt.tolist(),
+                    ptmp["CausaCode"].tolist(),
+                    ptmp["CausaDesc"].tolist(),
+                    ptmp["Tipo de Intervalo"].tolist(),
                 ):
                     if pd.isna(s) or pd.isna(e) or e <= s:
                         continue
@@ -910,15 +911,20 @@ def run_aplicacion_analysis(
                     except Exception:
                         code_int = None
 
-                    # ✅ clave final:
-                    # - si hay código: "203"
-                    # - si no hay código: intervalos especiales (finalizar→inicio, reproceso_inicio→reproceso_fin, etc)
                     interval_key = _norm_interval_key(intervalo)
                     pair_key = _interval_pair_key(interval_key)
 
                     if code_int is not None:
                         key_code = str(code_int)
-                        key_desc = (desc or "").strip()  # puede venir vacío; JS usa STOP_CODE_DESC si no hay desc
+
+                        # ✅ FIX CRÍTICO: desc puede venir float NaN -> no tiene .strip()
+                        if pd.isna(desc):
+                            key_desc = ""
+                        else:
+                            key_desc = str(desc).strip()
+                            if key_desc.lower() in ("nan", "none"):
+                                key_desc = ""
+
                     else:
                         key_code = (pair_key or interval_key or "sin_codigo")
                         key_desc = _pretty_interval_desc(key_code)
@@ -938,7 +944,6 @@ def run_aplicacion_analysis(
                         if is_meal:
                             meal_by_slot[slot] = meal_by_slot.get(slot, 0.0) + secs
 
-                        # ✅ SOLO "Otro" (excluir 105)
                         if not is_meal:
                             if slot not in other_secs_by_slot:
                                 other_secs_by_slot[slot] = {}
@@ -946,9 +951,9 @@ def run_aplicacion_analysis(
 
                             other_secs_by_slot[slot][key_code] = other_secs_by_slot[slot].get(key_code, 0.0) + secs
 
-                            # guardar desc si viene (para intervalos o si el Excel trae texto)
                             if key_desc and (
-                                    key_code not in other_desc_by_slot[slot] or not other_desc_by_slot[slot][key_code]):
+                                key_code not in other_desc_by_slot[slot] or not other_desc_by_slot[slot][key_code]
+                            ):
                                 other_desc_by_slot[slot][key_code] = key_desc
 
                         cur = overlap_end
@@ -963,8 +968,8 @@ def run_aplicacion_analysis(
                 sec_f = float(sec or 0.0)
                 out.append(
                     {
-                        "code": str(code),  # ✅ JS usa it.code
-                        "desc": str(desc_map.get(code, "")),  # ✅ si no está, JS usa STOP_CODE_DESC
+                        "code": str(code),
+                        "desc": str(desc_map.get(code, "")),
                         "seconds": sec_f,
                         "hhmm": _fmt_hhmm(sec_f),
                     }
@@ -997,8 +1002,6 @@ def run_aplicacion_analysis(
                     "mealSec": meal,
                     "otherDeadSec": other_dead,
                     "len_mix": None,
-
-                    # ✅ esto es lo que tu JS lee
                     "other_causes": other_items,
                 }
             )
@@ -1103,10 +1106,7 @@ def run_aplicacion_analysis(
     # -------------------------
     pareto = build_pareto_paradas(par_f, top_n=10)
 
-    # =========================================================
-    # ✅ NUEVO: “Causas / Motivos” para el click en “Otro”
-    # (reusamos pareto.items para no duplicar lógica)
-    # =========================================================
+    # ✅ “Causas / Motivos” para el click en “Otro”
     other_causes = pareto.get("items", []) if isinstance(pareto, dict) else []
     if other_causes is None:
         other_causes = []
@@ -1146,19 +1146,15 @@ def run_aplicacion_analysis(
         "rows_total": int(len(res_f) + len(par_f)),
         "kpis_ui": kpis_ui,
         "pareto": pareto,
-
-        # ✅ NUEVO (compat UI): lista directa para “Otro”
         "other_causes": other_causes,
-
         "kpis": {
             "hourly_buckets": hourly_buckets,
-
-            # ✅ NUEVO: el frontend puede leerlo desde kpis.*
             "other_causes": other_causes,
         },
         "terminal_usage": terminal_usage,
         "machine_id": _norm_machine_id(machine_id),
     }
+
 
 
 
