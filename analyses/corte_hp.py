@@ -1894,7 +1894,7 @@ def analyze_hp(
         # sub = 105 y No registrado (balance) + % del otro (sin 105) al final para que el JS lo ponga al lado del main
         "Otro Tiempo de Ciclo (Muerto)": (
             f"{_seconds_to_hhmm(kpis['otro_tiempo_sec'])}"
-            f"||105: {_seconds_to_hhmmss(kpis['comida_sec'])}"
+            f"||105: {_seconds_to_hhmm(kpis['comida_sec'])}"
             f" | No registrado: {_seconds_to_hhmm(kpis['no_registrado_sec'])}"
             f" | {pct_otro_s}"
         ),

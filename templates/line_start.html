@@ -5,29 +5,31 @@
 
 <div class="top-header">
   <div class="card" style="padding:18px 22px;">
-    <div class="title-blue" style="font-size:48px; margin:0;">
-      {{ line_title }}
+    <div class="page-title">
+      <img class="page-title-icon"
+           src="{{ url_for('static', filename='img/icons/productividad.png') }}"
+           alt=""
+           aria-hidden="true">
+      <div class="title-blue" style="font-size:48px; margin:0;">
+        {{ line_title | replace("📊", "") | trim }}
+      </div>
     </div>
+
     <p class="subtitle" style="margin-top:6px;">{{ line_desc }}</p>
 
     {# =========================================================
        APLICACIÓN / UNIÓN (stage upload): subcat + dropdown + auto-submit
-       - ✅ Unión habilitada
-       - ✅ Máquina 1 y Máquina 2 habilitadas (el JS decide/valida)
-       - ✅ sin "Próximamente"
        ========================================================= #}
     {% if line_key == "aplicacion" and stage == "upload" %}
       <div class="subcat-wrap">
         <p class="subtitle" style="margin-top:14px;">Selecciona la categoría:</p>
 
         <div class="subcat-grid">
-          <!-- ✅ HABILITADO -->
           <div class="subcat-card app" onclick="selectSubcat('aplicacion', this)">
             <div class="subcat-name">Aplicación</div>
             <p class="subcat-desc">Crimpado / aplicación de terminales.</p>
           </div>
 
-          <!-- ✅ HABILITADO -->
           <div class="subcat-card union" id="subcatUnionCard" onclick="selectSubcat('union', this)">
             <div class="subcat-name">Unión</div>
             <p class="subcat-desc">Operación de unión / ensamble.</p>
@@ -38,7 +40,6 @@
           Categoría seleccionada: <b id="subcatLabel">—</b>
         </p>
 
-        <!-- ✅ BLOQUE MÁQUINA (tu JS lo muestra/oculta) -->
         <div id="appMachineWrap" class="app-machine-center" style="display:none; margin-top:12px;">
 
           <h2 class="machine-title machine-title-center">
@@ -58,25 +59,13 @@
             </select>
           </div>
 
-          {# Fuente opcional (si la quieres mostrar, solo descomenta) #}
-          {#
-          <p class="subtitle" style="margin-top:10px; opacity:.85;">
-            Fuente: Google Sheets
-            <a class="underline" target="_blank" href="https://docs.google.com/spreadsheets/d/XXXX/edit">
-              Abrir
-            </a>
-          </p>
-          #}
-
         </div>
 
-        <!-- ✅ FORM OCULTO: se envía automático cuando subcat + máquina estén listos -->
         <form id="appAutoContinueForm" method="post" style="display:none;">
           <input type="hidden" name="machine" id="machineInput" value="">
           <input type="hidden" name="subcat" id="subcatInput" value="">
           <input type="hidden" name="machine_id" id="machineIdInput" value="">
           <input type="hidden" name="source" value="gsheet">
-          <!-- sin duplicar name="machine_id" -->
           <input type="hidden" id="machineIdInput2" value="{{ machine_id or '' }}">
         </form>
 
@@ -87,7 +76,7 @@
     {% endif %}
 
     {# =========================================================
-       CORTE (stage upload): selector HP/THB como antes
+       CORTE (stage upload): selector HP/THB + upload/hint dentro de ESTA card
        ========================================================= #}
     {% if line_key != "aplicacion" and stage == "upload" %}
       <p class="subtitle" style="margin-top:14px;">Primero selecciona la máquina:</p>
@@ -103,24 +92,9 @@
           <p class="machine-desc">Máquina de corte THB HBQ / línea THB.</p>
         </div>
       </div>
-    {% endif %}
-  </div>
-</div>
 
+      <div style="margin-top:18px; padding-top:18px; border-top:1px solid rgba(15,23,42,.10);">
 
-
-{% if not (line_key == "aplicacion" and stage == "upload") %}
-<div style="width:min(1800px,98vw); margin:0 auto;">
-  <div class="card fade-in" style="padding:18px 22px;">
-
-    {# =========================================================
-       stage upload:
-       - APLICACIÓN: NO mostrar "Cargar base de datos"
-       - CORTE: mantener uploadBlock/hintBlock
-       ========================================================= #}
-    {% if stage == "upload" %}
-
-      {% if line_key != "aplicacion" %}
         <div id="uploadBlock" style="display:none;">
           <div style="display:flex; justify-content:space-between; gap:14px; flex-wrap:wrap; align-items:center;">
             <div style="text-align:left;">
@@ -132,7 +106,6 @@
 
             <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
 
-              <!-- ✅ Google Sheets (solo HP) -->
               <div id="gsheetHpWrap" style="display:none;">
                 <form method="post" style="display:flex; gap:10px; align-items:center;">
                   <input type="hidden" name="machine" id="machineInputGs" value="">
@@ -141,7 +114,6 @@
                 </form>
               </div>
 
-              <!-- ✅ Excel local (como estaba) -->
               <form method="post"
                     enctype="multipart/form-data"
                     style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
@@ -155,7 +127,6 @@
               </form>
 
             </div>
-
           </div>
         </div>
 
@@ -168,175 +139,184 @@
             <a class="btn secondary" href="{{ url_for('home') }}">Volver</a>
           </div>
         </div>
-      {% endif %}
 
+      </div>
     {% endif %}
 
+    {# =========================================================
+       ✅ NUEVO: stage select_sheet dentro de LA MISMA PRIMERA CARD
+       ========================================================= #}
     {% if stage == "select_sheet" %}
-      <p class="subtitle" style="margin:0;">
-        Máquina: <b>{{ machine }}</b>
-      </p>
 
-      <h3 style="margin:6px 0 0 0;">¿Cómo deseas analizar el tiempo?</h3>
+      <div style="margin-top:18px; padding-top:18px; border-top:1px solid rgba(15,23,42,.10);">
 
-      <form method="post" action="{{ url_for('run_analysis') }}" id="runForm">
-        <input type="hidden" name="filename" value="{{ filename }}">
-        <input type="hidden" name="analysis_key" value="{{ line_key }}">
-        <input type="hidden" name="machine" value="{{ machine }}">
-        <input type="hidden" name="period" id="periodInput" value="day">
-        <input type="hidden" name="subcat" id="subcatInput2" value="{{ subcat or '' }}">
+        <p class="subtitle" style="margin:0;">
+          Máquina: <b>{{ machine }}</b>
+        </p>
 
-        <div class="time-grid">
-          <div class="period-card selected" onclick="selectPeriod('day', this)">
-            <div class="period-title">📅 Por Día</div>
-            <p class="period-desc">Agrupa por fecha.</p>
-          </div>
+        <h3 style="margin:6px 0 0 0;">¿Cómo deseas analizar el tiempo?</h3>
 
-          <div class="period-card" onclick="selectPeriod('week', this)">
-            <div class="period-title">🗓️ Por Semana</div>
-            <p class="period-desc">Agrupa semanalmente.</p>
-          </div>
+        <form method="post" action="{{ url_for('run_analysis') }}" id="runForm">
+          <input type="hidden" name="filename" value="{{ filename }}">
+          <input type="hidden" name="analysis_key" value="{{ line_key }}">
+          <input type="hidden" name="machine" value="{{ machine }}">
+          <input type="hidden" name="period" id="periodInput" value="day">
+          <input type="hidden" name="subcat" id="subcatInput2" value="{{ subcat or '' }}">
 
-          <div class="period-card" onclick="selectPeriod('month', this)">
-            <div class="period-title">📆 Por Mes</div>
-            <p class="period-desc">Agrupa por mes.</p>
-          </div>
+          <div class="time-grid">
+            <div class="period-card selected" onclick="selectPeriod('day', this)">
+              <div class="period-title">
+                <img class="period-ico" src="{{ url_for('static', filename='img/icons/day.png') }}" alt="">
+                Por Dia
+              </div>
+              <p class="period-desc">Agrupa por fecha.</p>
+            </div>
 
-          <div class="select-box">
-            <label><b id="periodLabel">Días disponibles</b></label>
-            <select name="period_value" id="periodValueSelect" required onchange="onPeriodValueChange()">
-              <option value="">Cargando...</option>
-            </select>
-          </div>
+            <div class="period-card" onclick="selectPeriod('week', this)">
+              <div class="period-title">
+                <img class="period-ico" src="{{ url_for('static', filename='img/icons/day.png') }}" alt="">
+                Por Semana
+              </div>
+              <p class="period-desc">Agrupa semanalmente.</p>
+            </div>
 
-          <div class="action-box">
-            <a class="btn secondary" href="{{ url_for('home') }}">Cambiar línea</a>
-          </div>
-        </div>
+            <div class="period-card" onclick="selectPeriod('month', this)">
+              <div class="period-title">
+                <img class="period-ico" src="{{ url_for('static', filename='img/icons/day.png') }}" alt="">
+                Por Mes
+              </div>
+              <p class="period-desc">Agrupa por mes.</p>
+            </div>
 
-        <div id="thbFilters" style="display:none;">
-          <div class="thb-filters">
             <div class="select-box">
-              <label><b>Operaria</b></label>
-              <select name="operator" id="operatorSelect" required>
-                <option value="">Selecciona...</option>
+              <label><b id="periodLabel">Días disponibles</b></label>
+              <select name="period_value" id="periodValueSelect" required onchange="onPeriodValueChange()">
+                <option value="">Cargando...</option>
               </select>
             </div>
 
-            <div class="select-box">
-              <label><b>Hora inicio</b></label>
-              <input type="time" name="time_start" id="timeStart" required>
-            </div>
-
-            <div class="select-box">
-              <label><b>Hora fin</b></label>
-              <input type="time" name="time_end" id="timeEnd" required>
-            </div>
-
             <div class="action-box">
-              <button class="btn" type="submit" id="btnAnalyze" disabled>Ver KPIs</button>
+              <a class="btn secondary" href="{{ url_for('home') }}">Cambiar línea</a>
             </div>
           </div>
-        </div>
 
-        <div id="inlineResults" class="card" style="margin-top:14px; display:none;">
-          <div id="inlineHeader" class="subtitle" style="margin:0 0 6px 0;"></div>
-          <div id="inlineTitle" class="inline-title" style="display:none;"></div>
+          <div id="thbFilters" style="display:none;">
+            <div class="thb-filters">
+              <div class="select-box">
+                <label><b>Operaria</b></label>
+                <select name="operator" id="operatorSelect" required>
+                  <option value="">Selecciona...</option>
+                </select>
+              </div>
 
-          <div id="inlineKpis" class="kpi-grid"></div>
+              <div class="select-box">
+                <label><b>Hora inicio</b></label>
+                <input type="time" name="time_start" id="timeStart" required>
+              </div>
 
-          <div id="hpTimesLine" class="subtitle"
-               style="display:none; margin:8px 0 0 0; font-weight:900;">
+              <div class="select-box">
+                <label><b>Hora fin</b></label>
+                <input type="time" name="time_end" id="timeEnd" required>
+              </div>
+
+              <div class="action-box">
+                <button class="btn" type="submit" id="btnAnalyze" disabled>Ver KPIs</button>
+              </div>
+            </div>
           </div>
 
-          <div id="inlineParetoTitle" class="inline-title" style="display:none; margin-top:18px;">
-            Análisis de Pareto de Causas de Parada
-          </div>
+          <div id="inlineResults" class="card" style="margin-top:14px; display:none;">
+            <div id="inlineHeader" class="subtitle" style="margin:0 0 6px 0;"></div>
+            <div id="inlineTitle" class="inline-title" style="display:none;"></div>
 
-          <div id="paretoChartWrap" class="card" style="margin-top:12px; padding:14px; display:none;">
-            <canvas id="paretoChart" height="120"></canvas>
-          </div>
+            <div id="inlineKpis" class="kpi-grid"></div>
 
-          <div id="paretoLegendWrap" class="card" style="margin-top:12px; padding:14px; display:none;">
-            <h3 style="margin:0 0 10px 0;">Tabla Pareto (Paradas)</h3>
-            <table class="pareto-table">
-              <thead>
-                <tr>
-                  <th style="width:120px;">Código</th>
-                  <th>Descripción</th>
-                  <th style="width:120px; text-align:right;">Duración</th>
-                  <th style="width:90px; text-align:right;">% Acum.</th>
-                </tr>
-              </thead>
-              <tbody id="paretoLegendBody"></tbody>
-            </table>
-            <div class="pareto-muted">Duración mostrada en <b>HH:MM</b>. % acumulado sobre el total.</div>
-          </div>
-
-          <div id="terminalUsageTitle" class="inline-title" style="display:none; margin-top:18px;">
-            Terminales más usadas (Manual vs Carrete)
-          </div>
-
-          <div id="terminalUsageWrap" class="card" style="margin-top:12px; padding:14px; display:none;">
-            <div id="terminalUsageGrid" class="tu-grid"></div>
-          </div>
-
-          <div id="prodHourTitleRow" class="ph-title-row" style="display:none; margin-top:18px;">
-            <div id="prodHourTitle" class="inline-title" style="margin:0;">Productividad por hora</div>
-
-            <div id="prodHourLegend" class="ph-legend">
-              <span class="ph-legend-item"><span class="ph-dot len-short"></span> Pequeño</span>
-              <span class="ph-legend-item"><span class="ph-dot len-mid"></span> Mediano</span>
-              <span class="ph-legend-item"><span class="ph-dot len-long"></span> Largo</span>
+            <div id="hpTimesLine" class="subtitle"
+                 style="display:none; margin:8px 0 0 0; font-weight:900;">
             </div>
 
-          </div>
+            <div id="inlineParetoTitle" class="inline-title" style="display:none; margin-top:18px;">
+              Análisis de Pareto de Causas de Parada
+            </div>
 
+            <div id="paretoChartWrap" class="card" style="margin-top:12px; padding:14px; display:none;">
+              <canvas id="paretoChart" height="120"></canvas>
+            </div>
 
+            <div id="paretoLegendWrap" class="card" style="margin-top:12px; padding:14px; display:none;">
+              <h3 style="margin:0 0 10px 0;">Tabla Pareto (Paradas)</h3>
+              <table class="pareto-table">
+                <thead>
+                  <tr>
+                    <th style="width:120px;">Código</th>
+                    <th>Descripción</th>
+                    <th style="width:120px; text-align:right;">Duración</th>
+                    <th style="width:90px; text-align:right;">% Acum.</th>
+                  </tr>
+                </thead>
+                <tbody id="paretoLegendBody"></tbody>
+              </table>
+              <div class="pareto-muted">Duración mostrada en <b>HH:MM</b>. % acumulado sobre el total.</div>
+            </div>
 
-          <div id="prodHourWrap" class="card" style="margin-top:12px; padding:14px; display:none;">
-            <div id="prodHourGrid" class="prod-hour-grid"></div>
-          </div>
+            <div id="terminalUsageTitle" class="inline-title" style="display:none; margin-top:18px;">
+              Terminales más usadas (Manual vs Carrete)
+            </div>
 
+            <div id="terminalUsageWrap" class="card" style="margin-top:12px; padding:14px; display:none;">
+              <div id="terminalUsageGrid" class="tu-grid"></div>
+            </div>
 
-          <!-- =========================
-               Modal THB: Tarjetas por hora
-          ========================= -->
-          <div id="thbTarjetasModal" class="thb-modal" style="display:none;">
-            <div class="thb-modal-backdrop" data-close="1"></div>
+            <div id="prodHourTitleRow" class="ph-title-row" style="display:none; margin-top:18px;">
+              <div id="prodHourTitle" class="inline-title" style="margin:0;">Productividad por hora</div>
 
-            <div class="thb-modal-card" role="dialog" aria-modal="true" aria-labelledby="thbTarjetasTitle">
-              <div class="thb-modal-head">
-                <div>
-                  <div id="thbTarjetasTitle" class="thb-modal-title">Tarjetas (THB)</div>
-                  <div id="thbTarjetasSub" class="thb-modal-sub">—</div>
+              <div id="prodHourLegend" class="ph-legend">
+                <span class="ph-legend-item"><span class="ph-dot len-short"></span> Pequeño</span>
+                <span class="ph-legend-item"><span class="ph-dot len-mid"></span> Mediano</span>
+                <span class="ph-legend-item"><span class="ph-dot len-long"></span> Largo</span>
+              </div>
+            </div>
+
+            <div id="prodHourWrap" class="card" style="margin-top:12px; padding:14px; display:none;">
+              <div id="prodHourGrid" class="prod-hour-grid"></div>
+            </div>
+
+            <div id="thbTarjetasModal" class="thb-modal" style="display:none;">
+              <div class="thb-modal-backdrop" data-close="1"></div>
+
+              <div class="thb-modal-card" role="dialog" aria-modal="true" aria-labelledby="thbTarjetasTitle">
+                <div class="thb-modal-head">
+                  <div>
+                    <div id="thbTarjetasTitle" class="thb-modal-title">Tarjetas (THB)</div>
+                    <div id="thbTarjetasSub" class="thb-modal-sub">—</div>
+                  </div>
+                  <button type="button" id="thbTarjetasClose" class="thb-modal-close" aria-label="Cerrar">×</button>
                 </div>
-                <button type="button" id="thbTarjetasClose" class="thb-modal-close" aria-label="Cerrar">×</button>
-              </div>
 
-              <div id="thbTarjetasBody" class="thb-modal-body">
-                <div class="thb-modal-loading">Cargando…</div>
+                <div id="thbTarjetasBody" class="thb-modal-body">
+                  <div class="thb-modal-loading">Cargando…</div>
+                </div>
               </div>
             </div>
-          </div>
 
+            <div id="lenRangesInfo" class="subtitle"
+                 style="display:none; margin:6px 0 0 0; font-weight:900;">
+              Longitudes (Industrial): <b>Pequeño ≤ 300 mm</b> · <b>Mediano 301–800 mm</b> · <b>Largo &gt; 800 mm</b>
+            </div>
 
-          <div id="lenRangesInfo" class="subtitle"
-               style="display:none; margin:6px 0 0 0; font-weight:900;">
-            Longitudes (Industrial): <b>Pequeño ≤ 300 mm</b> · <b>Mediano 301–800 mm</b> · <b>Largo &gt; 800 mm</b>
+            <div id="inlineDebug" style="display:none; margin-top:12px;">
+              <h3 style="margin:0 0 8px 0;">Debug</h3>
+              <pre id="inlineDebugPre" style="white-space:pre-wrap"></pre>
+            </div>
           </div>
+        </form>
 
-          <div id="inlineDebug" style="display:none; margin-top:12px;">
-            <h3 style="margin:0 0 8px 0;">Debug</h3>
-            <pre id="inlineDebugPre" style="white-space:pre-wrap"></pre>
-          </div>
-        </div>
-      </form>
+      </div>
     {% endif %}
 
   </div>
 </div>
-{% endif %}
+
 
 
 <script>
@@ -353,7 +333,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const eraseSpeed = 35;
   const holdFull = 900;
 
-  let i = 1;          // nunca queda vacío
+  let i = 1;
   let mode = "typing";
 
   el.textContent = full.slice(0, i);
@@ -368,7 +348,6 @@ document.addEventListener("DOMContentLoaded", () => {
       return setTimeout(() => { mode = "erasing"; step(); }, holdFull);
     }
 
-    // borrar SIN llegar a 0 (evita que desaparezca)
     if(i > 1){
       i--;
       el.textContent = full.slice(0, i);
@@ -386,7 +365,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 <script>
-  // Config para que el JS externo NO use Jinja dentro del .js
   window.LINE_START_CFG = {
     line_key: {{ line_key|tojson }},
     stage: {{ stage|tojson }},

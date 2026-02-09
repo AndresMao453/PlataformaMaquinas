@@ -1533,4 +1533,291 @@ a.option-card.ciclo .pill{
   .kpi-value{ font-size: clamp(1.8rem, 8vw, 2.35rem); }
 }
 
+/* =========================================================
+   FIX GLOBAL: filas de cards siempre alineadas y mismo alto
+   Aplica a toda la plataforma (HP/THB, periodos, subcat, etc.)
+   ========================================================= */
+
+
+/* Cada card dentro de esas filas */
+.machine-grid > *,
+.subcat-grid > *,
+.appmach-grid > *,
+.card-row > *,
+.cards-row > *,
+.grid-row > *{
+  flex:1 1 0;
+  min-width:260px;     /* mantiene buena respuesta en pantalla */
+  height:100%;
+  display:flex;        /* ✅ asegura mismo alto y contenido consistente */
+  flex-direction:column;
+}
+
+/* Estilos base para cards clickeables (sin depender de HP/THB) */
+.machine-card,
+.subcat-card,
+.appmach-card,
+.period-card{
+  justify-content:center; /* ✅ centra contenido y evita “saltos” */
+  min-height:110px;       /* ✅ evita que una quede más “baja” */
+}
+
+/* Evita márgenes diferentes que desalinean */
+.machine-desc,
+.subcat-desc,
+.appmach-desc,
+.period-desc{
+  margin:0;
+}
+
+/* Títulos consistentes */
+.machine-name,
+.subcat-name,
+.appmach-name,
+.period-title{
+  margin:0 0 6px 0;
+}
+
+/* En móvil: cards apiladas limpias */
+@media (max-width: 760px){
+  .machine-grid > *,
+  .subcat-grid > *,
+  .appmach-grid > *,
+  .card-row > *,
+  .cards-row > *,
+  .grid-row > *{
+    min-width:100%;
+  }
+}
+
+/* =========================================================
+   FIX GLOBAL: todas las filas de cards alineadas y mismo alto
+   (HP/THB, Aplicación/Unión, Periodos, Máquina 1/2, etc.)
+   ========================================================= */
+
+/* 1) Contenedores de cards */
+.machine-grid,
+.subcat-grid,
+.appmach-grid{
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: stretch; /* ✅ clave: mismo alto */
+}
+
+/* 2) Cards base (estiradas) */
+.machine-card,
+.subcat-card,
+.period-card,
+.appmach-card{
+  flex: 1 1 0;
+  min-width: 260px;
+  height: 100%;
+  display: flex;              /* ✅ contenido en columna */
+  flex-direction: column;
+  justify-content: center;    /* ✅ centra y evita “saltos” */
+  box-sizing: border-box;
+}
+
+/* 3) Evita que los <p> metan alturas diferentes */
+.machine-card p,
+.subcat-card p,
+.period-card p,
+.appmach-card p{
+  margin: 0;
+}
+
+/* 4) Altura mínima consistente (evita descuadres por textos cortos/largos) */
+.machine-card,
+.subcat-card,
+.period-card,
+.appmach-card{
+  min-height: 110px;
+}
+
+/* 5) Responsive: una por fila en pantallas pequeñas */
+@media (max-width: 760px){
+  .machine-card,
+  .subcat-card,
+  .period-card,
+  .appmach-card{
+    min-width: 100%;
+  }
+}
+
+
+/* =========================================================
+   FIX DEFINITIVO: cards clickeables se estiran (alineación global)
+   ========================================================= */
+
+/* Contenedores de cards (asegura que sean flex) */
+.machine-grid,
+.subcat-grid,
+.appmach-grid{
+  display:flex !important;
+  flex-wrap:wrap !important;
+  gap:14px !important;
+  align-items:stretch !important;
+}
+
+
+/* Si NO son <a> sino <div> u otro, también aplica */
+.machine-grid > *,
+.subcat-grid > *,
+.appmach-grid > *{
+  align-self: stretch !important;
+}
+
+
+/* Las cards internas (cualquier tipo) */
+.machine-card,
+.subcat-card,
+.appmach-card,
+.period-card{
+  display:flex !important;
+  flex-direction:column !important;
+  justify-content:center !important;
+  height:100% !important;
+  min-height:110px !important;
+  box-sizing:border-box !important;
+}
+
+/* Quita diferencias por márgenes de texto */
+.machine-card p,
+.subcat-card p,
+.appmach-card p,
+.period-card p{
+  margin:0 !important;
+}
+
+.period-title{
+  display:flex;
+  align-items:center;
+  gap:14px;
+}
+
+.period-ico{
+  width:60px;
+  height:60px;
+  object-fit:contain;
+  flex:0 0 auto;
+}
+
+.page-title{
+  display:flex;
+  align-items:center;
+  gap:14px;
+}
+
+.page-title-icon{
+  width:80px;      /* ✅ más grande (ajusta si quieres) */
+  height:80px;
+  object-fit:contain;
+  flex: 0 0 auto;
+}
+.home-header{
+  display:flex;
+  align-items:center;
+  gap:18px;
+  margin-bottom: 10px;
+}
+
+.home-logo{
+  height: 120px;      /* ✅ tamaño “visible” */
+  width: auto;
+  object-fit: contain;
+}
+
+.home-head-text{
+  min-width: 0;
+}
+
+@media (max-width: 760px){
+  .home-logo{ height: 80px; }
+  .home-header{ gap: 30px; }
+}
+
+/* =========================================================
+   ✅ time-grid (FINAL, SIN DUPLICADOS)
+   - Tarjetas (día/semana/mes) en fila
+   - Días disponibles arriba (columna derecha)
+   - Cambiar línea debajo del selector (misma columna derecha)
+   ========================================================= */
+
+/* ===== time-grid: botón "Cambiar línea" AL RAS del select ===== */
+.analysis-time-block .time-grid{
+  display:grid !important;
+  grid-template-columns: 1fr 1fr 1fr 360px !important;
+  grid-template-rows: auto !important;     /* ✅ una sola fila */
+  gap:14px !important;
+  align-items:start !important;
+}
+
+/* anula herencias flex/min-width de tus fixes globales */
+.analysis-time-block .time-grid > *{
+  flex: unset !important;
+  min-width: unset !important;
+  height: auto !important;
+}
+
+/* Selector queda en la columna derecha */
+.analysis-time-block .time-grid .select-box{
+  grid-column: 4 / 5 !important;
+  grid-row: 1 / 2 !important;
+  position: relative !important;
+  padding-bottom: 70px !important;  /* ✅ reserva espacio para el botón dentro */
+}
+
+/* Botón dentro de la MISMA celda del selector, abajo-al-ras */
+.analysis-time-block .time-grid .action-box{
+  grid-column: 4 / 5 !important;
+  grid-row: 1 / 2 !important;       /* ✅ misma fila */
+  justify-self: start !important;
+  align-self: end !important;       /* ✅ lo baja al borde inferior de la celda */
+  margin-top: 0 !important;
+}
+
+/* si el label mete espacio raro */
+.analysis-time-block .time-grid .select-box label{
+  margin: 0 0 10px 0 !important;
+}
+
+/* Responsive */
+@media (max-width: 1100px){
+  .analysis-time-block .time-grid{
+    grid-template-columns: 1fr !important;
+  }
+  .analysis-time-block .time-grid .select-box{
+    padding-bottom: 0 !important;
+  }
+  .analysis-time-block .time-grid .action-box{
+    grid-column:auto !important;
+    grid-row:auto !important;
+    align-self: start !important;
+    margin-top: 10px !important;
+  }
+}
+
+/* ✅ NO pintar el contenedor (la caja grande) */
+.time-grid .action-box{
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+/* ✅ Pintar SOLO el botón "Cambiar línea" */
+.time-grid .action-box button,
+.time-grid .action-box .btn,
+.time-grid .action-box a{
+  border-radius: 16px !important;
+
+  /* un solo color + difuminado */
+  background: rgba(30,102,255,.14) !important;   /* cambia color aquí */
+  backdrop-filter: blur(14px) !important;
+  -webkit-backdrop-filter: blur(14px) !important;
+
+  border: 1px solid rgba(30,102,255,.22) !important;
+  box-shadow: 0 10px 22px rgba(15,23,42,.12) !important;
+}
 

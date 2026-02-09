@@ -10,18 +10,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-def _s(x: Any) -> str:
-    """String seguro: soporta None/NaN/int/float."""
-    if x is None:
-        return ""
-    try:
-        if pd.isna(x):
-            return ""
-    except Exception:
-        pass
-    return str(x).strip()
-
-
 import config
 from services.excel_loader import load_gsheet_tab_csv
 
@@ -31,18 +19,27 @@ GSHEET_APP_TOKEN = "__GSHEET_APP__"
 # ✅ cache por sheet_id (soporta varias máquinas/sheets sin mezclar bytes)
 _GS_CACHE: Dict[str, Dict[str, Any]] = {}  # {sheet_id: {"ts": float, "bytes": bytes}}
 _GS_TTL_SEC = int(getattr(config, "GSHEET_TTL_S", 10) or 10)
+# ✅ cache de DataFrames por (sheet_id, gid) para NO volver a descargar/parsear en cada endpoint
+_GS_DF_CACHE: Dict[Tuple[str, int], Dict[str, Any]] = {}  # {(sheet_id,gid): {"ts": float, "df": pd.DataFrame}}
+
+def _load_gsheet_tab_csv_cached(sheet_id: str, gid: int, ttl_s: int) -> pd.DataFrame:
+    """Carga un tab de Google Sheets con cache TTL (por sheet_id + gid)."""
+    now = time.time()
+    key = (str(sheet_id), int(gid))
+
+    hit = _GS_DF_CACHE.get(key)
+    if hit and (now - float(hit.get("ts", 0.0)) <= float(ttl_s)):
+        return hit["df"]
+
+    df = load_gsheet_tab_csv(str(sheet_id), int(gid), ttl_s=int(ttl_s))
+    _GS_DF_CACHE[key] = {"ts": now, "df": df}
+    return df
+
+
 
 ANALYSIS_KEY = "aplicacion_excel"
 ANALYSIS_TITLE = "Análisis Aplicación"
 
-def _s(x: Any) -> str:
-    try:
-        if x is None or pd.isna(x):
-            return ""
-    except Exception:
-        if x is None:
-            return ""
-    return str(x).strip()
 
 # ============================================================
 # ✅ Selector Google Sheet según machine + machine_id
@@ -57,8 +54,9 @@ def _pick_gsheet_params(machine: str, machine_id: str) -> Tuple[str, int, int, i
     - UNION M1:      config.GSHEET_ID3 + GSHEET_GID_APLICACION3 / GSHEET_GID_UNION3
     - UNION M2:      config.GSHEET_ID4 + GSHEET_GID_APLICACION4 / GSHEET_GID_UNION4
     """
-    m = (_s(machine) or "APLICACION").upper()
-    mid = str(machine_id or "").strip()
+    m = (machine or "APLICACION").strip().upper()
+    mid = (machine_id or "").strip()
+
     ttl_s = int(getattr(config, "GSHEET_TTL_S", 60) or 60)
 
     # Defaults (Aplicación - Máquina 1)
@@ -194,31 +192,7 @@ def _parse_excel_time_series(s: pd.Series) -> pd.Series:
         base = pd.Timestamp("1900-01-01")
         return (base + td).dt.time
 
-    # --- FIX: Hora puede venir float/NaN (Excel/Sheets). Convertir a texto HH:MM ---
-    def _coerce_time_str(x):
-        if pd.isna(x):
-            return ""
-        # Excel suele guardar hora como fracción del día (0..1): 0.5 => 12:00
-        if isinstance(x, (int, float, np.integer, np.floating)):
-            fx = float(x)
-            if 0 <= fx < 1.1:
-                secs = int(round(fx * 24 * 3600))
-                hh = (secs // 3600) % 24
-                mm = (secs % 3600) // 60
-                return f"{hh:02d}:{mm:02d}"
-            # A veces viene como HHMM (ej: 830, 1630)
-            if fx.is_integer():
-                n = int(fx)
-                if 0 <= n <= 2359:
-                    hh = n // 100
-                    mm = n % 100
-                    if 0 <= hh <= 23 and 0 <= mm <= 59:
-                        return f"{hh:02d}:{mm:02d}"
-            return str(x).strip()
-        return str(x).strip()
-
-    ss = s.map(_coerce_time_str)
-    ss = ss.astype(str).str.strip()
+    ss = s.astype(str).str.strip()
 
     mask_time = ss.apply(lambda x: bool(_TIME_RE.match(x)))
     out = pd.Series([None] * len(ss), index=ss.index, dtype="object")
@@ -264,7 +238,7 @@ def _find_header_row(raw: pd.DataFrame, required: set, max_scan: int = 15) -> in
 # Time helpers
 # ============================================================
 def _hhmm_to_seconds(hhmm: str) -> int:
-    hhmm = _s(hhmm)
+    hhmm = (hhmm or "").strip()
     if not hhmm:
         return 0
     parts = hhmm.split(":")
@@ -309,28 +283,31 @@ def load_resumen_pulsos(path: str, machine: str = "APLICACION", machine_id: str 
     - path Excel local => lee por nombres de hoja candidates
     """
     sheet_id, gid_res, _gid_par, ttl_s = _pick_gsheet_params(machine, machine_id)
+    m = (machine or "APLICACION").strip().upper()
+    mid = (machine_id or "").strip()
 
     if not path:
-        gs = load_gsheet_tab_csv(sheet_id, int(gid_res), ttl_s=ttl_s)
+        gs = _load_gsheet_tab_csv_cached(sheet_id, int(gid_res), ttl_s=ttl_s)
         raw = pd.concat([pd.DataFrame([gs.columns.tolist()]), gs.reset_index(drop=True)], ignore_index=True)
-    else:
-        sheet_candidates = [
-            # ✅ Unión
-            "UNION2_Resumen_Pulsos",
-            "Union2_Resumen_Pulsos",
-            "UNION1_Resumen_Pulsos",
-            "Union1_Resumen_Pulsos",
-            "UNION_Resumen_Pulsos",
-            "Resumen_Pulsos_UNION",
 
-            # ✅ Aplicación
-            "APLICACION2_Resumen_Pulsos",
-            "Aplicacion2_Resumen_Pulsos",
-            "APLICACION1_Resumen_Pulsos",
-            "Aplicacion1_Resumen_Pulsos",
-            "APLICACION_Resumen_Pulsos",
-            "Resumen_Pulsos",
-        ]
+    else:
+        # ✅ IMPORTANTE: NO mezclar UNION/APLICACION en el mismo orden.
+        # Elegir candidates según la máquina seleccionada.
+        if m == "UNION":
+            sheet_candidates = [
+                "UNION2_Resumen_Pulsos" if mid == "2" else "UNION1_Resumen_Pulsos",
+                "Union2_Resumen_Pulsos" if mid == "2" else "Union1_Resumen_Pulsos",
+                "UNION_Resumen_Pulsos",
+                "Resumen_Pulsos_UNION",
+            ]
+        else:  # APLICACION
+            sheet_candidates = [
+                "APLICACION2_Resumen_Pulsos" if mid == "2" else "APLICACION1_Resumen_Pulsos",
+                "Aplicacion2_Resumen_Pulsos" if mid == "2" else "Aplicacion1_Resumen_Pulsos",
+                "APLICACION_Resumen_Pulsos",
+                "Resumen_Pulsos",
+            ]
+
         token_sheet_id = sheet_id if path == GSHEET_APP_TOKEN else ""
         raw = _read_sheet_try(path, sheet_candidates, header=None, sheet_id=token_sheet_id)
 
@@ -366,24 +343,30 @@ def load_paradas(path: str, machine: str = "APLICACION", machine_id: str = "") -
     - path Excel local => lee por nombres de hoja candidates
     """
     sheet_id, _gid_res, gid_par, ttl_s = _pick_gsheet_params(machine, machine_id)
+    m = (machine or "APLICACION").strip().upper()
+    mid = (machine_id or "").strip()
 
     if not path:
-        gs = load_gsheet_tab_csv(sheet_id, int(gid_par), ttl_s=ttl_s)
+        gs = _load_gsheet_tab_csv_cached(sheet_id, int(gid_par), ttl_s=ttl_s)
         raw = pd.concat([pd.DataFrame([gs.columns.tolist()]), gs.reset_index(drop=True)], ignore_index=True)
-    else:
-        sheet_candidates = [
-            "Paradas",  # ✅ nombre real
 
-            # compat anteriores
-            "UNION2_Paradas",
-            "UNION1_Paradas",
-            "UNION_Paradas",
-            "APLICACION2_Paradas",
-            "Aplicacion2_Paradas",
-            "APLICACION1_Paradas",
-            "Aplicacion1_Paradas",
-            "APLICACION_Paradas",
-        ]
+    else:
+        # ✅ Si existe una hoja genérica "Paradas", se intenta primero.
+        # Luego se busca SOLO en la familia correspondiente (UNION o APLICACION)
+        if m == "UNION":
+            sheet_candidates = [
+                "Paradas",
+                "UNION2_Paradas" if mid == "2" else "UNION1_Paradas",
+                "UNION_Paradas",
+            ]
+        else:  # APLICACION
+            sheet_candidates = [
+                "Paradas",
+                "APLICACION2_Paradas" if mid == "2" else "APLICACION1_Paradas",
+                "Aplicacion2_Paradas" if mid == "2" else "Aplicacion1_Paradas",
+                "APLICACION_Paradas",
+            ]
+
         token_sheet_id = sheet_id if path == GSHEET_APP_TOKEN else ""
         raw = _read_sheet_try(path, sheet_candidates, header=None, sheet_id=token_sheet_id)
 
@@ -399,105 +382,53 @@ def load_paradas(path: str, machine: str = "APLICACION", machine_id: str = "") -
     desc_col = None
     first_row = df.iloc[0].astype(str).str.strip() if len(df) else pd.Series([], dtype=str)
 
-    for j, val in enumerate(first_row):
-        if str(val).upper() == "CODIGO":
-            code_col = df.columns[j]
-            if j + 1 < len(df.columns):
-                desc_col = df.columns[j + 1]
-            break
+    for c in df.columns:
+        lc = str(c).strip().lower()
+        if "codigo" in lc or "código" in lc:
+            code_col = c
+        if "descripcion" in lc or "descripción" in lc:
+            desc_col = c
 
-    mapping: Dict[int, str] = {}
-    if code_col and desc_col and code_col in df.columns and desc_col in df.columns:
-        codes = df[code_col].astype(str)
-        descs = df[desc_col].astype(str)
-        for c, d in zip(codes, descs):
-            m = re.match(r"^\s*(\d+)", c)
-            if m:
-                desc = d.strip()
-                mapping[int(m.group(1))] = "" if desc.lower() == "nan" else desc
+    reasons = {}
+    if code_col and desc_col:
+        tmp = df[[code_col, desc_col]].copy()
+        tmp[code_col] = pd.to_numeric(tmp[code_col], errors="coerce")
+        tmp = tmp.dropna(subset=[code_col])
+        for _, r in tmp.iterrows():
+            reasons[int(r[code_col])] = str(r[desc_col])
 
-    keep = [
-        c
-        for c in [
-            "Fecha",
-            "Nombre",
-            "Hora de Inicio",
-            "Hora de Fin",
-            "Duración [hh]:mm:ss",
-            "Tipo de Intervalo",
-            "Causa",
-            "Conteo",
-            "Terminal",
-            "Aplicación",
-            "Tipo de Reproceso",
-        ]
-        if c in df.columns
-    ]
-    df = df[keep].copy()
-
-    if "Fecha" in df.columns:
-        df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce", dayfirst=True)
-    else:
-        df["Fecha"] = pd.NaT
-
-    for col in ["Hora de Inicio", "Hora de Fin"]:
-        if col in df.columns:
-            df[col] = _parse_excel_time_series(df[col])
-
-    def parse_duration(x: Any):
-        if pd.isna(x):
-            return pd.NaT
-        if isinstance(x, pd.Timedelta):
-            return x
-        try:
-            return pd.to_timedelta(str(x))
-        except Exception:
-            return pd.NaT
-
-    if "Duración [hh]:mm:ss" in df.columns:
-        df["Duracion"] = df["Duración [hh]:mm:ss"].apply(parse_duration)
-    else:
-        df["Duracion"] = pd.NaT
-
-    if "Tipo de Intervalo" in df.columns:
-        df["Tipo de Intervalo"] = df["Tipo de Intervalo"].astype(str)
-    else:
-        df["Tipo de Intervalo"] = pd.Series([""] * len(df), index=df.index, dtype="object")
-
-    if "Causa" in df.columns:
-        df["CausaCode"] = pd.to_numeric(df["Causa"], errors="coerce")
-    else:
-        df["CausaCode"] = np.nan
-
-    df["CausaDesc"] = df["CausaCode"].map(mapping)
-
-    if "Conteo" in df.columns:
-        df["Conteo"] = pd.to_numeric(df["Conteo"], errors="coerce").fillna(0)
-    else:
-        df["Conteo"] = 0
-
-    if "Nombre" in df.columns:
-        df["Nombre"] = df["Nombre"].astype(str)
-    else:
-        df["Nombre"] = ""
-
-    if "Terminal" in df.columns:
-        df["Terminal"] = df["Terminal"].astype(str)
-    if "Aplicación" in df.columns:
-        df["Aplicación"] = df["Aplicación"].astype(str)
-
-    return df, mapping
+    return df, reasons
 
 
 # ============================================================
 # Periodos disponibles
 # ============================================================
 def _dates_union(res_df: pd.DataFrame, par_df: pd.DataFrame) -> List[pd.Timestamp]:
-    d1 = res_df["Fecha"].dropna().dt.normalize() if "Fecha" in res_df.columns else pd.Series([], dtype="datetime64[ns]")
-    d2 = par_df["Fecha"].dropna().dt.normalize() if "Fecha" in par_df.columns else pd.Series([], dtype="datetime64[ns]")
-    dates = pd.concat([d1, d2]).dropna().unique()
-    dates = pd.to_datetime(dates)
-    return sorted(dates)
+    """
+    Devuelve lista ordenada de Timestamps normalizados.
+    Robusto ante fechas como string y fuerza dayfirst=True (DD/MM).
+    """
+    def _norm(df: pd.DataFrame) -> pd.Series:
+        if df is None or df.empty or "Fecha" not in df.columns:
+            return pd.Series([], dtype="datetime64[ns]")
+
+        s = pd.to_datetime(df["Fecha"], errors="coerce", dayfirst=True)
+        s = s.dropna()
+        if s.empty:
+            return pd.Series([], dtype="datetime64[ns]")
+        return s.dt.normalize()
+
+    d1 = _norm(res_df)
+    d2 = _norm(par_df)
+
+    all_dates = pd.concat([d1, d2], ignore_index=True).dropna()
+    if all_dates.empty:
+        return []
+
+    # únicos + ordenados (ya como datetime)
+    uniq = pd.to_datetime(all_dates.unique(), errors="coerce")
+    uniq = uniq[~pd.isna(uniq)]
+    return sorted(list(uniq))
 
 
 def get_period_options_aplicacion(
@@ -510,10 +441,12 @@ def get_period_options_aplicacion(
     par_df, _ = load_paradas(path, machine=machine, machine_id=machine_id)
 
     dates = _dates_union(res_df, par_df)
-    if not dates:
+
+    # ✅ NO usar "if not dates" (puede fallar según tipo)
+    if dates is None or len(dates) == 0:
         return []
 
-    dates = [d.date() for d in dates]
+    dates = [pd.Timestamp(d).date() for d in dates]
 
     if period == "day":
         dates_sorted = sorted(dates, reverse=True)
@@ -530,11 +463,13 @@ def get_period_options_aplicacion(
     return []
 
 
+
 def _filter_period(df: pd.DataFrame, period: str, period_value: str, date_col: str = "Fecha") -> pd.DataFrame:
     if df is None or df.empty or date_col not in df.columns:
         return df.iloc[0:0]
 
-    s = pd.to_datetime(df[date_col], errors="coerce")
+    # ✅ FIX: forzar dayfirst=True (DD/MM) para que NO se pierdan filas en paradas
+    s = pd.to_datetime(df[date_col], errors="coerce", dayfirst=True)
 
     if period == "day":
         d0 = pd.to_datetime(period_value, errors="coerce")
@@ -558,12 +493,11 @@ def _filter_period(df: pd.DataFrame, period: str, period_value: str, date_col: s
         y = int(m.group(1))
         w = int(m.group(2))
 
-        # ✅ FIX: no convertir a int (evita "cannot convert NA to integer")
         iso = s.dt.isocalendar()
         mask = (iso["year"] == y) & (iso["week"] == w)
-
-        # mask puede traer <NA> cuando Fecha es NaT
         return df[mask.fillna(False)]
+
+    return df.iloc[0:0]
 
 
 # ============================================================
@@ -708,10 +642,6 @@ def run_aplicacion_analysis(
     time_end: str = "",
     machine_id: str = "",
 ) -> Dict[str, Any]:
-
-    # ✅ FIX: machine_id puede llegar int/float desde Flask -> asegurar string
-    machine_id = str(machine_id or "").strip()
-
     def _timeobj_to_seconds_local(t: Any) -> float:
         if pd.isna(t) or t is None:
             return float("nan")
@@ -721,7 +651,7 @@ def run_aplicacion_analysis(
             return float("nan")
 
     def _hhmm_to_seconds_local(hhmm: str) -> int:
-        hhmm = _s(hhmm)
+        hhmm = (hhmm or "").strip()
         if not hhmm:
             return 0
         parts = hhmm.split(":")
@@ -805,24 +735,30 @@ def run_aplicacion_analysis(
         }
 
     def _build_hourly_buckets(res_f: pd.DataFrame, par_f: pd.DataFrame) -> list[dict]:
-        if res_f is None or res_f.empty:
-            return []
-        if "Fecha" not in res_f.columns or "Hora" not in res_f.columns:
-            return []
-
-        tmp = res_f.dropna(subset=["Fecha", "Hora"]).copy()
-        tmp["Fecha_d"] = pd.to_datetime(tmp["Fecha"], errors="coerce").dt.date
-        tmp["Hora_h"] = tmp["Hora"].apply(lambda t: int(t.hour) if hasattr(t, "hour") else np.nan)
-        tmp["Hora_h"] = pd.to_numeric(tmp["Hora_h"], errors="coerce")
-        tmp = tmp.dropna(subset=["Fecha_d", "Hora_h"]).copy()
-        tmp["Hora_h"] = tmp["Hora_h"].astype(int)
-
-        if tmp.empty:
+        # ✅ IMPORTANTE: para que salgan horas con SOLO paradas (sin pulsos),
+        # NO podemos devolver [] solo porque res_f venga vacío.
+        if (res_f is None or res_f.empty) and (par_f is None or par_f.empty):
             return []
 
-        tmp["Pulsos"] = pd.to_numeric(tmp.get("Pulsos", 0), errors="coerce").fillna(0).astype(int)
-        pulses_by_slot = tmp.groupby(["Fecha_d", "Hora_h"])["Pulsos"].sum().to_dict()
-        active_slots = sorted(pulses_by_slot.keys(), key=lambda x: (x[0], x[1]))
+        if "Fecha" not in (res_f.columns if res_f is not None else []) and "Fecha" not in (
+        par_f.columns if par_f is not None else []):
+            return []
+
+        # =========================
+        # Pulsos por hora (si existe res_f)
+        # =========================
+        pulses_by_slot: Dict[tuple, int] = {}
+        if res_f is not None and not res_f.empty and ("Fecha" in res_f.columns) and ("Hora" in res_f.columns):
+            tmp = res_f.dropna(subset=["Fecha", "Hora"]).copy()
+            tmp["Fecha_d"] = pd.to_datetime(tmp["Fecha"], errors="coerce").dt.date
+            tmp["Hora_h"] = tmp["Hora"].apply(lambda t: int(t.hour) if hasattr(t, "hour") else np.nan)
+            tmp["Hora_h"] = pd.to_numeric(tmp["Hora_h"], errors="coerce")
+            tmp = tmp.dropna(subset=["Fecha_d", "Hora_h"]).copy()
+            tmp["Hora_h"] = tmp["Hora_h"].astype(int)
+
+            if not tmp.empty:
+                tmp["Pulsos"] = pd.to_numeric(tmp.get("Pulsos", 0), errors="coerce").fillna(0).astype(int)
+                pulses_by_slot = tmp.groupby(["Fecha_d", "Hora_h"])["Pulsos"].sum().to_dict()
 
         downtime_by_slot: Dict[tuple, float] = {}
         meal_by_slot: Dict[tuple, float] = {}
@@ -863,16 +799,20 @@ def run_aplicacion_analysis(
                     return f"{base.title()} (inicio → fin)"
             return pair_key
 
+        # =========================
+        # Partir paradas por hora
+        # =========================
         if (
-            par_f is not None
-            and not par_f.empty
-            and "Fecha" in par_f.columns
-            and "Hora de Inicio" in par_f.columns
-            and "downtime_s" in par_f.columns
+                par_f is not None
+                and not par_f.empty
+                and "Fecha" in par_f.columns
+                and "Hora de Inicio" in par_f.columns
+                and "downtime_s" in par_f.columns
         ):
             ptmp = par_f.dropna(subset=["Fecha", "Hora de Inicio"]).copy()
             if not ptmp.empty:
                 ptmp["Fecha0"] = pd.to_datetime(ptmp["Fecha"], errors="coerce").dt.normalize()
+
                 sec0 = ptmp["Hora de Inicio"].apply(_timeobj_to_seconds_local)
                 sec0 = pd.to_numeric(sec0, errors="coerce").fillna(0).astype(int)
 
@@ -895,11 +835,11 @@ def run_aplicacion_analysis(
                 end_dt = start_dt + pd.to_timedelta(dur_s, unit="s")
 
                 for s, e, cc, desc, intervalo in zip(
-                    start_dt.tolist(),
-                    end_dt.tolist(),
-                    ptmp["CausaCode"].tolist(),
-                    ptmp["CausaDesc"].tolist(),
-                    ptmp["Tipo de Intervalo"].tolist(),
+                        start_dt.tolist(),
+                        end_dt.tolist(),
+                        ptmp["CausaCode"].tolist(),
+                        ptmp["CausaDesc"].tolist(),
+                        ptmp["Tipo de Intervalo"].tolist(),
                 ):
                     if pd.isna(s) or pd.isna(e) or e <= s:
                         continue
@@ -916,15 +856,7 @@ def run_aplicacion_analysis(
 
                     if code_int is not None:
                         key_code = str(code_int)
-
-                        # ✅ FIX CRÍTICO: desc puede venir float NaN -> no tiene .strip()
-                        if pd.isna(desc):
-                            key_desc = ""
-                        else:
-                            key_desc = str(desc).strip()
-                            if key_desc.lower() in ("nan", "none"):
-                                key_desc = ""
-
+                        key_desc = (desc or "").strip()
                     else:
                         key_code = (pair_key or interval_key or "sin_codigo")
                         key_desc = _pretty_interval_desc(key_code)
@@ -944,15 +876,14 @@ def run_aplicacion_analysis(
                         if is_meal:
                             meal_by_slot[slot] = meal_by_slot.get(slot, 0.0) + secs
 
+                        # ✅ SOLO "Otro" (excluir 105)
                         if not is_meal:
                             if slot not in other_secs_by_slot:
                                 other_secs_by_slot[slot] = {}
                                 other_desc_by_slot[slot] = {}
-
                             other_secs_by_slot[slot][key_code] = other_secs_by_slot[slot].get(key_code, 0.0) + secs
-
                             if key_desc and (
-                                key_code not in other_desc_by_slot[slot] or not other_desc_by_slot[slot][key_code]
+                                    key_code not in other_desc_by_slot[slot] or not other_desc_by_slot[slot][key_code]
                             ):
                                 other_desc_by_slot[slot][key_code] = key_desc
 
@@ -976,7 +907,14 @@ def run_aplicacion_analysis(
                 )
             return out
 
-        buckets = []
+        # ✅ incluir horas con pulsos o con paradas (o ambas)
+        slot_keys = set(pulses_by_slot.keys())
+        slot_keys |= set(downtime_by_slot.keys())
+        slot_keys |= set(meal_by_slot.keys())
+
+        active_slots = sorted(slot_keys, key=lambda x: (x[0], x[1]))
+
+        buckets: list[dict] = []
         for (d, h) in active_slots:
             pulses = int(pulses_by_slot.get((d, h), 0))
 
@@ -1007,6 +945,63 @@ def run_aplicacion_analysis(
             )
 
         return buckets
+
+    def _fill_missing_hourly_buckets_gaps_only(
+            buckets: list[dict],
+            step_hours: int = 1,
+    ) -> list[dict]:
+        """
+        Rellena SOLO los huecos entre la primera y la última hora con registro.
+        No agrega antes del primer registro ni después del último.
+        """
+        if not buckets:
+            return []
+
+        def _h_from_label(lbl: str) -> Optional[int]:
+            try:
+                # "07:00" -> 7
+                return int(str(lbl).strip().split(":")[0])
+            except Exception:
+                return None
+
+        # mapa por hora
+        bmap: Dict[int, dict] = {}
+        hours: List[int] = []
+        for b in buckets:
+            h = _h_from_label(b.get("hourLabel", ""))
+            if h is None:
+                continue
+            bmap[h] = b
+            hours.append(h)
+
+        if not hours:
+            return buckets
+
+        h_min = min(hours)
+        h_max = max(hours)
+
+        out: list[dict] = []
+        for h in range(h_min, h_max + 1, int(step_hours)):
+            if h in bmap:
+                bb = dict(bmap[h])
+                bb["_missing"] = False
+                out.append(bb)
+            else:
+                out.append(
+                    {
+                        "hourLabel": f"{h:02d}:00",
+                        "cut": 0,
+                        "meters": 0.0,
+                        "prodSec": 0.0,
+                        "deadSec": 0.0,
+                        "mealSec": 0.0,
+                        "otherDeadSec": 0.0,
+                        "len_mix": None,
+                        "other_causes": [],
+                        "_missing": True,  # ✅ para pintar gris
+                    }
+                )
+        return out
 
     # =========================
     # Cargar datos
@@ -1052,8 +1047,27 @@ def run_aplicacion_analysis(
         par_f = par_f.copy()
 
     # downtime_s
-    par_f["downtime_s"] = pd.to_timedelta(par_f.get("Duracion", pd.Series(dtype="timedelta64[ns]"))).dt.total_seconds()
-    par_f["downtime_s"] = pd.to_numeric(par_f["downtime_s"], errors="coerce").fillna(0.0).astype(float)
+    # downtime_s (robusto)
+    dur_raw = par_f.get("Duracion", pd.Series([None] * len(par_f), index=par_f.index, dtype="object"))
+
+    # intenta parse directo "HH:MM:SS" / "MM:SS" / timedelta
+    dt = pd.to_timedelta(dur_raw, errors="coerce")
+    secs = dt.dt.total_seconds()
+
+    # ✅ fallback: si Duracion no existe o no parsea, intenta con "Hora de Fin" - "Hora de Inicio"
+    # ✅ fallback: si Duracion no existe o no parsea, intenta con "Hora de Fin" - "Hora de Inicio"
+    if secs.isna().all() and ("Hora de Inicio" in par_f.columns) and ("Hora de Fin" in par_f.columns):
+        ini = par_f["Hora de Inicio"].apply(_timeobj_to_seconds_local)
+        fin = par_f["Hora de Fin"].apply(_timeobj_to_seconds_local)
+
+        ini = pd.to_numeric(ini, errors="coerce")
+        fin = pd.to_numeric(fin, errors="coerce")
+
+        diff = fin - ini
+        diff = np.where(diff < 0, diff + 86400, diff)  # cruza medianoche
+        secs = pd.Series(diff, index=par_f.index, dtype="float64")
+
+    par_f["downtime_s"] = pd.to_numeric(secs, errors="coerce").fillna(0.0).astype(float)
 
     # -------------------------
     # Pulsos
@@ -1077,36 +1091,185 @@ def run_aplicacion_analysis(
     pct_carrete = (carrete / total_for_pct) if total_for_pct > 0 else 0.0
     pct_manual = (manual / total_for_pct) if total_for_pct > 0 else 0.0
 
+    def _hhmmss_to_seconds(s: str) -> int:
+        s = (s or "").strip()
+        if not s:
+            return 0
+        parts = s.split(":")
+        try:
+            if len(parts) == 2:
+                hh, mm = int(parts[0]), int(parts[1])
+                return hh * 3600 + mm * 60
+            if len(parts) >= 3:
+                hh, mm, ss = int(parts[0]), int(parts[1]), int(parts[2])
+                return hh * 3600 + mm * 60 + ss
+        except Exception:
+            return 0
+        return 0
+
+    BASE_MON_THU = _hhmmss_to_seconds("09:08:00")  # 9h08
+    BASE_FRI_SAT = _hhmmss_to_seconds("06:53:00")  # 6h53
+
+    def _expected_day_seconds(day_date, day_slot_hours: int) -> int:
+        """
+        Regla:
+        - Lun-Jue: base 9:08 si hay >=10 horas registradas; si hay 11 -> +1h, etc.
+          Si hay <10, ignorar y dejar 9:08.
+        - Vie/Sab: base 6:53 si hay >=10 horas registradas; si hay 11 -> +1h, etc.
+          Si hay <10, ignorar y dejar 6:53.
+        - Dom: por defecto 0 (ajústalo si aplica).
+        """
+        if day_date is None:
+            return 0
+        wd = int(pd.Timestamp(day_date).weekday())  # 0=Lun ... 6=Dom
+
+        if wd in (0, 1, 2, 3):  # Lun-Jue
+            base = BASE_MON_THU
+        elif wd in (4, 5):  # Vie-Sab
+            base = BASE_FRI_SAT
+        else:  # Dom
+            return 0
+
+        # condición de "debe haber registro de 10 horas min"
+        if day_slot_hours < 10:
+            return base
+
+        extra_h = max(0, day_slot_hours - 10)  # 11->+1, 12->+2, ...
+        return base + extra_h * 3600
+
     # -------------------------
     # Horas activas (slots)
     # -------------------------
+    # -------------------------
+    # Horas activas (slots)  ✅ incluye res_f (pulsos) + par_f (paradas)
+    # -------------------------
     active_slots: set[tuple] = set()
-    hours_active = 0
+
+    # slots desde pulsos
     if "Fecha" in res_f.columns and "Hora" in res_f.columns and not res_f.empty:
         tmp = res_f.dropna(subset=["Fecha", "Hora"]).copy()
         tmp["Fecha_d"] = pd.to_datetime(tmp["Fecha"], errors="coerce").dt.date
         tmp["Hora_h"] = tmp["Hora"].apply(lambda t: int(t.hour) if hasattr(t, "hour") else np.nan)
         tmp = tmp.dropna(subset=["Fecha_d", "Hora_h"])
-        active_slots = set(zip(tmp["Fecha_d"].tolist(), tmp["Hora_h"].astype(int).tolist()))
-        hours_active = int(len(active_slots))
+        active_slots |= set(zip(tmp["Fecha_d"].tolist(), tmp["Hora_h"].astype(int).tolist()))
+
+    # slots desde paradas (Hora de Inicio)
+    if "Fecha" in par_f.columns and "Hora de Inicio" in par_f.columns and not par_f.empty:
+        ptmp = par_f.dropna(subset=["Fecha", "Hora de Inicio"]).copy()
+        ptmp["Fecha_d"] = pd.to_datetime(ptmp["Fecha"], errors="coerce").dt.date
+        ptmp["Hora_h"] = ptmp["Hora de Inicio"].apply(lambda t: int(t.hour) if hasattr(t, "hour") else np.nan)
+        ptmp = ptmp.dropna(subset=["Fecha_d", "Hora_h"])
+        active_slots |= set(zip(ptmp["Fecha_d"].tolist(), ptmp["Hora_h"].astype(int).tolist()))
+
+    slot_hours_total = int(len(active_slots))
 
     # -------------------------
-    # Tiempos
+    # Horas activas esperadas (según regla) + No registrado
     # -------------------------
-    dead_total_s = float(par_f["downtime_s"].sum()) if "downtime_s" in par_f.columns else 0.0
-    productive_simple_s = float(hours_active) * 3600.0 - dead_total_s
-    productive_s = max(0.0, productive_simple_s)
+    slots_by_day: Dict[Any, int] = {}
+    for (d, _h) in active_slots:
+        slots_by_day[d] = slots_by_day.get(d, 0) + 1
 
+    expected_active_s = 0
+    for d, day_slots in slots_by_day.items():
+        expected_active_s += _expected_day_seconds(d, int(day_slots))
+
+    # Horas activas (lo que pides en el KPI) = esperado según regla
+    active_available_s = float(expected_active_s)
+
+    # =========================================================
+    # ✅ NUEVO: Horas activas planificadas (segundos)
+    # Lun–Jue: 09:08, requiere >=10 horas registradas para validar extra
+    # Vie–Sáb: 06:53, requiere >=7 horas registradas (ajustable)
+    # Si supera el mínimo, suma +1h por cada hora extra
+    # =========================================================
+    def _planned_active_seconds_from_slots(res_filtered: pd.DataFrame) -> float:
+        if res_filtered is None or res_filtered.empty:
+            return 0.0
+        if "Fecha" not in res_filtered.columns or "Hora" not in res_filtered.columns:
+            return 0.0
+
+        tmp2 = res_filtered.dropna(subset=["Fecha", "Hora"]).copy()
+        tmp2["Fecha_d"] = pd.to_datetime(tmp2["Fecha"], errors="coerce").dt.date
+        tmp2["Hora_h"] = tmp2["Hora"].apply(lambda t: int(t.hour) if hasattr(t, "hour") else np.nan)
+        tmp2["Hora_h"] = pd.to_numeric(tmp2["Hora_h"], errors="coerce")
+        tmp2 = tmp2.dropna(subset=["Fecha_d", "Hora_h"]).copy()
+        if tmp2.empty:
+            return 0.0
+        tmp2["Hora_h"] = tmp2["Hora_h"].astype(int)
+
+        # horas registradas (slots únicos) por día
+        g = tmp2.groupby("Fecha_d")["Hora_h"].nunique(dropna=True)
+
+        mon_thu_base = 9*3600 + 8*60    # 09:08
+        fri_sat_base = 6*3600 + 53*60   # 06:53
+
+        mon_thu_min_hours = 10
+        fri_sat_min_hours = 7  # <-- AJUSTA si tu mínimo real es otro
+
+        total = 0.0
+        for d, n in g.items():
+            wd = pd.Timestamp(d).weekday()  # Mon=0 ... Sun=6
+
+            if wd in (4, 5):  # Vie/Sáb
+                base = fri_sat_base
+                min_h = fri_sat_min_hours
+            else:             # Lun–Jue (y domingo si cae)
+                base = mon_thu_base
+                min_h = mon_thu_min_hours
+
+            extra_h = max(0, int(n) - int(min_h))
+            total += float(base + extra_h*3600)
+
+        return float(total)
+
+    # ✅ Usa la regla esperada por día (y NO _planned_active_seconds_from_slots)
+    # expected_active_s ya lo calculaste arriba con _expected_day_seconds(...)
+    active_available_s = float(expected_active_s)
+
+    # -------------------------
+    # Tiempos (Plan/No plan)
+    # -------------------------
     par_f["CausaCode"] = pd.to_numeric(par_f.get("Causa", np.nan), errors="coerce")
-    planned_s = float(par_f.loc[(par_f["CausaCode"] >= 100) & (par_f["CausaCode"] <= 199), "downtime_s"].sum())
-    unplanned_s = float(par_f.loc[(par_f["CausaCode"] >= 200) & (par_f["CausaCode"] <= 299), "downtime_s"].sum())
+    planned_s = float(par_f.loc[(par_f["CausaCode"] >= 100) & (par_f["CausaCode"] <= 199), "downtime_s"].sum()) \
+        if "downtime_s" in par_f.columns else 0.0
+    unplanned_s = float(par_f.loc[(par_f["CausaCode"] >= 200) & (par_f["CausaCode"] <= 299), "downtime_s"].sum()) \
+        if "downtime_s" in par_f.columns else 0.0
+
+    # -------------------------
+    # 105 (Comida)
+    # -------------------------
+    meal_total_s = float(par_f.loc[(par_f["CausaCode"] == 105), "downtime_s"].sum()) \
+        if "downtime_s" in par_f.columns else 0.0
+
+    # -------------------------
+    # Horas activas esperadas + No registrado
+    # -------------------------
+    # tiempo "registrado" por tarjetas = cantidad de slots activos * 3600
+    registered_slot_s = float(slot_hours_total) * 3600.0
+
+    # downtime total real del periodo
+    dead_total_s = float(par_f["downtime_s"].sum()) if "downtime_s" in par_f.columns else 0.0
+
+    # ✅ Tiempo efectivo (base) = registrado - paradas
+    productive_s = max(0.0, registered_slot_s - dead_total_s)
+
+    # ✅ “Otro” sin 105 (muerto excluyendo comida)  ✅ (DEFINIR ANTES DE USAR)
+    other_total_s = max(0.0, dead_total_s - meal_total_s)
+
+    # ✅ Regla nueva: No registrado = Disponible - (Efectivo + Otro sin 105)
+    no_reg_s = max(0.0, float(active_available_s) - (float(productive_s) + float(other_total_s)))
+
+    # ✅ % de “Otro” sobre el total complementado (Efectivo + Otro + 105 + No registrado)
+    total_available_s = float(productive_s) + float(other_total_s) + float(meal_total_s) + float(no_reg_s)
+    pct_other = (other_total_s / total_available_s * 100.0) if total_available_s > 0 else 0.0
 
     # -------------------------
     # Pareto
     # -------------------------
     pareto = build_pareto_paradas(par_f, top_n=10)
 
-    # ✅ “Causas / Motivos” para el click en “Otro”
+    # ✅ Para click en "Otro" (tarjetas grises)
     other_causes = pareto.get("items", []) if isinstance(pareto, dict) else []
     if other_causes is None:
         other_causes = []
@@ -1117,19 +1280,58 @@ def run_aplicacion_analysis(
     terminal_usage = _build_terminal_usage(res_f, top_n=0)
 
     # -------------------------
-    # Productividad por hora (solo DAY)
+    # Productividad por hora (SOLO DAY)
     # -------------------------
     hourly_buckets: list[dict] = []
     if (period or "").strip().lower() == "day":
         hourly_buckets = _build_hourly_buckets(res_f, par_f)
+        # ✅ solo rellena huecos entre registros (una sola vez)
+        hourly_buckets = _fill_missing_hourly_buckets_gaps_only(hourly_buckets)
 
+    # =========================================================
+    # ✅ REGLA: KPIs de tiempo = suma exacta de lo que muestran las tarjetas (hourly_buckets)
+    # =========================================================
+    if hourly_buckets:
+        sum_prod_s = float(sum(float(b.get("prodSec", 0.0) or 0.0) for b in hourly_buckets))
+        sum_dead_s = float(sum(float(b.get("deadSec", 0.0) or 0.0) for b in hourly_buckets))
+        sum_meal_s = float(sum(float(b.get("mealSec", 0.0) or 0.0) for b in hourly_buckets))
+
+        # ✅ Tiempo efectivo = suma de "Efectivo" mostrado en tarjetas
+        productive_s = sum_prod_s
+
+        # ✅ downtime total = suma de "Muerto" mostrado en tarjetas
+        dead_total_s = sum_dead_s
+
+        # ✅ comida total = suma de "Comida" mostrado en tarjetas
+        meal_total_s = sum_meal_s
+
+        # ✅ “Otro” sin 105 (muerto excluyendo comida) coherente con tarjetas
+        other_total_s = max(0.0, sum_dead_s - sum_meal_s)
+
+        # ✅ Regla nueva: No registrado = Disponible - (Efectivo + Otro sin 105)
+        no_reg_s = max(0.0, float(active_available_s) - (float(productive_s) + float(other_total_s)))
+
+        # ✅ Recalcular % de Otro sobre el total complementado
+        total_available_s = float(productive_s) + float(other_total_s) + float(meal_total_s) + float(no_reg_s)
+        pct_other = (other_total_s / total_available_s * 100.0) if total_available_s > 0 else 0.0
+
+    # -------------------------
     # KPIs UI
+    # -------------------------
     kpis_ui: Dict[str, str] = {
-        "Crimpados (Pulsos)": _fmt_int_es(pulses_total),
-        "Pulsos Carrete": f"{_fmt_int_es(carrete)} ({_fmt_pct_es(pct_carrete)})",
-        "Pulsos Manual": f"{_fmt_int_es(manual)} ({_fmt_pct_es(pct_manual)})",
-        "Horas activas": _fmt_int_es(hours_active),
-        "Otro Tiempo de Ciclo (Muerto)": _fmt_hhmm(dead_total_s),
+        "Crimpados": _fmt_int_es(pulses_total),
+        "Crimpados Carrete": f"{_fmt_int_es(carrete)} ({_fmt_pct_es(pct_carrete)})",
+        "Crimpados Manual": f"{_fmt_int_es(manual)} ({_fmt_pct_es(pct_manual)})",
+
+        # ✅ tu frontend usa "Horas activas" (no "Horas Disponibles")
+        "Horas activas": _fmt_hhmm(active_available_s),
+
+        # ✅ “Otro” EXCLUYE 105, y muestra 105 + No registrado + % en el panel derecho
+        "Otro Tiempo de Ciclo (Muerto)": (
+            f"{_fmt_hhmm(other_total_s)}"
+            f"||105: {_fmt_hhmm(meal_total_s)} | No registrado: {_fmt_hhmm(no_reg_s)} | {pct_other:.1f}%"
+        ),
+
         "Tiempo Efectivo": _fmt_hhmm(productive_s),
         "Paradas planeadas (HH:MM)": _fmt_hhmm(planned_s),
         "Paradas no planeadas (HH:MM)": _fmt_hhmm(unplanned_s),
@@ -1146,7 +1348,9 @@ def run_aplicacion_analysis(
         "rows_total": int(len(res_f) + len(par_f)),
         "kpis_ui": kpis_ui,
         "pareto": pareto,
-        "other_causes": other_causes,
+
+        "other_causes": other_causes,  # compat
+
         "kpis": {
             "hourly_buckets": hourly_buckets,
             "other_causes": other_causes,
@@ -1154,8 +1358,6 @@ def run_aplicacion_analysis(
         "terminal_usage": terminal_usage,
         "machine_id": _norm_machine_id(machine_id),
     }
-
-
 
 
 def analyze_aplicacion1(

@@ -960,7 +960,7 @@ function renderTerminalUsage(result){
   const totalOnly  = (sumCarrete === 0 && sumOtros === 0);
 
   // ✅ título correcto para tu caso (solo pulsos por terminal)
-  titleEl.textContent = totalOnly ? "Pulsos por terminal" : "Terminales más usadas (Manual vs Carrete)";
+  titleEl.textContent = totalOnly ? "Crimpados por terminal" : "Terminales más usadas (Manual vs Carrete)";
   titleEl.style.display = "block";
   wrap.style.display = "block";
   grid.innerHTML = "";
@@ -995,7 +995,7 @@ function renderTerminalUsage(result){
         </div>
         <div>
           <div class="tu-total">${escHtml(fmtIntEs(tot))}</div>
-          <div class="tu-sub" style="text-align:right;">pulsos</div>
+          <div class="tu-sub" style="text-align:right;">Crimpados</div>
         </div>
       </div>
       ${badgesHtml}
@@ -1221,32 +1221,18 @@ function renderProdHour(result){
     const deadSec = Number(b.deadSec)||0;
     const mealSec = Number(b.mealSec)||0;
 
-    // ✅ CLAVE: “Otro” por tarjeta = lo que viene del backend (registrado)
-    let otherDeadSec = (b.otherDeadSec != null)
+    // ✅ “Otro” = SOLO lo que venga real del backend (Excel). NO completar a 3600.
+    //    Si el backend trae otherDeadSec úsalo; si no, usa deadSec-mealSec como fallback.
+    const otherDeadSecFinal = (b.otherDeadSec != null)
       ? (Number(b.otherDeadSec)||0)
       : Math.max(0, deadSec - mealSec);
 
-
-    // ✅ FALTANTE para completar 60 min (solo si ya hay algo registrado)
-    const regTotalSec = Math.max(0, prodSec + deadSec);
-    const missingSec = (regTotalSec > 0 && regTotalSec < 3600) ? (3600 - regTotalSec) : 0;
-
-    // ✅ SUMAR el faltante al "Otro" (ahora la tarjeta lo muestra incluido)
-    otherDeadSec = otherDeadSec + missingSec;
-
-
-    // ✅ Complementar "Otro" con el faltante
-    const otherDeadSecAdj = otherDeadSec + missingSec;
-
-    // ✅ Porcentajes sobre el total complementado (prod + dead + faltante)
-    const totalAdj = Math.max(0, prodSec + deadSec + missingSec);
+    // ✅ Porcentajes SOLO sobre TIEMPO REAL (prod + dead).
+    //    NO se usa missingSec.
+    const totalAdj = Math.max(0, prodSec + deadSec);
     const pctEff  = totalAdj > 0 ? Math.round((prodSec/totalAdj)*100) : 0;
     const pctMeal = (mealSec > 0 && totalAdj > 0) ? Math.round((mealSec/totalAdj)*100) : 0;
     const pctOther= totalAdj > 0 ? Math.max(0, 100 - pctEff - pctMeal) : 0;
-
-
-    // ✅ Porcentajes sobre TIEMPO REGISTRADO (prod + dead)
-    const total = Math.max(0, prodSec + deadSec);
 
     const isZero = circuits <= 0;
     const good = (!isZero) && (pctEff >= 50);
@@ -1355,15 +1341,6 @@ function renderProdHour(result){
         else agg.set(key, { kind, code, desc, seconds: sec });
       }
 
-      // ✅ Inyectar faltante como "000 — Desconocido"
-      if(missingSec > 0){
-        const key = "code:000";
-        const prev = agg.get(key);
-        if(prev) prev.seconds += missingSec;
-        else agg.set(key, { kind:"stopcode", code:"000", desc:"Desconocido", seconds: missingSec });
-      }
-
-
       const arr = Array.from(agg.values()).sort((a,b)=> (b.seconds||0)-(a.seconds||0));
       if(!arr.length){
         return `<div class="ph-otro-panel"><div class="ph-otro-title">Causas de Paro</div>
@@ -1371,7 +1348,6 @@ function renderProdHour(result){
       }
 
       const items = arr.slice(0, 12).map(it=>{
-        // ✅ CAMBIO: mostrar segundos para cuadrar exacto
         const hhmm = secToHHMMSS(it.seconds || 0);
         if(it.kind === "stopcode" && it.code){
           return `<li><b>${escHtml(it.code)}</b> — ${escHtml(it.desc)} <span class="ph-otro-muted">(${escHtml(hhmm)})</span></li>`;
@@ -1385,7 +1361,7 @@ function renderProdHour(result){
               </div>`;
     }
 
-    // ✅ CAMBIO: usar HH:MM:SS en badges (para no perder segundos)
+    // ✅ badges: SIEMPRE usar otherDeadSecFinal (real), y no inventar 1h.
     const timeBadges = (mealSec > 0) ? `
       <div class="ph-badge good">
         <span>Efectivo: ${escHtml(secToHHMMSS(prodSec))}</span>
@@ -1393,7 +1369,7 @@ function renderProdHour(result){
       </div>
 
       <button type="button" class="ph-badge bad ph-otro-btn">
-        <span>Otro: ${escHtml(secToHHMMSS(otherDeadSecAdj))}</span>
+        <span>Otro: ${escHtml(secToHHMMSS(otherDeadSecFinal))}</span>
         <span class="ph-badge-pct">${pctOther}%</span>
       </button>
 
@@ -1408,7 +1384,7 @@ function renderProdHour(result){
       </div>
 
       <button type="button" class="ph-badge bad ph-otro-btn">
-        <span>Otro: ${escHtml(secToHHMMSS(otherDeadSec))}</span>
+        <span>Otro: ${escHtml(secToHHMMSS(otherDeadSecFinal))}</span>
         <span class="ph-badge-pct">${pctOther}%</span>
       </button>
     `;
@@ -1424,7 +1400,7 @@ function renderProdHour(result){
       <div class="ph-circuits ${(machineU === "THB") ? "ph-circuits-link" : ""}"${circuitsAttrs}>
         ${escHtml(fmtIntEs(circuits))}
       </div>
-      <div class="ph-unit">${(machineU === "APLICACION" || machineU === "UNION") ? "Pulsos" : "Circuitos"}</div>
+      <div class="ph-unit">${(machineU === "APLICACION" || machineU === "UNION") ? "Crimpados" : "Circuitos"}</div>
       ${metersHtml}
 
       <div class="ph-badges">
@@ -1488,6 +1464,8 @@ function renderProdHour(result){
 
   if(info) info.style.display = showLenMix ? "block" : "none";
 }
+
+
 
 
 
@@ -1583,20 +1561,22 @@ function renderInlineKPIs(result){
 
 
 
-  if(m === "APLICACION" || m === "UNION"){
-    order = [
-      { key: "Crimpados (Pulsos)",              cls: "kpi-green",   span: "kpi-row-3" },
-      { key: "Pulsos Carrete",                 cls: "kpi-cyan",    span: "kpi-row-3" },
-      { key: "Pulsos Manual",                  cls: "kpi-red",     span: "kpi-row-3" },
+    if(m === "APLICACION" || m === "UNION"){
+      order = [
+        { key: "Crimpados",         cls: "kpi-green", span: "kpi-row-3" },
+        { key: "Crimpados Carrete", cls: "kpi-cyan",  span: "kpi-row-3" },
+        { key: "Crimpados Manual",  cls: "kpi-red",   span: "kpi-row-3" },
 
-      { key: "Horas activas",                  cls: "kpi-blue",    span: "kpi-row-3" },
-      { key: "Otro Tiempo de Ciclo (Muerto)",  cls: "kpi-purple",  span: "kpi-row-3" },
-      { key: "Tiempo Efectivo",                cls: "kpi-green2",  span: "kpi-row-3" },
+        // ✅ Fila de tiempos (como THB/HP): izquierda 3 cols, centro 6 cols, derecha 3 cols
+        { key: "Horas activas",                 cls: "",          span: "kpi-row-4" }, // ✅ arriba izq
+        { key: "Otro Tiempo de Ciclo (Muerto)", cls: "kpi-purple",span: "kpi-row-2" }, // ✅ grande centro
+        { key: "Tiempo Efectivo",               cls: "kpi-green2",span: "kpi-row-4" }, // ✅ arriba der
 
-      { key: "Paradas planeadas (HH:MM)",      cls: "kpi-cyan2",   span: "kpi-row-2" },
-      { key: "Paradas no planeadas (HH:MM)",   cls: "kpi-blue2",   span: "kpi-row-2" },
-    ];
-  }
+        { key: "Paradas planeadas (HH:MM)",    cls: "kpi-cyan2", span: "kpi-row-2" },
+        { key: "Paradas no planeadas (HH:MM)", cls: "kpi-blue2", span: "kpi-row-2" },
+      ];
+    }
+
 
   order.forEach(item => {
     if(Object.prototype.hasOwnProperty.call(ui, item.key)){

@@ -12,7 +12,7 @@ SECRET_KEY = "dev-secret-key-change-me"
 GSHEET_ID = "16WX3jqnbmYCglR2jH_1uHyWH-DKFuh80uEynKVghnyE"
 GSHEET_GID_APLICACION = 1418050425
 GSHEET_GID_UNION = 369782990
-GSHEET_TTL_S = 10
+GSHEET_TTL_S = 120
 
 
 # =========================
