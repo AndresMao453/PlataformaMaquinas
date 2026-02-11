@@ -1315,6 +1315,9 @@ def run_aplicacion_analysis(
         total_available_s = float(productive_s) + float(other_total_s) + float(meal_total_s) + float(no_reg_s)
         pct_other = (other_total_s / total_available_s * 100.0) if total_available_s > 0 else 0.0
 
+    # % Tiempo Efectivo sobre tiempo disponible (Horas activas)
+    pct_eff = (productive_s / active_available_s * 100.0) if active_available_s > 0 else 0.0
+
     # -------------------------
     # KPIs UI
     # -------------------------
@@ -1332,7 +1335,7 @@ def run_aplicacion_analysis(
             f"||105: {_fmt_hhmm(meal_total_s)} | No registrado: {_fmt_hhmm(no_reg_s)} | {pct_other:.1f}%"
         ),
 
-        "Tiempo Efectivo": _fmt_hhmm(productive_s),
+        "Tiempo Efectivo": f"{_fmt_hhmm(productive_s)} ({pct_eff:.1f}%)",
         "Paradas planeadas (HH:MM)": _fmt_hhmm(planned_s),
         "Paradas no planeadas (HH:MM)": _fmt_hhmm(unplanned_s),
     }

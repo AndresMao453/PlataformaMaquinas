@@ -58,3 +58,19 @@ THB_SHEET_ID = "1LWP9Z4AfBQFPOX3mydgTNPUmAEhsiWc9PSVp78-bLvA"
 
 THB_GID_VERIF = 145813485      # "Verificación de Medidas"
 THB_GID_PARADAS = 1720625606   # "Paradas"
+
+
+# =========================
+# CONTINUIDAD (GOOGLE SHEETS)
+# =========================
+CONT_BUSES_SHEET_ID = "13pRTp1-HWVvdfNGymzhbS2v4iDoojMGuPVcZUdwDEPk"
+CONT_BUSES_GID_RESUMEN_HORA = 855023329
+CONT_BUSES_GID_RESUMEN_DIA_REF = 1764533798
+
+
+# TTL (si ya tienes GSHEET_TTL_S, no agregues esto)
+# GSHEET_TTL_S = 10
+
+# ✅ Tokens (deben existir como constantes globales)
+GSHEET_CONT_BUSES_TOKEN = "__GSHEET_CONT_BUSES__"
+GSHEET_CONT_MOTOS_TOKEN = "__GSHEET_CONT_MOTOS__"

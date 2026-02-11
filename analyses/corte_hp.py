@@ -11,6 +11,43 @@ import numpy as np
 ANALYSIS_KEY = "corte_hp"
 ANALYSIS_TITLE = "Análisis Línea de Corte (HP)"
 
+def _sec_to_ui_hours_2(sec: int) -> float:
+    """Convierte segundos a horas en decimal redondeado a 2 decimales (como el UI)."""
+    try:
+        s = float(sec or 0)
+    except Exception:
+        s = 0.0
+    if s < 0:
+        s = 0.0
+    return round(s / 3600.0, 2)
+
+
+def _ui_hours_2_to_sec(h: float) -> int:
+    """Convierte horas en decimal (2 decimales) a segundos."""
+    try:
+        x = float(h or 0.0)
+    except Exception:
+        x = 0.0
+    if x < 0:
+        x = 0.0
+    return int(round(x * 3600.0))
+
+
+def _balance_no_reg_sec_ui(hd_sec: int, prod_sec: int, other_sec: int) -> int:
+    """
+    Balancea No registrado para que en el UI (2 decimales) se cumpla:
+      HD == Efectivo + Otro + No registrado
+    """
+    hd_h = _sec_to_ui_hours_2(hd_sec)
+    prod_h = _sec_to_ui_hours_2(prod_sec)
+    other_h = _sec_to_ui_hours_2(other_sec)
+
+    no_reg_h = round(hd_h - (prod_h + other_h), 2)
+    if no_reg_h < 0:
+        no_reg_h = 0.0
+
+    return _ui_hours_2_to_sec(no_reg_h)
+
 
 # ============================================================
 # Utilidades
@@ -51,10 +88,13 @@ def _parse_hhmm_to_seconds(hhmm: str) -> int:
 def _seconds_to_hhmm(sec: float) -> str:
     if sec is None or pd.isna(sec):
         return ""
-    sec = int(max(0, sec))
-    hh = sec // 3600
-    mm = (sec % 3600) // 60
+    # redondeo al minuto (evita 00:59 por 3599s)
+    s = int(round(max(0.0, float(sec)) / 60.0) * 60)
+    hh = s // 3600
+    mm = (s % 3600) // 60
     return f"{hh:02d}:{mm:02d}"
+
+
 
 def _seconds_to_hhmmss(sec: int) -> str:
     s = int(max(0, sec or 0))
@@ -66,10 +106,11 @@ def _seconds_to_hhmmss(sec: int) -> str:
 def _format_hmm_from_seconds(sec: float) -> str:
     if sec is None or pd.isna(sec) or sec < 0:
         return "0:00"
-    sec = int(sec)
-    h = sec // 3600
-    m = (sec % 3600) // 60
+    s = int(round(float(sec) / 60.0) * 60)  # redondeo al minuto
+    h = s // 3600
+    m = (s % 3600) // 60
     return f"{h}:{m:02d}"
+
 
 
 def _excel_time_to_seconds(s: pd.Series) -> pd.Series:
@@ -170,6 +211,85 @@ def _code_to_str(x: Any) -> str:
 def _desc_from_dict(code_str: str) -> str:
     c = _code_to_str(code_str)
     return STOP_CODE_DESC.get(str(c).strip(), "")
+
+def _clip_paradas_to_work_window_hp(
+    df_par: Optional[pd.DataFrame],
+    r0: pd.Timestamp,
+    r1: pd.Timestamp,
+    time_start: str,
+    time_end: str,
+) -> Optional[pd.DataFrame]:
+    """
+    Recorta paradas a la ventana trabajada EXACTA por día:
+      - Primero recorta a rango [r0, r1]
+      - Luego, por cada día, recorta a [cap_start, cap_end) según time_start/time_end
+    Esto garantiza que Pareto/KPIs/Tarjetas vean los mismos tiempos.
+    """
+    if df_par is None or df_par.empty:
+        return df_par
+
+    p = df_par.copy()
+    if "dt_start" not in p.columns or "dt_end" not in p.columns:
+        return p
+
+    p["dt_start"] = pd.to_datetime(p["dt_start"], errors="coerce")
+    p["dt_end"] = pd.to_datetime(p["dt_end"], errors="coerce")
+    p = p.dropna(subset=["dt_start", "dt_end"]).copy()
+    p = p[p["dt_end"] > p["dt_start"]].copy()
+    if p.empty:
+        return p
+
+    r0 = pd.Timestamp(r0)
+    r1 = pd.Timestamp(r1)
+    # rango global (inclusivo)
+    p.loc[p["dt_start"] < r0, "dt_start"] = r0
+    p.loc[p["dt_end"] > r1, "dt_end"] = r1
+    p = p[p["dt_end"] > p["dt_start"]].copy()
+    if p.empty:
+        return p
+
+    days = pd.date_range(r0.normalize(), r1.normalize(), freq="D")
+    out_parts = []
+
+    for day in days:
+        cap_bounds = _cap_bounds_for_day(day, time_start, time_end)
+        if not cap_bounds:
+            continue
+        cap_start, cap_end = cap_bounds  # cap_end EXCLUSIVO
+
+        # intersecta con ese día
+        day_start = pd.Timestamp(day)
+        day_end = day_start + pd.Timedelta(days=1)
+
+        m = (p["dt_end"] > day_start) & (p["dt_start"] < day_end)
+        if not m.any():
+            continue
+
+        pd_ = p.loc[m].copy()
+
+        # clip al día
+        pd_.loc[pd_["dt_start"] < day_start, "dt_start"] = day_start
+        pd_.loc[pd_["dt_end"] > day_end, "dt_end"] = day_end
+
+        # clip a ventana trabajada
+        pd_.loc[pd_["dt_start"] < cap_start, "dt_start"] = cap_start
+        pd_.loc[pd_["dt_end"] > cap_end, "dt_end"] = cap_end
+
+        pd_ = pd_[pd_["dt_end"] > pd_["dt_start"]].copy()
+        if not pd_.empty:
+            out_parts.append(pd_)
+
+    if not out_parts:
+        return p.iloc[0:0].copy()
+
+    out = pd.concat(out_parts, ignore_index=True)
+
+    # recalcula dur_sec si existe (para Pareto/otras)
+    if "dur_sec" in out.columns:
+        out["dur_sec"] = (out["dt_end"] - out["dt_start"]).dt.total_seconds()
+        out["dur_sec"] = pd.to_numeric(out["dur_sec"], errors="coerce").fillna(0.0).clip(lower=0.0)
+
+    return out
 
 
 def _apply_time_window(dt: pd.Series, time_start: str, time_end: str) -> pd.Series:
@@ -981,6 +1101,7 @@ def _compute_hourly_buckets_hp(
     time_end: str,
 ) -> List[Dict[str, Any]]:
     MEAL_CODE = "105"
+    PAUSE_CODE = "104"   # ✅ antes era 106, ahora es 104
     NS = 1_000_000_000  # ns -> sec
 
     if dt_corte is None or dt_corte.empty:
@@ -1025,7 +1146,9 @@ def _compute_hourly_buckets_hp(
     # ======================
     stops_start_ns = None
     stops_end_ns = None
-    stops_is_meal = None
+    codes_np = None
+
+    # para detalle de causas por código (incluye 104, excluye 105)
     code_groups: Dict[str, np.ndarray] = {}
 
     if df_paradas_iv is not None and not df_paradas_iv.empty:
@@ -1038,31 +1161,28 @@ def _compute_hourly_buckets_hp(
                 p = p.dropna(subset=["dt_start", "dt_end"]).copy()
 
             if not p.empty:
-                # ✅ clip al día
+                # clip al día
                 p.loc[p["dt_start"] < day_start, "dt_start"] = day_start
                 p.loc[p["dt_end"] > day_end, "dt_end"] = day_end
 
-                # ✅ clip a la ventana trabajada (para que lo fuera de la ventana sea "No registrado/000")
+                # clip a la ventana trabajada
                 p.loc[p["dt_start"] < cap_start, "dt_start"] = cap_start
                 p.loc[p["dt_end"] > cap_end, "dt_end"] = cap_end
 
                 p = p[p["dt_end"] > p["dt_start"]].copy()
 
             if not p.empty:
-                codes = p.get("codigo", "").astype(str).str.strip()
-                stops_is_meal = (codes == MEAL_CODE).to_numpy()
-
+                codes_np = p.get("codigo", "").astype(str).str.strip().to_numpy()
                 stops_start_ns = p["dt_start"].astype("datetime64[ns]").astype("int64").to_numpy()
                 stops_end_ns = p["dt_end"].astype("datetime64[ns]").astype("int64").to_numpy()
 
-                # agrupar índices por código (excluye comida)
+                # agrupar índices por código (para TOP causas en tarjeta)
                 tmp_groups: Dict[str, List[int]] = {}
-                for i, c in enumerate(codes.to_numpy()):
+                for i, c in enumerate(codes_np):
                     c = str(c).strip()
-                    if not c or c == MEAL_CODE:
-                        continue
+                    if (not c) or (c == MEAL_CODE):
+                        continue  # ✅ 105 no va en causas de "Otro"
                     tmp_groups.setdefault(c, []).append(i)
-
                 for k, v in tmp_groups.items():
                     code_groups[k] = np.array(v, dtype=np.int64)
 
@@ -1075,37 +1195,45 @@ def _compute_hourly_buckets_hp(
         h0_ns = int(h0.value)
         h1_ns = int(h1.value)
 
-        # ✅ capacidad TRABAJADA dentro de la ventana (para efectivo)
+        # capacidad trabajada dentro de la ventana (para efectivo)
         work_ns = max(0, min(h1_ns, cap_end_ns) - max(h0_ns, cap_start_ns))
         if work_ns <= 0:
             continue
-        cap_work_sec = int(work_ns // NS)
 
-        # ✅ capacidad FULL de la hora (para cerrar a 60 min con 000)
+        # ✅ CAMBIO: redondeo ns->sec (evita 3599s y el 0.99)
+        cap_work_sec = int(round(work_ns / NS))
+
+        # capacidad full (60 min) para el "No registrado" por tarjeta
         cap_full_sec = 3600
 
         # =========
-        # Paradas registradas dentro de la hora (ya vienen clip a la ventana)
+        # Paradas registradas dentro de la hora
         # =========
         dead_rec_sec = 0
         meal_sec = 0
-        ol_ns = None
+        pause_sec = 0
 
+        ol_ns = None
         if stops_start_ns is not None and stops_end_ns is not None and len(stops_start_ns) > 0:
             ol_ns = np.minimum(stops_end_ns, h1_ns) - np.maximum(stops_start_ns, h0_ns)
             ol_ns = np.maximum(0, ol_ns)
 
-            dead_rec_sec = int(ol_ns.sum() // NS)
-            if stops_is_meal is not None:
-                meal_sec = int(ol_ns[stops_is_meal].sum() // NS)
+            # ✅ CAMBIO: redondeo ns->sec
+            dead_rec_sec = int(round(float(ol_ns.sum()) / NS))
 
-        # clamp por seguridad (sobre la capacidad trabajada)
+            if codes_np is not None and len(codes_np) == len(ol_ns):
+                meal_sec = int(round(float(ol_ns[codes_np == MEAL_CODE].sum()) / NS))
+                pause_sec = int(round(float(ol_ns[codes_np == PAUSE_CODE].sum()) / NS))
+
+        # clamp por seguridad
         if dead_rec_sec > cap_work_sec:
             dead_rec_sec = cap_work_sec
             meal_sec = min(meal_sec, cap_work_sec)
+            pause_sec = min(pause_sec, cap_work_sec)
 
         # =========
-        # Producción: SOLO sobre lo trabajado (igual que venías)
+        # Tiempo efectivo por tarjeta:
+        # prod = trabajado - (todas las paradas registradas)
         # =========
         cut = int(cut_by_hour.get(h, 0))
         prod_sec = max(0, cap_work_sec - dead_rec_sec)
@@ -1113,20 +1241,29 @@ def _compute_hourly_buckets_hp(
             prod_sec = 0
 
         # =========
-        # ✅ No registrado (000): lo que falta para cerrar 60 min
-        #    (sin tocar el KPI por ahora; esto es SOLO para la tarjeta)
+        # No registrado (000) SOLO para tarjetas:
+        # lo que falta para cerrar 60 min visualmente
         # =========
         unreg_sec = max(0, cap_full_sec - (prod_sec + dead_rec_sec))
 
-        # ✅ dead mostrado incluye el no registrado para que cierre a 60
-        dead_show_sec = int(dead_rec_sec + unreg_sec)
-
-        # ✅ "Otro" registrado (sin 105) + no registrado (000) para la tarjeta
-        other_rec_sec = max(0, int(dead_rec_sec - meal_sec))
-        other_show_sec = int(other_rec_sec + unreg_sec)
+        # =========
+        # ✅ KPI "Otro" (sin 105 ni 104) => solo registrado
+        # =========
+        other_kpi_rec_sec = max(0, int(dead_rec_sec - meal_sec - pause_sec))
 
         # =========
-        # Detalle de causas (top 8) + 000 como resto para cerrar "Otro" mostrado
+        # ✅ Tarjeta "Otro" (incluye 104, excluye 105) + 000 para cerrar 60
+        # =========
+        other_card_rec_sec = max(0, int(dead_rec_sec - meal_sec))
+        other_show_sec = int(other_card_rec_sec + unreg_sec)
+
+        # dead mostrado en tarjeta cierra a 60 con 000
+        dead_show_sec = int(dead_rec_sec + unreg_sec)
+
+        # =========
+        # ✅ Reporte de causas (tarjeta):
+        # incluir 104 (y cualquier otra), excluir 105
+        # y SI hace falta tiempo para cerrar => meter "000 — Desconocido (x)"
         # =========
         other_causes: List[Dict[str, Any]] = []
         known_other_sec = 0
@@ -1134,7 +1271,8 @@ def _compute_hourly_buckets_hp(
         if ol_ns is not None and code_groups:
             pairs: List[Tuple[str, int]] = []
             for code, idxs in code_groups.items():
-                sec = int(ol_ns[idxs].sum() // NS)
+                # ✅ CAMBIO: redondeo ns->sec
+                sec = int(round(float(ol_ns[idxs].sum()) / NS))
                 if sec > 0:
                     pairs.append((code, sec))
 
@@ -1142,12 +1280,17 @@ def _compute_hourly_buckets_hp(
             pairs = pairs[:8]
 
             other_causes = [
-                {"code": str(c), "seconds": int(s), "hhmm": _seconds_to_hhmm(float(s))}
+                {
+                    "code": str(c),
+                    "seconds": int(s),
+                    "hhmm": _seconds_to_hhmm(float(s)),
+                    "desc": STOP_CODE_DESC.get(str(c).strip(), ""),
+                }
                 for c, s in pairs
             ]
             known_other_sec = int(sum(int(x.get("seconds", 0) or 0) for x in other_causes))
 
-        # ✅ 000 = todo lo que falta para que el panel cierre con other_show_sec
+        # ✅ 000 como resto para cerrar el "Otro" mostrado en la tarjeta
         unknown_sec = max(0, int(other_show_sec) - int(known_other_sec))
         if unknown_sec > 0:
             other_causes = [c for c in other_causes if str(c.get("code", "")).strip() != "000"]
@@ -1159,20 +1302,32 @@ def _compute_hourly_buckets_hp(
             })
             other_causes = other_causes[:8]
 
+        dead_h2 = _sec_to_ui_hours_2(dead_show_sec)
+        prod_h2 = _sec_to_ui_hours_2(prod_sec)
+        unreg_h2 = _sec_to_ui_hours_2(unreg_sec)
+        other_h2 = _sec_to_ui_hours_2(other_show_sec)
+        cap_h2 = _sec_to_ui_hours_2(cap_full_sec)  # SIEMPRE 1.00
+
+
         buckets.append({
             "hourLabel": f"{h:02d}:00",
             "hour": f"{h:02d}",
 
-            # ✅ para KPIs (trabajado real)
+            # para KPI (trabajado real)
             "capacitySec": int(cap_work_sec),
 
-            # ✅ para tarjetas: CIERRA A 60 min
+            # para tarjetas
             "deadSec": int(dead_show_sec),
             "mealSec": int(meal_sec),
+            "pauseSec": int(pause_sec),  # ✅ 104 para KPI/UI
+
+            # ✅ Tarjeta "Otro" incluye 104 + 000 (pero NO 105)
             "otherDeadSec": int(other_show_sec),
 
-            # ✅ para KPI: solo registrado (SIN 000)
-            "otherRecordedSec": int(other_rec_sec),
+            # ✅ KPI "Otro" = dead - 105 - 104 (SIN 000)
+            "otherRecordedSec": int(other_kpi_rec_sec),
+
+            # ✅ 000 => No Registrado (balanceado en KPI aparte)
             "unregSec": int(unreg_sec),
 
             "prodSec": int(prod_sec),
@@ -1181,10 +1336,20 @@ def _compute_hourly_buckets_hp(
             "meters": 0.0,
             "hadActivity": True,
 
+            # ✅ Reporte de causas en tarjetas (incluye 104 + 000 si aplica)
             "other_causes": other_causes,
+            "capH2": float(cap_h2),  # 1.00
+            "deadH2": float(dead_h2),
+            "prodH2": float(prod_h2),
+            "unregH2": float(unreg_h2),
+            "otherDeadH2": float(other_h2),
+
         })
 
     return buckets
+
+
+
 
 
 
@@ -1302,8 +1467,6 @@ def _compute_horas_disponibles_hp(
     total = (int(total) // 60) * 60
     return int(total)
 
-
-
 # ============================================================
 # ANALISIS PRINCIPAL
 # ============================================================
@@ -1325,6 +1488,9 @@ def analyze_hp(
 
     if df_corte is None or df_corte.empty:
         return {"status": "error", "message": "HP: La hoja 'Corte' está vacía.", "machine": machine}
+
+    MEAL_CODE = "105"
+    PAUSE_CODE = "104"   # ✅ antes era 106, ahora es 104
 
     def _clean_hhmm(x: str) -> str:
         s = str(x or "").strip()
@@ -1371,7 +1537,7 @@ def analyze_hp(
 
     r0, r1 = _range_from_period(period, period_value, fallback)
 
-    # 5) Duración sheet (solo se usará fuera de DAY si quieres)
+    # 5) Duración sheet (NO la usamos para descomponer 104/105, solo como fallback total si NO hay paradas)
     dead_from_duracion_sec = _sum_dead_seconds_from_duracion_sheet(df_duracion, r0, r1)
     use_duracion = dead_from_duracion_sec > 0
 
@@ -1417,6 +1583,9 @@ def analyze_hp(
     if not time_start or not time_end:
         time_start = time_start or "00:00"
         time_end = time_end or "23:59"
+        # ✅ Paradas recortadas EXACTO a la ventana trabajada (para que KPIs/Pareto/Tarjetas cuadren)
+
+    df_par_work = _clip_paradas_to_work_window_hp(df_par_p, r0, r1, time_start, time_end)
 
     # 8) aplicar ventana horaria SOLO si el front dice time_apply=True
     dt_default_src = df_corte_p["_dt"]
@@ -1449,150 +1618,17 @@ def analyze_hp(
     if corte_cols.col_solic and corte_cols.col_solic in df_corte_w.columns:
         no_conformes = int(pd.to_numeric(df_corte_w[corte_cols.col_solic], errors="coerce").fillna(0).sum())
 
-    # 10) Defaults para non-day (se sobreescribe en DAY con buckets)
-    if use_duracion:
-        dead_total_sec = int(dead_from_duracion_sec)
-        comida_sec = 0
-        otro_dead_sec = int(dead_total_sec)
-    else:
-        otro_dead_sec, comida_sec, dead_total_sec = _sum_paradas_by_dtend_seconds_simple(
-            df_paradas_iv=df_par_p,
-            r0=r0,
-            r1=r1,
-        )
-
-    # 11) Tiempo de trabajo y efectivo
-    p = (period or "day").strip().lower()
-
-    buckets: List[Dict[str, Any]] = []
+    # 10) Defaults (si NO hay buckets)
+    dead_total_sec = 0
+    comida_sec = 0
+    pausa_sec = 0
+    otro_dead_sec = 0
     prod_sec = 0
     cap_total_sec = 0
-
-    # ======== helper: causas de "Otro" por hora (y mete 000 como resto) ========
-    def _attach_other_causes_to_buckets_day(
-        buckets_in: List[Dict[str, Any]],
-        df_par_day: Optional[pd.DataFrame],
-        day0: pd.Timestamp,
-    ) -> None:
-        if not buckets_in:
-            return
-
-        if df_par_day is None or not isinstance(df_par_day, pd.DataFrame) or df_par_day.empty:
-            for b in buckets_in:
-                b["other_causes"] = []
-            return
-
-        p2 = df_par_day.dropna(subset=["dt_start", "dt_end"]).copy()
-        if p2.empty or ("codigo" not in p2.columns):
-            for b in buckets_in:
-                b["other_causes"] = []
-            return
-
-        day0 = pd.Timestamp(day0).normalize()
-        day_start = day0
-        day_end = day0 + pd.Timedelta(days=1)
-
-        p2["dt_start"] = pd.to_datetime(p2["dt_start"], errors="coerce")
-        p2["dt_end"] = pd.to_datetime(p2["dt_end"], errors="coerce")
-        p2 = p2.dropna(subset=["dt_start", "dt_end"])
-        if p2.empty:
-            for b in buckets_in:
-                b["other_causes"] = []
-            return
-
-        # clip al día
-        p2.loc[p2["dt_start"] < day_start, "dt_start"] = day_start
-        p2.loc[p2["dt_end"] > day_end, "dt_end"] = day_end
-        p2 = p2[p2["dt_end"] > p2["dt_start"]].copy()
-        if p2.empty:
-            for b in buckets_in:
-                b["other_causes"] = []
-            return
-
-        # normaliza códigos
-        p2["codigo"] = p2["codigo"].apply(_code_to_str).astype(str).str.strip()
-        p2 = p2[p2["codigo"].ne("")].copy()
-        if p2.empty:
-            for b in buckets_in:
-                b["other_causes"] = []
-            return
-
-        start_ns = p2["dt_start"].astype("datetime64[ns]").astype("int64").to_numpy()
-        end_ns = p2["dt_end"].astype("datetime64[ns]").astype("int64").to_numpy()
-        codes_np = p2["codigo"].astype(str).to_numpy()
-
-        MEAL_CODE = "105"
-
-        for b in buckets_in:
-            h_raw = str(b.get("hour") or b.get("hourLabel") or "").strip()
-            h_txt = h_raw.split(":")[0] if h_raw else ""
-            try:
-                h = int(h_txt)
-            except Exception:
-                b["other_causes"] = []
-                continue
-
-            h0 = day0 + pd.Timedelta(hours=h)
-            h1 = day0 + pd.Timedelta(hours=h + 1)
-
-            h0_ns = int(h0.value)
-            h1_ns = int(h1.value)
-
-            ol_ns = np.minimum(end_ns, h1_ns) - np.maximum(start_ns, h0_ns)
-            ol_ns = np.maximum(0, ol_ns)
-
-            if ol_ns.sum() <= 0:
-                b["other_causes"] = []
-                continue
-
-            acc: Dict[str, int] = {}
-            for code, ns in zip(codes_np, ol_ns):
-                if not code or code == MEAL_CODE:
-                    continue
-                sec = int(ns / 1e9)
-                if sec <= 0:
-                    continue
-                acc[code] = acc.get(code, 0) + sec
-
-            if not acc:
-                b["other_causes"] = []
-                continue
-
-            items = sorted(acc.items(), key=lambda kv: kv[1], reverse=True)[:10]
-
-            # ✅ mete 000 como "resto" para que SUMA CAUSAS == otherDeadSec (incluye el faltante a 60 min)
-            target_other = int(b.get("otherDeadSec", 0) or 0)
-            known = int(sum(int(s) for _, s in items))
-            if known > target_other:
-                running = 0
-                trimmed = []
-                for c, s in items:
-                    if running >= target_other:
-                        break
-                    take = min(int(s), target_other - running)
-                    if take > 0:
-                        trimmed.append((c, take))
-                        running += take
-                items = trimmed
-                known = running
-
-            unknown = max(0, target_other - known)
-            if unknown > 0:
-                items = [("000", int(unknown))] + items
-                items = items[:10]
-
-            b["other_causes"] = [
-                {
-                    "code": c,
-                    "seconds": int(s),
-                    "hhmm": _seconds_to_hhmm(float(s)),
-                    "desc": ("Desconocido" if str(c).strip() == "000" else STOP_CODE_DESC.get(str(c).strip(), "")),
-                }
-                for c, s in items
-            ]
-
-    # variables DAY (para no usar kpis antes de crearlo)
     no_reg_sec_from_buckets = 0
+    buckets: List[Dict[str, Any]] = []
+
+    p = (period or "day").strip().lower()
 
     if p == "day":
         selected_day = pd.Timestamp(r0).normalize()
@@ -1602,213 +1638,90 @@ def analyze_hp(
             dt_corte=df_corte_w["_dt"],
             corte_cols=corte_cols,
             selected_day=selected_day,
-            df_paradas_iv=df_par_p,
+            df_paradas_iv=df_par_work,
             time_start=time_start,
             time_end=time_end,
         )
 
-        _attach_other_causes_to_buckets_day(buckets, df_par_p, selected_day)
-
         cap_total_sec = int(sum(int(b.get("capacitySec", 0) or 0) for b in buckets))
+
+        # ✅ KPI efectivo = suma tarjetas
         prod_sec = int(sum(int(b.get("prodSec", 0) or 0) for b in buckets))
 
-        # ✅ 105 (solo registrado a nivel buckets)
+        # ✅ 105 y 104 (solo registrado)
         comida_sec = int(sum(int(b.get("mealSec", 0) or 0) for b in buckets))
+        pausa_sec = int(sum(int(b.get("pauseSec", 0) or 0) for b in buckets))
 
-        # ✅ KPI "Otro" (HP) = SOLO registrado (SIN 000) y SIN 105
+        # ✅ KPI "Otro" = registrado excluyendo 105 y 104
         otro_dead_sec = int(sum(int(b.get("otherRecordedSec", 0) or 0) for b in buckets))
 
-        # dead_total mostrado en tarjetas (incluye 000 porque está dentro de deadSec)
+        # dead total mostrado tarjetas (incluye cierre 60 con 000)
         dead_total_sec = int(sum(int(b.get("deadSec", 0) or 0) for b in buckets))
 
-        # debug/auditoría (no usado en KPI final)
+        # 000 puro por tarjetas (debug)
         no_reg_sec_from_buckets = int(sum(int(b.get("unregSec", 0) or 0) for b in buckets))
 
-
     else:
-
-        # ✅ week/month = SUMA de días (misma lógica de DAY)
-
+        # week/month = sumando días usando la MISMA lógica de buckets por día
         def _iter_days(a: pd.Timestamp, b: pd.Timestamp):
-
             d0 = pd.Timestamp(a).normalize()
-
             d1 = pd.Timestamp(b).normalize()
-
             d = d0
-
             while d <= d1:
                 yield d
-
                 d += pd.Timedelta(days=1)
 
-        tot_cap = 0
-
-        tot_prod = 0
-
-        tot_otro_kpi = 0  # "Otro Tiempo" KPI (registrado, SIN 000, SIN 105)
-
-        tot_meal = 0  # 105 (con overflow si aplica)
-
-        tot_dead = 0  # deadSec total (para consistencia/debug)
-
-        tot_hd = 0  # Horas Disponibles sumadas por día
-
-        tot_no_reg = 0  # No registrado balanceado por día
+        tot_cap = tot_prod = tot_otro = tot_meal = tot_pause = tot_dead = tot_unreg = 0
 
         for day in _iter_days(r0, r1):
-
             day_start = pd.Timestamp(day).normalize()
-
             day_end = day_start + pd.Timedelta(days=1)
 
-            # Corte (usa df_corte_w para respetar apply_time_filter)
-
-            m_c = (
-
-                    df_corte_w["_dt"].notna()
-
-                    & (df_corte_w["_dt"] >= day_start)
-
-                    & (df_corte_w["_dt"] < day_end)
-
-            )
-
+            m_c = df_corte_w["_dt"].notna() & (df_corte_w["_dt"] >= day_start) & (df_corte_w["_dt"] < day_end)
             df_corte_day = df_corte_w.loc[m_c].copy()
 
-            # Paradas (overlap con el día)
-
             df_par_day = None
-
-            if df_par_p is not None and not df_par_p.empty:
+            if df_par_work is not None and not df_par_work.empty:
                 m_p = (
-
-                        df_par_p["dt_end"].notna() & df_par_p["dt_start"].notna()
-
-                        & (df_par_p["dt_end"] > day_start)
-
-                        & (df_par_p["dt_start"] < day_end)
-
+                        df_par_work["dt_end"].notna() & df_par_work["dt_start"].notna()
+                        & (df_par_work["dt_end"] > day_start)
+                        & (df_par_work["dt_start"] < day_end)
                 )
-
-                df_par_day = df_par_p.loc[m_p].copy()
+                df_par_day = df_par_work.loc[m_p].copy()
 
             buckets_day = _compute_hourly_buckets_hp(
-
                 df_corte=df_corte_day,
-
                 dt_corte=df_corte_day["_dt"],
-
                 corte_cols=corte_cols,
-
                 selected_day=day_start,
-
                 df_paradas_iv=df_par_day,
-
                 time_start=time_start,
-
                 time_end=time_end,
-
             )
 
-            day_cap = int(sum(int(b.get("capacitySec", 0) or 0) for b in buckets_day))
-
-            day_prod = int(sum(int(b.get("prodSec", 0) or 0) for b in buckets_day))
-
-            day_otro_kpi = int(sum(int(b.get("otherRecordedSec", 0) or 0) for b in buckets_day))
-
-            day_meal = int(sum(int(b.get("mealSec", 0) or 0) for b in buckets_day))
-
-            day_dead = int(sum(int(b.get("deadSec", 0) or 0) for b in buckets_day))
-
-            # Horas disponibles del día (MISMA lógica que en DAY)
-
-            m_cp = (
-
-                    df_corte_p["_dt"].notna()
-
-                    & (df_corte_p["_dt"] >= day_start)
-
-                    & (df_corte_p["_dt"] < day_end)
-
-            )
-
-            df_corte_p_day = df_corte_p.loc[m_cp].copy()
-
-            df_par_p_day = None
-
-            if df_par_p is not None and not df_par_p.empty:
-                m_pp = (
-
-                        df_par_p["dt_end"].notna() & df_par_p["dt_start"].notna()
-
-                        & (df_par_p["dt_end"] > day_start)
-
-                        & (df_par_p["dt_start"] < day_end)
-
-                )
-
-                df_par_p_day = df_par_p.loc[m_pp].copy()
-
-            day_hd = int(_compute_horas_disponibles_hp(
-
-                period="day",
-
-                r0=day_start,
-
-                r1=day_end - pd.Timedelta(microseconds=1),
-
-                df_corte_p=df_corte_p_day,
-
-                df_par_p=df_par_p_day,
-
-            ) or 0)
-
-            # ✅ No registrado balanceado vs HD (SIN 105)
-
-            base = day_hd - (day_prod + day_otro_kpi)
-
-            if base >= 0:
-
-                day_no_reg = int(base)
-
-            else:
-
-                day_no_reg = 0
-
-                day_meal = int(day_meal) + int(-base)  # overflow lo absorbe 105
-
-            tot_cap += day_cap
-
-            tot_prod += day_prod
-
-            tot_otro_kpi += day_otro_kpi
-
-            tot_meal += day_meal
-
-            tot_dead += day_dead
-
-            tot_hd += day_hd
-
-            tot_no_reg += day_no_reg
+            tot_cap += int(sum(int(b.get("capacitySec", 0) or 0) for b in buckets_day))
+            tot_prod += int(sum(int(b.get("prodSec", 0) or 0) for b in buckets_day))
+            tot_meal += int(sum(int(b.get("mealSec", 0) or 0) for b in buckets_day))
+            tot_pause += int(sum(int(b.get("pauseSec", 0) or 0) for b in buckets_day))
+            tot_otro += int(sum(int(b.get("otherRecordedSec", 0) or 0) for b in buckets_day))
+            tot_dead += int(sum(int(b.get("deadSec", 0) or 0) for b in buckets_day))
+            tot_unreg += int(sum(int(b.get("unregSec", 0) or 0) for b in buckets_day))
 
         cap_total_sec = int(tot_cap)
-
         prod_sec = int(tot_prod)
-
-        otro_dead_sec = int(tot_otro_kpi)
-
         comida_sec = int(tot_meal)
-
+        pausa_sec = int(tot_pause)
+        otro_dead_sec = int(tot_otro)
         dead_total_sec = int(tot_dead)
+        no_reg_sec_from_buckets = int(tot_unreg)
+        buckets = []  # week/month no muestran hourly
 
-        # ✅ estos 2 ahora vienen sumados por día (NO recalcular abajo)
-
-        hd_sec = int(tot_hd)
-
-        no_reg_sec = int(tot_no_reg)
-
-        buckets = []  # week/month no muestran hourly cards
+        # fallback si no hay paradas y sí hay duración (solo total muerto, sin desglose)
+        if (cap_total_sec == 0 and prod_sec == 0 and (df_par_p is None or df_par_p.empty)) and use_duracion:
+            dead_total_sec = int(dead_from_duracion_sec)
+            otro_dead_sec = int(dead_total_sec)
+            comida_sec = 0
+            pausa_sec = 0
 
     # KPI Horas Disponibles (sin tocar THB)
     hd_sec = _compute_horas_disponibles_hp(
@@ -1816,38 +1729,43 @@ def analyze_hp(
         r0=r0,
         r1=r1,
         df_corte_p=df_corte_p,
-        df_par_p=df_par_p,
+        df_par_p=df_par_work,  # ✅ usar recortadas
     )
 
-    # ✅ No registrado balanceado vs Horas Disponibles.
-    # No_reg = HD - (Efectivo + Otro_KPI)   [105 NO entra]
-    # Si se pasa (base < 0), el restante lo absorbe 105.
-    base = int(hd_sec) - (int(prod_sec) + int(otro_dead_sec))
-    if base >= 0:
-        no_reg_sec = int(base)
-    else:
-        no_reg_sec = 0
-        comida_sec = int(comida_sec) + int(-base)  # ✅ exceso lo cubre 105
+    # ✅ No registrado FINAL (000): balance vs HD
+    # No_reg = HD - (Efectivo + Otro_KPI)   [105 y 104 NO entran]
+    # ✅ No registrado FINAL (000) BALANCEADO al redondeo del UI (2 decimales)
+    # Para que visualmente se cumpla:
+    #   Horas Disponibles == Tiempo Efectivo + Otro Tiempo + No registrado
+    no_reg_sec = _balance_no_reg_sec_ui(int(hd_sec), int(prod_sec), int(otro_dead_sec))
 
     # =========================
-    # % (sin contemplar Parada 105)
-    # base_no105 = efectivo + otro_kpi + no_registrado
+    # % (sin contemplar 105 ni 104) - usando el MISMO redondeo del UI
+    # base_ui = efectivo + otro_kpi + no_registrado  (en horas con 2 decimales)
     # =========================
-    base_no105 = int(prod_sec) + int(otro_dead_sec) + int(no_reg_sec)
-
     def _fmt_pct(pct: float) -> str:
         pr = round(float(pct), 1)
         if abs(pr - round(pr)) < 1e-9:
             return f"{int(round(pr))}%"
         return f"{pr:.1f}%"
 
-    pct_eff = (100.0 * int(prod_sec) / base_no105) if base_no105 > 0 else 0.0
-    pct_otro = (100.0 * int(otro_dead_sec) / base_no105) if base_no105 > 0 else 0.0
+    hd_h_ui = _sec_to_ui_hours_2(int(hd_sec))
+    prod_h_ui = _sec_to_ui_hours_2(int(prod_sec))
+    otro_h_ui = _sec_to_ui_hours_2(int(otro_dead_sec))
+    noreg_h_ui = _sec_to_ui_hours_2(int(no_reg_sec))
 
-    pct_eff_s = _fmt_pct(pct_eff)
-    pct_otro_s = _fmt_pct(pct_otro)
+    base_ui = prod_h_ui + otro_h_ui + noreg_h_ui
+    if base_ui <= 0:
+        pct_eff_s = _fmt_pct(0.0)
+        pct_otro_s = _fmt_pct(0.0)
+    else:
+        pct_eff_s = _fmt_pct(100.0 * prod_h_ui / base_ui)
+        pct_otro_s = _fmt_pct(100.0 * otro_h_ui / base_ui)
 
-    # 12) salida
+    # (si lo sigues usando en lógica posterior)
+    base_no105104 = int(prod_sec) + int(otro_dead_sec) + int(no_reg_sec)
+
+    # salida
     kpis = {
         "circuitos_cortados": cortados,
         "circuitos_planeados": planeadas,
@@ -1859,13 +1777,16 @@ def analyze_hp(
         "dead_total_sec": int(dead_total_sec),
         "dead_tiempo_hhmm": _seconds_to_hhmm(float(dead_total_sec)),
 
-        # ✅ KPI "Otro" = SOLO registrado (SIN 000) y SIN 105
+        # ✅ KPI "Otro" = registrado EXCLUYENDO 105 y 104
         "otro_tiempo_sec": int(otro_dead_sec),
         "otro_tiempo_hhmm": _seconds_to_hhmm(float(otro_dead_sec)),
 
-        # ✅ 105 (ajustada si hubo exceso)
+        # ✅ 105 y ✅ 104 separados
         "comida_sec": int(comida_sec),
         "comida_hhmm": _seconds_to_hhmm(float(comida_sec)),
+
+        "pausa_sec": int(pausa_sec),
+        "pausa_hhmm": _seconds_to_hhmm(float(pausa_sec)),
 
         "tiempo_efectivo_sec": int(prod_sec),
         "tiempo_efectivo_hhmm": _format_hmm_from_seconds(int(prod_sec)),
@@ -1873,11 +1794,11 @@ def analyze_hp(
         "horas_disponibles_sec": int(hd_sec),
         "horas_disponibles_hhmm": _format_hmm_from_seconds(int(hd_sec)),
 
-        # ✅ No registrado (balance)
+        # ✅ No registrado FINAL (000)
         "no_registrado_sec": int(no_reg_sec),
         "no_registrado_hhmm": _seconds_to_hhmm(float(no_reg_sec)),
 
-        # (opcional debug)
+        # debug (000 por tarjetas)
         "no_registrado_from_buckets_sec": int(no_reg_sec_from_buckets),
 
         "hourly_buckets": buckets,
@@ -1890,20 +1811,21 @@ def analyze_hp(
 
         "Horas Disponibles": kpis["horas_disponibles_hhmm"],
 
-        # main = otro KPI (registrado sin 000 y sin 105)
-        # sub = 105 y No registrado (balance) + % del otro (sin 105) al final para que el JS lo ponga al lado del main
-        "Otro Tiempo de Ciclo (Muerto)": (
+        # ✅ main = Otro KPI (sin 105/104/000)
+        # ✅ sub = 105 + 104 + No registrado
+        "Tiempos Perdidos": (
             f"{_seconds_to_hhmm(kpis['otro_tiempo_sec'])}"
             f"||105: {_seconds_to_hhmm(kpis['comida_sec'])}"
+            f" | 104: {_seconds_to_hhmm(kpis['pausa_sec'])}"
             f" | No registrado: {_seconds_to_hhmm(kpis['no_registrado_sec'])}"
             f" | {pct_otro_s}"
         ),
 
-        # ✅ Tiempo efectivo con % (sin 105)
-        "Tiempo Efectivo": f"{kpis['tiempo_efectivo_hhmm']} ({pct_eff_s})",
+        "Tiempo Trabajado": f"{kpis['tiempo_efectivo_hhmm']} ({pct_eff_s})",
+
     }
 
-    pareto = _pareto_paradas_hp(df_par_p, top_n=25)
+    pareto = _pareto_paradas_hp(df_par_work, top_n=25)
 
     return {
         "status": "ok",
@@ -1920,6 +1842,8 @@ def analyze_hp(
         "kpis_ui": ui,
         "pareto": pareto,
     }
+
+
 
 
 

@@ -1770,9 +1770,35 @@ def analyze_thb(
         "labels": [], "descs": [], "dur_sec": [], "dur_hhmm": [], "cum_pct": [],
         "total_sec": 0, "total_105_sec": 0, "total_other_sec": 0
     }
+    # ✅ Parada 106 (misma lógica de cuantización que Pareto)
+    # ✅ Parada 104 (misma lógica de cuantización que Pareto)
+    p104_sec = 0
+    if paradas_time_src is not None and not paradas_time_src.empty and "codigo" in paradas_time_src.columns:
+        tmp104 = paradas_time_src.copy()
+        tmp104["codigo"] = tmp104["codigo"].apply(_code_to_str).astype(str).str.strip()
+
+        if "dur_sec" in tmp104.columns:
+            s104 = pd.to_numeric(
+                tmp104.loc[tmp104["codigo"].eq("104"), "dur_sec"],
+                errors="coerce"
+            ).fillna(0.0).sum()
+        else:
+            s104 = 0.0
+
+        # cuantiza EXACTO igual que Pareto: segundos -> minutos redondeados -> segundos
+        m104 = int(round(float(s104) / 60.0))
+        p104_sec = max(0, m104 * 60)
+
+    kpis["parada_104_sec"] = int(p104_sec)
+    kpis["parada_104_hhmm"] = _seconds_to_hhmm(float(p104_sec))
 
     # 2) KPI "Otro Tiempo" = suma exacta del Pareto (sin 105)
-    kpis["otro_tiempo_sec"] = int(pareto.get("total_other_sec", 0))
+    # "Otro" = (total - 105) PERO sin 106
+    # "Otro" = (total - 105) PERO sin 104
+    other_from_pareto = int(pareto.get("total_other_sec", 0) or 0)
+    kpis["otro_tiempo_sec"] = max(0, other_from_pareto - int(p104_sec or 0))
+    kpis["otro_tiempo_hhmm"] = _seconds_to_hhmm(float(kpis["otro_tiempo_sec"]))
+
     kpis["otro_tiempo_hhmm"] = _seconds_to_hhmm(float(kpis["otro_tiempo_sec"]))
 
     kpis["parada_105_sec"] = int(pareto.get("total_105_sec", 0))
@@ -1866,51 +1892,52 @@ def analyze_thb(
     dt_min = dt_f.min() if dt_f is not None and not dt_f.dropna().empty else None
     dt_max = dt_f.max() if dt_f is not None and not dt_f.dropna().empty else None
 
-    # ✅ NO REGISTRADO FINAL (SOLO si aún no está calculado)
     # =========================================================
-    # ✅ NO REGISTRADO (NUEVA LÓGICA) — SIN 105
-    #   NoRegistrado = Horas/Hombre - (TiempoEfectivo + OtroTiempoSin105)
-    # =========================================================
-    # =========================================================
-    # ✅ NO REGISTRADO (NUEVA LÓGICA) — SIN 105
-    #   NoRegistrado = Horas/Hombre - (TiempoEfectivo + OtroTiempoSin105)
-    #   Si (TiempoEfectivo + Otro) > Horas/Hombre:
-    #       - NoRegistrado = 0
-    #       - Excedente pasa a 105
-    #       - Se descuenta de "Otro"
+    # ✅ NO REGISTRADO (LÓGICA FINAL) — 105 y 106 NO se mezclan con "Otro"
+    #   - "Otro" = paradas !=105 y !=106
+    #   - "No Registrado" = Horas/Hombre - (Efectivo + Otro)
+    #   - Si se pasa: NoRegistrado=0 y el excedente se mueve a 105 (opcional)
     # =========================================================
     hh_sec = int(kpis.get("horas_hombre_sec", 0) or 0)
     eff_sec = int(kpis.get("tiempo_efectivo_sec", 0) or 0)
 
-    # ✅ SOLO "Otro" (sin 105)
-    other_sec = int(kpis.get("otro_tiempo_sec", 0) or 0)
-    meal_sec = int(kpis.get("parada_105_sec", 0) or 0)
+    p105_sec = int(kpis.get("parada_105_sec", 0) or 0)
+    p106_sec = int(kpis.get("parada_106_sec", 0) or 0)
 
-    # trabajar en minutos para evitar desbalances por segundos sueltos
+    # 👉 OJO: pareto["total_other_sec"] = (total - 105) PERO incluye 106.
+    # Entonces: otro_sin_105_106 = total_other_sec - 106
+    other_sec = int(kpis.get("otro_tiempo_sec", 0) or 0)  # ✅ ya viene sin 106
+
+
+    # trabajar en minutos para cuadrar exacto
     hh_m = max(0, hh_sec // 60)
     eff_m = max(0, eff_sec // 60)
     other_m = max(0, other_sec // 60)
-    meal_m = max(0, meal_sec // 60)
+    p105_m = max(0, p105_sec // 60)
+    p106_m = max(0, p106_sec // 60)
 
     used_m = eff_m + other_m
 
     if used_m <= hh_m:
         nr_m = hh_m - used_m
     else:
-        # excedente -> pasa a 105 y se descuenta de "Otro"
         overflow_m = used_m - hh_m
         take_m = min(other_m, overflow_m)
-
         other_m -= take_m
-        meal_m += take_m
-        nr_m = 0
 
-    # escribir de vuelta (segundos)
+        # ✅ CAMBIO: el excedente ya NO se va a 105
+        # ✅ ahora se registra como "No registrado"
+        nr_m = overflow_m
+
+    # escribir de vuelta
     kpis["otro_tiempo_sec"] = int(other_m * 60)
     kpis["otro_tiempo_hhmm"] = _seconds_to_hhmm(float(kpis["otro_tiempo_sec"]))
 
-    kpis["parada_105_sec"] = int(meal_m * 60)
+    kpis["parada_105_sec"] = int(p105_m * 60)
     kpis["parada_105_hhmm"] = _seconds_to_hhmm(float(kpis["parada_105_sec"]))
+
+    kpis["parada_106_sec"] = int(p106_m * 60)
+    kpis["parada_106_hhmm"] = _seconds_to_hhmm(float(kpis["parada_106_sec"]))
 
     kpis["no_registrado_sec"] = int(nr_m * 60)
     kpis["no_registrado_hhmm"] = _seconds_to_hhmm(float(kpis["no_registrado_sec"]))
@@ -1944,11 +1971,16 @@ def analyze_thb(
         "Circuitos Cortados": f"{kpis['circuitos_cortados']:,}".replace(",", "."),
         "Circuitos Planeados": f"{kpis['circuitos_planeados']:,}".replace(",", "."),
         "Circuitos No Conformes": f"{kpis['circuitos_no_conformes']:,}".replace(",", "."),
-        # ✅ CAMBIO: ahora 105 + No registrado al lado con separador
-        "Otro Tiempo de Ciclo (Muerto)": (
-            f"{kpis['otro_tiempo_hhmm']}||105: {kpis['parada_105_hhmm']} | No registrado: {kpis['no_registrado_hhmm']} | {kpis.get('pct_otro_no_reg', 0.0):.1f}%"
+
+        "Tiempos Perdidos": (
+            f"{kpis['otro_tiempo_hhmm']}||"
+            f"105: {kpis['parada_105_hhmm']} | "
+            f"No registrado: {kpis['no_registrado_hhmm']} | "
+            f"104: {kpis.get('parada_104_hhmm', '00:00')} | "
+            f"{kpis.get('pct_otro_no_reg', 0.0):.1f}%"
         ),
-        "Tiempo Efectivo": f"{kpis['tiempo_efectivo_hhmm']} ({kpis.get('pct_efectivo', 0.0):.1f}%)",
+
+        "Tiempo Trabajado": f"{kpis['tiempo_efectivo_hhmm']} ({kpis.get('pct_efectivo', 0.0):.1f}%)",
         "Horas Disponibles": kpis["horas_hombre_hhmm"],
         "Metros Cortados": f"{kpis['metros_cortados']:,.2f} m".replace(",", "X").replace(".", ",").replace("X", "."),
         "Metros Planeados": f"{kpis['metros_planeados']:,.2f} m".replace(",", "X").replace(".", ",").replace("X", "."),

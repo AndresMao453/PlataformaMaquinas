@@ -24,17 +24,30 @@
       <div class="subcat-wrap">
         <p class="subtitle" style="margin-top:14px;">Selecciona la categoría:</p>
 
-        <div class="subcat-grid">
-          <div class="subcat-card app" onclick="selectSubcat('aplicacion', this)">
-            <div class="subcat-name">Aplicación</div>
-            <p class="subcat-desc">Crimpado / aplicación de terminales.</p>
-          </div>
+      <div class="subcat-grid">
 
-          <div class="subcat-card union" id="subcatUnionCard" onclick="selectSubcat('union', this)">
-            <div class="subcat-name">Unión</div>
-            <p class="subcat-desc">Operación de unión / ensamble.</p>
+        <div class="subcat-card app" onclick="selectSubcat('aplicacion', this)">
+          <div class="subcat-head">
+            <img class="subcat-icon" src="/static/img/union.png" alt="Aplicación">
+            <div class="subcat-text">
+              <div class="subcat-name">Aplicación</div>
+              <p class="subcat-desc">Crimpado / aplicación de terminales.</p>
+            </div>
           </div>
         </div>
+
+        <div class="subcat-card union" id="subcatUnionCard" onclick="selectSubcat('union', this)">
+          <div class="subcat-head">
+            <img class="subcat-icon" src="/static/img/union.png" alt="Unión">
+            <div class="subcat-text">
+              <div class="subcat-name">Unión</div>
+              <p class="subcat-desc">Operación de unión / ensamble.</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
 
         <p class="subtitle" style="margin-top:10px;">
           Categoría seleccionada: <b id="subcatLabel">—</b>
@@ -67,6 +80,8 @@
           <input type="hidden" name="machine_id" id="machineIdInput" value="">
           <input type="hidden" name="source" value="gsheet">
           <input type="hidden" id="machineIdInput2" value="{{ machine_id or '' }}">
+          <input type="hidden" id="analysisKeyInput" value="{{ line_key }}">
+
         </form>
 
         <div style="margin-top:14px;">
@@ -78,20 +93,48 @@
     {# =========================================================
        CORTE (stage upload): selector HP/THB + upload/hint dentro de ESTA card
        ========================================================= #}
+
     {% if line_key != "aplicacion" and stage == "upload" %}
       <p class="subtitle" style="margin-top:14px;">Primero selecciona la máquina:</p>
 
       <div class="machine-grid">
-        <div class="machine-card hp" onclick="selectMachine('HP', this)">
-          <div class="machine-name">HP</div>
-          <p class="machine-desc">Máquina de corte tipo HPC / línea HP.</p>
-        </div>
 
-        <div class="machine-card thb" onclick="selectMachine('THB', this)">
-          <div class="machine-name">THB</div>
-          <p class="machine-desc">Máquina de corte THB HBQ / línea THB.</p>
-        </div>
+        {% if line_key == "continuidad" %}
+          <div class="machine-card hp" onclick="selectMachine('MOTOS', this)">
+            <div class="machine-name">Línea de motos</div>
+            <p class="machine-desc">Resultados de prueba, tasas de OK/NO OK y tiempos.</p>
+          </div>
+
+          <div class="machine-card thb" onclick="selectMachine('BUSES', this)">
+            <div class="machine-name">Línea de buses</div>
+            <p class="machine-desc">Resultados de prueba, tasas de OK/NO OK y tiempos.</p>
+          </div>
+        {% else %}
+          <div class="machine-card hp" onclick="selectMachine('HP', this)">
+            <div class="machine-head">
+              <img class="machine-ico" src="{{ url_for('static', filename='img/hp.png') }}" alt="HP">
+              <div class="machine-text">
+                <div class="machine-name">HP</div>
+                <p class="machine-desc">Máquina de corte tipo HPC / línea HP.</p>
+              </div>
+            </div>
+          </div>
+
+
+          <div class="machine-card thb" onclick="selectMachine('THB', this)">
+            <div class="machine-head">
+              <img class="machine-ico" src="/static/img/thb.png" alt="THB">
+              <div class="machine-text">
+                <div class="machine-name">THB</div>
+                <p class="machine-desc">Máquina de corte THB HBQ / línea THB.</p>
+              </div>
+            </div>
+          </div>
+
+        {% endif %}
+
       </div>
+
 
       <div style="margin-top:18px; padding-top:18px; border-top:1px solid rgba(15,23,42,.10);">
 
@@ -114,6 +157,16 @@
                 </form>
               </div>
 
+                <!-- ✅ NUEVO: Google Sheets para CONTINUIDAD (BUSES/MOTOS) -->
+                <div id="gsheetContWrap" style="display:none;">
+                  <form method="post" style="display:flex; gap:10px; align-items:center;">
+                    <input type="hidden" name="machine" id="machineInputGsCont" value="">
+                    <input type="hidden" name="source" value="gsheet">
+                    <button class="btn" type="submit">Usar Google Sheets</button>
+                  </form>
+                </div>
+
+
               <form method="post"
                     enctype="multipart/form-data"
                     style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
@@ -133,7 +186,12 @@
         <div id="hintBlock" style="text-align:left;">
           <h2 style="margin:0;">Antes de continuar…</h2>
           <p class="subtitle" style="margin-top:6px;">
-            Selecciona <b>HP</b> o <b>THB</b> para habilitar la carga del Excel.
+            {% if line_key == "continuidad" %}
+              Selecciona <b>Línea de motos</b> o <b>Línea de buses</b> para habilitar la carga del Excel.
+            {% else %}
+              Selecciona <b>HP</b> o <b>THB</b> para habilitar la carga del Excel.
+            {% endif %}
+
           </p>
           <div style="margin-top:14px;">
             <a class="btn secondary" href="{{ url_for('home') }}">Volver</a>

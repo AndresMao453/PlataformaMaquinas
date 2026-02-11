@@ -1821,3 +1821,108 @@ a.option-card.ciclo .pill{
   box-shadow: 0 10px 22px rgba(15,23,42,.12) !important;
 }
 
+.subcat-head{
+  display:flex;
+  align-items:center;
+  gap:14px;
+}
+
+/* tamaño del icono */
+.subcat-icon{
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
+.subcat-grid{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap:18px;
+  align-items:stretch; /* clave */
+}
+
+.subcat-card{
+  height: 160px;            /* ajusta si quieres más alto */
+  display:flex;
+  align-items:center;
+  padding:1px;
+  box-sizing:border-box;
+}
+
+.subcat-head{
+  display:flex;
+  align-items:center;
+  gap:18px;
+  width:80%;
+}
+
+.subcat-icon{
+  width: 250px;
+  height: 250px;
+  object-fit:contain;
+  flex: 0 0 auto;
+}
+
+.subcat-text{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+
+
+.machine-head{
+  display:flex;
+  align-items:center;
+  gap:40px;
+}
+
+.machine-ico{
+  width:230px;
+  height:230px;
+  object-fit:contain;
+  flex:0 0 auto;
+}
+
+.machine-text{
+  display:flex;
+  flex-direction:column;
+}
+
+.machine-head{
+  display:flex;
+  align-items:center;
+  gap:40px;
+}
+
+.machine-ico{
+  width:230px;
+  height:230px;
+  object-fit:contain;
+  flex:0 0 auto;
+}
+
+.machine-text{
+  display:flex;
+  flex-direction:column;
+}
+
+/* ✅ Deja crecer los KPIs grandes (span 6) */
+.kpi-card.kpi-row-2{
+  max-width: none;           /* quita el límite de 420px */
+  width: 100%;
+}
+
+/* ✅ panel derecho más ancho para 3 bloques */
+.kpi-split-right{
+  flex: 0 0 320px;  /* antes 180px */
+}
+
+/* ✅ asegurar que no se rompa */
+.kpi-sub-row{
+  gap: 16px;
+}
+.kpi-sub-block{
+  min-width: 90px;
+}
+

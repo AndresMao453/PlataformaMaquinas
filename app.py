@@ -8,6 +8,7 @@ import threading
 import inspect
 from dataclasses import dataclass, field
 from pathlib import Path
+import requests
 
 import numpy as np  # ✅ (solicitado)
 import pandas as pd
@@ -17,6 +18,7 @@ from werkzeug.utils import secure_filename
 import config
 from analyses.registry import get_analyses
 import analyses  # noqa: F401
+import analyses.continuidad  # ✅ fuerza el register_analysis("continuidad", ...)
 
 # ✅ Loader CSV Google Sheets (por GID)
 try:
@@ -888,11 +890,15 @@ LINE_UI = {
 
 }
 
-ENABLED_LINES = {"corte", "aplicacion"}
+#ENABLED_LINES = {"corte", "aplicacion"}
 GSHEET_APP_TOKEN = "__GSHEET_APP__"  # marcador interno (no es un archivo real)
 GSHEET_HP_TOKEN = "__GSHEET_HP__"    # ✅ HP por Google Sheets (no es un archivo real)
 GSHEET_THB_TOKEN = "__GSHEET_THB__"  # ✅ THB por Google Sheets
-ENABLED_LINES = {"corte", "aplicacion", "ciclo_aplicadores"}
+ENABLED_LINES = {"corte", "aplicacion", "continuidad", "ciclo_aplicadores"}
+GSHEET_CONT_BUSES_TOKEN = "__GSHEET_CONT_BUSES__"
+GSHEET_CONT_MOTOS_TOKEN = "__GSHEET_CONT_MOTOS__"
+
+
 
 
 
@@ -916,6 +922,9 @@ def line_start(line_key: str):
 
     ui = LINE_UI.get(line_key, {"title": "📊 Análisis", "desc": ""})
 
+    # =========================
+    # ✅ GET
+    # =========================
     if request.method == "GET":
         # ✅ Ciclo/Aplicadores: entra directo (sin upload)
         if line_key == "ciclo_aplicadores":
@@ -940,31 +949,22 @@ def line_start(line_key: str):
         )
 
     # =========================
-    # ✅ validar según línea
+    # ✅ POST (validaciones)
     # =========================
-    machine = (request.form.get("machine") or "").strip()
-    subcat = (request.form.get("subcat") or "").strip()  # solo aplica para aplicacion
-    machine_id = (request.form.get("machine_id") or "").strip()  # ✅ NUEVO: Maquina 1/2 para Aplicación/Unión
+    machine = (request.form.get("machine") or "").strip().upper()
+    subcat = (request.form.get("subcat") or "").strip().lower()  # solo aplica para aplicacion
+    machine_id = (request.form.get("machine_id") or "").strip()  # ✅ Maquina 1/2 para Aplicación/Unión
+    source = (request.form.get("source") or "").strip().lower()  # ✅ gsheet / excel
 
+    # -------------------------
+    # ✅ CORTE
+    # -------------------------
     if line_key == "corte":
         if machine not in ("HP", "THB"):
             flash("Debes seleccionar la máquina (HP o THB) antes de subir el Excel.", "error")
             return redirect(url_for("line_start", line_key=line_key))
 
-    if line_key == "aplicacion":
-        if subcat not in ("aplicacion", "union"):
-            flash("Debes seleccionar la categoría (Aplicación o Unión) antes de subir el Excel.", "error")
-            return redirect(url_for("line_start", line_key=line_key))
-
-        if machine not in ("APLICACION", "UNION"):
-            machine = "APLICACION" if subcat == "aplicacion" else "UNION"
-
-    # =========================
-    # ✅ CORTE: exige archivo
-    # ✅ APLICACION: NO exige archivo (usa Sheets)
-    # =========================
-    if line_key == "corte" and machine in ("HP", "THB"):
-        source = (request.form.get("source") or "").strip().lower()
+        # ✅ CORTE por Google Sheets (sin archivo)
         if source == "gsheet":
             filename = GSHEET_HP_TOKEN if machine == "HP" else GSHEET_THB_TOKEN
             return render_template(
@@ -976,39 +976,32 @@ def line_start(line_key: str):
                 filename=filename,
                 machine=machine,
                 subcat=subcat,
+                machine_id=machine_id,
             )
 
-    # =========================
-    # ✅ CORTE: HP puede venir por Google Sheets (sin archivo)
-    # =========================
-    if line_key == "corte" and machine == "HP":
-        source = (request.form.get("source") or "").strip().lower()
-        if source == "gsheet":
-            filename = GSHEET_HP_TOKEN
-            return render_template(
-                "line_start.html",
-                line_key=line_key,
-                line_title=ui["title"],
-                line_desc=ui["desc"],
-                stage="select_sheet",
-                filename=filename,
-                machine=machine,
-                subcat=subcat,
-            )
-
-    # =========================
-    # ✅ APLICACION/UNION: NO exige archivo (usa Google Sheets)
-    # =========================
-    if line_key in ("aplicacion", "aplicacion_excel"):
-        if subcat not in ("aplicacion", "union"):
-            flash("Debes seleccionar la categoría (Aplicación o Unión).", "error")
+        # ✅ CORTE por Excel (exige archivo)
+        f = request.files.get("file")
+        if not f or f.filename == "":
+            flash("Selecciona un archivo Excel.", "error")
             return redirect(url_for("line_start", line_key=line_key))
 
-        if machine not in ("APLICACION", "UNION"):
-            machine = "APLICACION" if subcat == "aplicacion" else "UNION"
+        if not allowed_file(f.filename):
+            flash("Formato no permitido. Sube .xlsx o .xls", "error")
+            return redirect(url_for("line_start", line_key=line_key))
 
-        # siempre token, no archivo
-        filename = GSHEET_APP_TOKEN
+        safe_name = secure_filename(f.filename)
+        filename = f"{int(time.time())}_{safe_name}"
+        save_path = safe_upload_path(app.config["UPLOAD_FOLDER"], filename)
+        f.save(save_path)
+
+        warm_excel_cache(save_path)
+
+        if machine == "THB":
+            try:
+                THB_CACHE[filename] = build_thb_cache(save_path)
+            except Exception:
+                THB_CACHE.pop(filename, None)
+                flash("No se pudo construir el índice THB (revisa hoja/columnas).", "error")
 
         return render_template(
             "line_start.html",
@@ -1022,67 +1015,134 @@ def line_start(line_key: str):
             machine_id=machine_id,
         )
 
+    # -------------------------
+    # ✅ APLICACION / UNION (SIEMPRE Google Sheets)
+    # -------------------------
+    if line_key in ("aplicacion", "aplicacion_excel"):
+        if subcat not in ("aplicacion", "union"):
+            flash("Debes seleccionar la categoría (Aplicación o Unión).", "error")
+            return redirect(url_for("line_start", line_key=line_key))
 
+        if machine not in ("APLICACION", "UNION"):
+            machine = "APLICACION" if subcat == "aplicacion" else "UNION"
 
-    # ---- CORTE (igual que antes) ----
-    f = request.files.get("file")
-    if not f or f.filename == "":
-        flash("Selecciona un archivo Excel.", "error")
-        return redirect(url_for("line_start", line_key=line_key))
+        filename = GSHEET_APP_TOKEN  # siempre token, no archivo
 
-    if not allowed_file(f.filename):
-        flash("Formato no permitido. Sube .xlsx o .xls", "error")
-        return redirect(url_for("line_start", line_key=line_key))
+        return render_template(
+            "line_start.html",
+            line_key=line_key,
+            line_title=ui["title"],
+            line_desc=ui["desc"],
+            stage="select_sheet",
+            filename=filename,
+            machine=machine,
+            subcat=subcat,
+            machine_id=machine_id,
+        )
 
-    safe_name = secure_filename(f.filename)
-    filename = f"{int(time.time())}_{safe_name}"
-    save_path = safe_upload_path(app.config["UPLOAD_FOLDER"], filename)
-    f.save(save_path)
+    # -------------------------
+    # ✅ CONTINUIDAD (SIEMPRE Google Sheets)
+    # -------------------------
+    if line_key == "continuidad":
+        if machine not in ("BUSES", "MOTOS"):
+            flash("Debes seleccionar Línea de motos o Línea de buses.", "error")
+            return redirect(url_for("line_start", line_key=line_key))
 
-    warm_excel_cache(save_path)
+        filename = GSHEET_CONT_BUSES_TOKEN if machine == "BUSES" else GSHEET_CONT_MOTOS_TOKEN
 
-    if line_key == "corte" and machine == "THB":
-        try:
-            THB_CACHE[filename] = build_thb_cache(save_path)
-        except Exception:
-            THB_CACHE.pop(filename, None)
-            flash("No se pudo construir el índice THB (revisa hoja/columnas).", "error")
+        return render_template(
+            "line_start.html",
+            line_key=line_key,
+            line_title=ui["title"],
+            line_desc=ui["desc"],
+            stage="select_sheet",
+            filename=filename,
+            machine=machine,
+            subcat=subcat,
+            machine_id=machine_id,
+        )
 
-    return render_template(
-        "line_start.html",
-        line_key=line_key,
-        line_title=ui["title"],
-        line_desc=ui["desc"],
-        stage="select_sheet",
-        filename=filename,
-        machine=machine,
-        subcat=subcat,
-    )
+    # -------------------------
+    # ✅ fallback
+    # -------------------------
+    flash("Línea no soportada.", "error")
+    return redirect(url_for("home"))
+
 
 
 @app.get("/period_options")
 def period_options():
     analysis_key = (request.args.get("analysis_key") or "").strip().lower()
-    filename = request.args.get("filename", "")
-    machine = (request.args.get("machine", "") or "").strip().upper()
-    period = (request.args.get("period", "day") or "day").strip().lower()
+    filename = (request.args.get("filename") or "").strip()
+    machine = (request.args.get("machine") or "").strip().upper()
+    period = (request.args.get("period") or "day").strip().lower()
     machine_id = (request.args.get("machine_id") or "").strip()  # ✅ NUEVO
 
-    # ✅ Ciclo/Aplicadores: opciones basadas en las 4 máquinas (APLICACIÓN)
     # ✅ Ciclo/Aplicadores: NO usa day/week/month. Solo TOTAL.
     if analysis_key == "ciclo_aplicadores":
         return jsonify({"options": [{"value": "TOTAL", "label": "TOTAL"}]})
+
+    # ✅ CONTINUIDAD (GSHEET)
+    if analysis_key == "continuidad":
+        try:
+            ttl = int(getattr(config, "GSHEET_TTL_S", 10) or 10)
+
+            m = (machine or "").strip().upper()
+            if m == "BUSES":
+                sheet_id = getattr(config, "CONT_BUSES_SHEET_ID", "") or ""
+                gid_hora = int(getattr(config, "CONT_BUSES_GID_RESUMEN_HORA", 0) or 0)
+            elif m == "MOTOS":
+                sheet_id = getattr(config, "CONT_MOTOS_SHEET_ID", "") or ""
+                gid_hora = int(getattr(config, "CONT_MOTOS_GID_RESUMEN_HORA", 0) or 0)
+            else:
+                # si no viene máquina bien, no inventamos
+                return jsonify({"options": []})
+
+            if not sheet_id or gid_hora is None:
+                return jsonify({"options": []})
+
+            df = load_gsheet_tab_csv_smart(sheet_id, gid_hora, ttl_s=ttl)
+
+            c_fecha = _find_col(df, "fecha")
+            c_hora = _find_col(df, "hora")
+            if not c_fecha or not c_hora:
+                return jsonify({"options": []})
+
+            dt = _build_dt_from_fecha_hora(df, c_fecha, c_hora)
+            dt = pd.to_datetime(dt, errors="coerce").dropna()
+            if dt.empty:
+                return jsonify({"options": []})
+
+            if period == "day":
+                days = sorted(dt.dt.normalize().unique(), reverse=True)
+                options = [{"value": d.strftime("%Y-%m-%d"), "label": d.strftime("%d/%m/%Y")} for d in days]
+                return jsonify({"options": options})
+
+            if period == "week":
+                iso = dt.dt.isocalendar()
+                uniq = sorted(set(zip(iso["year"].astype(int), iso["week"].astype(int))), reverse=True)
+                options = [{"value": f"{y}-W{w:02d}", "label": f"{y} - Semana {w:02d}"} for (y, w) in uniq]
+                return jsonify({"options": options})
+
+            if period == "month":
+                uniq = sorted(dt.dt.strftime("%Y-%m").unique(), reverse=True)
+                options = [{"value": x, "label": x} for x in uniq]
+                return jsonify({"options": options})
+
+            return jsonify({"options": []})
+
+        except Exception:
+            app.logger.exception("period_options CONTINUIDAD failed")
+            return jsonify({"options": []})
 
     # ✅ APLICACION / UNION: depende del machine_id (Máquina 1/2) para mostrar fechas activas correctas
     if machine in ("APLICACION", "UNION"):
         try:
             path = GSHEET_APP_TOKEN if filename == GSHEET_APP_TOKEN else os.path.join(app.config["UPLOAD_FOLDER"], filename)
 
-            # ✅ Correcto: get_period_options_aplicacion(path, period, machine_id=...)
             try:
                 options = get_period_options_aplicacion(path, period, machine=machine, machine_id=machine_id)
             except TypeError:
-                # Compat por si quedó una versión vieja sin machine_id
                 options = get_period_options_aplicacion(path, period)
 
             return jsonify({"options": options})
@@ -1090,18 +1150,12 @@ def period_options():
             app.logger.exception("period_options APLICACION/UNION failed")
             return jsonify({"options": []})
 
-    # ✅ resto (corte) sigue igual
-    # ✅ resto (corte) sigue igual, pero ahora soporta HP por Google Sheets
+    # ✅ CORTE: soporta Excel + Google Sheets
     is_hp_gsheet = (machine == "HP" and filename == GSHEET_HP_TOKEN)
     is_thb_gsheet = (machine == "THB" and filename == GSHEET_THB_TOKEN)
 
-    # ==========================
-    # ✅ HOJA BASE POR MÁQUINA
-    # ==========================
-    if machine == "HP":
-        base_sheet = "Corte"
-    else:
-        base_sheet = "Verificación de Medidas"
+    # hoja base por máquina
+    base_sheet = "Corte" if machine == "HP" else "Verificación de Medidas"
 
     try:
         if is_hp_gsheet:
@@ -1125,18 +1179,14 @@ def period_options():
             if not filename or not os.path.exists(path):
                 return jsonify({"options": []})
 
-            # hoja base por máquina (tal cual)
-            if machine == "HP":
-                base_sheet = "Corte"
-            else:
-                base_sheet = "Verificación de Medidas"
-
             try:
                 df = _read_excel_smart(path, base_sheet)
             except Exception:
+                # fallback por acento
                 df = _read_excel_smart(path, "Verificacion de Medidas")
 
     except Exception:
+        app.logger.exception("period_options CORTE failed")
         return jsonify({"options": []})
 
     c_fecha = _find_col(df, "fecha")
@@ -1144,37 +1194,31 @@ def period_options():
     if not c_fecha or not c_hora:
         return jsonify({"options": []})
 
-    dt = _build_dt_from_fecha_hora(df, c_fecha, c_hora).dropna()
-    if dt.empty:
-        return jsonify({"options": []})
-
+    dt = _build_dt_from_fecha_hora(df, c_fecha, c_hora)
     dt = pd.to_datetime(dt, errors="coerce").dropna()
     if dt.empty:
         return jsonify({"options": []})
 
-    options = []
-
     if period == "day":
         days = sorted(dt.dt.normalize().unique(), reverse=True)
+        options = [{"value": d.strftime("%Y-%m-%d"), "label": d.strftime("%d/%m/%Y")} for d in days]
+        return jsonify({"options": options})
 
-        # value queda ISO para que el backend filtre perfecto
-        # label queda DD/MM/YYYY para mostrar como quieres en el dropdown
-        options = [
-            {"value": d.strftime("%Y-%m-%d"), "label": d.strftime("%d/%m/%Y")}
-            for d in days
-        ]
-
-
-    elif period == "week":
+    if period == "week":
         iso = dt.dt.isocalendar()
         uniq = sorted(set(zip(iso["year"].astype(int), iso["week"].astype(int))), reverse=True)
         options = [{"value": f"{y}-W{w:02d}", "label": f"{y} - Semana {w:02d}"} for (y, w) in uniq]
+        return jsonify({"options": options})
 
-    elif period == "month":
+    if period == "month":
         uniq = sorted(dt.dt.strftime("%Y-%m").unique(), reverse=True)
-        options = [{"value": m, "label": m} for m in uniq]
+        options = [{"value": x, "label": x} for x in uniq]
+        return jsonify({"options": options})
 
-    return jsonify({"options": options})
+    return jsonify({"options": []})
+
+
+
 
 
 
@@ -1350,6 +1394,177 @@ def thb_tarjetas_hour():
         200
     )
 
+@app.get("/thb_tarjetas_day")
+def thb_tarjetas_day():
+    import os
+    import re
+    import pandas as pd
+    from flask import request, jsonify
+
+    filename = (request.args.get("filename", "") or "").strip()
+    period_value = (request.args.get("period_value", "") or "").strip()
+    operator = (request.args.get("operator", "") or "").strip()
+    limit = int((request.args.get("limit", "500") or "500").strip() or 500)
+
+    def _nocache_json(payload, status=200):
+        resp = jsonify(payload)
+        resp.status_code = status
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        return resp
+
+    if not period_value:
+        return _nocache_json({"ok": False, "error": "Falta period_value."}, 400)
+
+    def _parse_day(pv: str):
+        pv2 = (pv or "").strip().replace("/", "-")
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", pv2):
+            return pd.to_datetime(pv2, errors="coerce", format="%Y-%m-%d")
+        if re.match(r"^\d{2}-\d{2}-\d{4}$", pv2):
+            return pd.to_datetime(pv2, errors="coerce", format="%d-%m-%Y")
+        return pd.to_datetime(pv2, errors="coerce", dayfirst=True)
+
+    d0 = _parse_day(period_value)
+    if pd.isna(d0):
+        return _nocache_json({"ok": False, "error": "period_value inválido."}, 400)
+
+    start_dt = pd.Timestamp(d0).normalize()
+    end_dt = start_dt + pd.Timedelta(days=1)
+
+    # =========================================================
+    # Cargar "Verificación de Medidas" (cache → gsheet → excel)
+    # =========================================================
+    df_verif = None
+    try:
+        cache = THB_CACHE.get(filename, None)
+        if isinstance(cache, dict) and isinstance(cache.get("df"), pd.DataFrame):
+            df_verif = cache["df"].copy()
+        else:
+            if filename == GSHEET_THB_TOKEN:
+                sheet_id = getattr(config, "THB_SHEET_ID", "") or ""
+                gid_verif = int(getattr(config, "THB_GID_VERIF", 0) or 0)
+                ttl = int(getattr(config, "GSHEET_TTL_S", 10) or 10)
+
+                if not sheet_id or not gid_verif:
+                    return _nocache_json(
+                        {"ok": False, "error": "Falta THB_SHEET_ID/THB_GID_VERIF en config.py."},
+                        400
+                    )
+
+                df_verif = load_gsheet_tab_csv_smart(sheet_id, gid_verif, ttl_s=ttl).copy()
+            else:
+                path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+                if not filename or not os.path.exists(path):
+                    return _nocache_json({"ok": False, "error": "Archivo no existe."}, 400)
+
+                try:
+                    df_verif = _read_excel_smart(path, "Verificación de Medidas").copy()
+                except Exception:
+                    df_verif = _read_excel_smart(path, "Verificacion de Medidas").copy()
+
+    except Exception as e:
+        return _nocache_json({"ok": False, "error": f"No pude cargar Verificación de Medidas: {e}"}, 500)
+
+    if df_verif is None or df_verif.empty:
+        return _nocache_json({"ok": True, "total": 0, "items": [], "truncated": False}, 200)
+
+    # =========================================================
+    # Columnas requeridas
+    # =========================================================
+    c_fecha = _find_col(df_verif, "fecha")
+    c_hora = _find_col(df_verif, "hora")
+    c_consec = _find_col(df_verif, "consecutivo")
+    c_codigo = (
+        _find_col(df_verif, "código") or _find_col(df_verif, "codigo") or
+        _find_col(df_verif, "arnés") or _find_col(df_verif, "arnes")
+    )
+    c_nombre = _find_col(df_verif, "nombre")
+
+    if not c_fecha or not c_hora or not c_consec or not c_codigo:
+        return _nocache_json(
+            {"ok": False, "error": "No encuentro columnas (Fecha/Hora/Consecutivo/Código del arnés)."},
+            400
+        )
+
+    dt = _build_dt_from_fecha_hora(df_verif, c_fecha, c_hora)
+    dt = pd.to_datetime(dt, errors="coerce")
+
+    mask = dt.notna() & (dt >= start_dt) & (dt < end_dt)
+
+    # opcional: filtrar por operaria si viene diferente a General
+    if c_nombre and operator and operator.strip() and operator.strip().lower() != "general":
+        mask = mask & (df_verif[c_nombre].astype(str).str.strip() == operator.strip()
+
+        )
+
+    df = df_verif.loc[mask, [c_consec, c_codigo]].copy()
+    if df.empty:
+        return _nocache_json(
+            {"ok": True, "total": 0, "items": [], "truncated": False, "period_value": period_value},
+            200
+        )
+
+    def _clean(v):
+        if pd.isna(v):
+            return ""
+        s = str(v).strip()
+        if s.lower() in ("nan", "none"):
+            return ""
+        return s
+
+    # Agrupar por código arnés y juntar consecutivos
+    agg = {}
+    for _, r in df.iterrows():
+        cons = _clean(r[c_consec])
+        cod = _clean(r[c_codigo])
+
+        # normalizar consecutivo tipo "2.0" -> "2"
+        try:
+            if cons and re.match(r"^\d+\.0$", cons):
+                cons = str(int(float(cons)))
+        except Exception:
+            pass
+
+        if not cod and not cons:
+            continue
+
+        key = cod or "—"
+        if key not in agg:
+            agg[key] = []
+        if cons:
+            agg[key].append(cons)
+
+    # armar items ordenados por cantidad desc
+    items = []
+    for cod, consecs in agg.items():
+        items.append({
+            "codigo_arnes": cod,
+            "cantidad": len(consecs),
+            "consecutivos": consecs
+        })
+
+    items.sort(key=lambda x: (x.get("cantidad", 0), str(x.get("codigo_arnes", ""))), reverse=True)
+
+    total = sum(int(it.get("cantidad", 0) or 0) for it in items)
+
+    # truncar por seguridad (no queremos reventar payload)
+    truncated = False
+    if len(items) > limit:
+        items = items[:limit]
+        truncated = True
+
+    return _nocache_json(
+        {
+            "ok": True,
+            "period_value": period_value,
+            "total": total,
+            "limit": limit,
+            "truncated": truncated,
+            "items": items,
+        },
+        200
+    )
 
 
 
@@ -1689,7 +1904,16 @@ def _load_union_pulsos_4books() -> pd.DataFrame:
 
     def _download_gid(sheet_id: str, gid: int) -> pd.DataFrame:
         url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={int(gid)}&_={int(now)}"
-        raw = pd.read_csv(url, header=None)
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "text/csv,text/plain;q=0.9,*/*;q=0.8",
+        }
+
+        r = requests.get(url, headers=headers, timeout=25)
+        r.raise_for_status()
+
+        raw = pd.read_csv(io.StringIO(r.text), header=None)
+
         return raw.dropna(how="all").reset_index(drop=True)
 
     def _find_header_row(raw: pd.DataFrame, max_scan: int = 15) -> int:
@@ -1836,7 +2060,7 @@ def run_analysis_api():
         return pv
 
     # =========================================================
-    # ✅ Helpers locales SOLO para Ciclo/Aplicadores
+    # ✅ Helpers locales
     # =========================================================
     def _find_col_local(df: pd.DataFrame, key: str):
         """Busca columna por contains (case-insensitive)."""
@@ -1848,63 +2072,23 @@ def run_analysis_api():
                 return c
         return None
 
-    def _load_all_aplicacion_4maq(ttl_s: int | None = None) -> pd.DataFrame:
-        """
-        Une en un solo DF los 4 registros de APLICACIÓN.
-        Usa config.py: GSHEET_ID..GSHEET_ID4 y GSHEET_GID_APLICACION..GSHEET_GID_APLICACION4
-        """
-        ttl = int(getattr(config, "GSHEET_TTL_S", 10) or 10) if ttl_s is None else int(ttl_s)
-
-        sources = [
-            ("M1", getattr(config, "GSHEET_ID", None),  getattr(config, "GSHEET_GID_APLICACION", None)),
-            ("M2", getattr(config, "GSHEET_ID2", None), getattr(config, "GSHEET_GID_APLICACION2", None)),
-            ("M3", getattr(config, "GSHEET_ID3", None), getattr(config, "GSHEET_GID_APLICACION3", None)),
-            ("M4", getattr(config, "GSHEET_ID4", None), getattr(config, "GSHEET_GID_APLICACION4", None)),
-        ]
-
-        frames = []
-        for tag, sid, gid in sources:
-            if not sid or gid is None:
-                continue
-            # ✅ smart para tolerar filas vacías / headers corridos
-            df = load_gsheet_tab_csv_smart(str(sid), int(gid), ttl_s=ttl).copy()
-            df["__src_machine"] = tag
-            frames.append(df)
-
-        if not frames:
-            return pd.DataFrame()
-
-        return pd.concat(frames, ignore_index=True)
-
-    def _build_dt_series(df: pd.DataFrame) -> pd.Series:
-        """Construye datetime a partir de Fecha + Hora si existen."""
-        if df is None or df.empty:
+    def _build_dt_from_fecha_hora(df: pd.DataFrame, c_fecha: str, c_hora: str) -> pd.Series:
+        """Construye datetime robusto desde Fecha + Hora."""
+        if df is None or df.empty or not c_fecha or not c_hora:
             return pd.Series([], dtype="datetime64[ns]")
 
-        c_fecha = _find_col_local(df, "fecha")
-        c_hora = _find_col_local(df, "hora")
+        # 1) intenta "Fecha Hora" directo
+        s = (df[c_fecha].astype(str).fillna("").str.strip() + " " +
+             df[c_hora].astype(str).fillna("").str.strip()).str.strip()
+        dt = pd.to_datetime(s, errors="coerce", dayfirst=True)
+        if dt.notna().any():
+            return dt
 
-        if c_fecha and c_hora:
-            s = (df[c_fecha].astype(str).fillna("").str.strip() + " " +
-                 df[c_hora].astype(str).fillna("").str.strip()).str.strip()
-            dt = pd.to_datetime(s, errors="coerce", dayfirst=True)
-            if dt.notna().any():
-                return dt
-
-        if c_fecha:
-            dt = pd.to_datetime(df[c_fecha], errors="coerce", dayfirst=True)
-            if dt.notna().any():
-                return dt
-
-        # fallback: intenta cualquier col que contenga "time"/"fecha"
-        for guess in df.columns:
-            g = str(guess).strip().lower()
-            if "fecha" in g or "time" in g or "timestamp" in g:
-                dt = pd.to_datetime(df[guess], errors="coerce", dayfirst=True)
-                if dt.notna().any():
-                    return dt
-
-        return pd.Series([pd.NaT] * len(df), dtype="datetime64[ns]")
+        # 2) intenta Fecha como date + Hora como timedelta
+        d = pd.to_datetime(df[c_fecha], errors="coerce", dayfirst=True)
+        td = pd.to_timedelta(df[c_hora].astype(str), errors="coerce")
+        out = pd.to_datetime(d.dt.normalize() + td, errors="coerce")
+        return out
 
     def _mask_by_period(dt: pd.Series, period: str, pv: str) -> pd.Series:
         """Retorna máscara booleana para day/week/month."""
@@ -1972,22 +2156,64 @@ def run_analysis_api():
             return dt.notna()
 
     # =========================================================
-    # ✅ NUEVO: CICLO/APLICADORES - lee UNION por GID en 4 libros
+    # ✅ Helpers locales SOLO para Ciclo/Aplicadores (tal cual lo tenías)
     # =========================================================
+    def _load_all_aplicacion_4maq(ttl_s: int | None = None) -> pd.DataFrame:
+        ttl = int(getattr(config, "GSHEET_TTL_S", 10) or 10) if ttl_s is None else int(ttl_s)
+
+        sources = [
+            ("M1", getattr(config, "GSHEET_ID", None),  getattr(config, "GSHEET_GID_APLICACION", None)),
+            ("M2", getattr(config, "GSHEET_ID2", None), getattr(config, "GSHEET_GID_APLICACION2", None)),
+            ("M3", getattr(config, "GSHEET_ID3", None), getattr(config, "GSHEET_GID_APLICACION3", None)),
+            ("M4", getattr(config, "GSHEET_ID4", None), getattr(config, "GSHEET_GID_APLICACION4", None)),
+        ]
+
+        frames = []
+        for tag, sid, gid in sources:
+            if not sid or gid is None:
+                continue
+            df = load_gsheet_tab_csv_smart(str(sid), int(gid), ttl_s=ttl).copy()
+            df["__src_machine"] = tag
+            frames.append(df)
+
+        if not frames:
+            return pd.DataFrame()
+
+        return pd.concat(frames, ignore_index=True)
+
+    def _build_dt_series(df: pd.DataFrame) -> pd.Series:
+        if df is None or df.empty:
+            return pd.Series([], dtype="datetime64[ns]")
+
+        c_fecha = _find_col_local(df, "fecha")
+        c_hora = _find_col_local(df, "hora")
+
+        if c_fecha and c_hora:
+            s = (df[c_fecha].astype(str).fillna("").str.strip() + " " +
+                 df[c_hora].astype(str).fillna("").str.strip()).str.strip()
+            dt = pd.to_datetime(s, errors="coerce", dayfirst=True)
+            if dt.notna().any():
+                return dt
+
+        if c_fecha:
+            dt = pd.to_datetime(df[c_fecha], errors="coerce", dayfirst=True)
+            if dt.notna().any():
+                return dt
+
+        for guess in df.columns:
+            g = str(guess).strip().lower()
+            if "fecha" in g or "time" in g or "timestamp" in g:
+                dt = pd.to_datetime(df[guess], errors="coerce", dayfirst=True)
+                if dt.notna().any():
+                    return dt
+
+        return pd.Series([pd.NaT] * len(df), dtype="datetime64[ns]")
+
     def _load_union_pulsos_4books(ttl_s: int | None = None) -> pd.DataFrame:
-        """
-        UNION (4 libros):
-        - Lee las 4 hojas UNION (una por libro, via GID).
-        - Detecta columnas por header 'Pulsos' y 'Terminal' (para soportar columnas movidas).
-          Fallback típico: Pulsos = col D (idx 3), Terminal = col E (idx 4).
-        - Limpia valores inválidos (#VALUE!, vacíos) y parsea pulsos con separadores de miles.
-        Devuelve DF: terminal, pulsos, src
-        """
         import pandas as pd
         import time
         import re
 
-        # cache simple global (evita descargar en cada request)
         global _CICLO_UNION_CACHE
         try:
             _CICLO_UNION_CACHE
@@ -2007,13 +2233,11 @@ def run_analysis_api():
             return raw.dropna(how="all").reset_index(drop=True)
 
         def _find_header_row(raw: pd.DataFrame, max_scan: int = 15) -> int:
-            # busca una fila que contenga (al menos) 'pulsos' y 'terminal'
             n = min(max_scan, len(raw))
             for i in range(n):
                 row = raw.iloc[i].astype(str).str.strip().str.lower().tolist()
                 if any("puls" in c for c in row) and any("terminal" in c for c in row):
                     return i
-            # fallback típico
             return 1 if len(raw) > 1 else 0
 
         def _col_idx_by_name(header_row: list[str], key: str) -> int | None:
@@ -2028,12 +2252,9 @@ def run_analysis_api():
             s = str(x or "").strip().replace("\u00a0", "").replace(" ", "")
             if not s:
                 return 0
-
-            # errores típicos de Sheets
             if s.upper() in ("#VALUE!", "#REF!", "#DIV/0!", "#N/A", "N/A", "NA"):
                 return 0
 
-            # 75.155 (miles con punto) / 75,155 (miles con coma)
             if re.match(r"^\d{1,3}(\.\d{3})+(,\d+)?$", s):
                 s = s.replace(".", "").replace(",", ".")
             elif re.match(r"^\d{1,3}(,\d{3})+(\.\d+)?$", s):
@@ -2069,7 +2290,6 @@ def run_analysis_api():
             col_pulsos = _col_idx_by_name(header, "puls")
             col_term = _col_idx_by_name(header, "terminal")
 
-            # fallback (Pulsos=D=3, Terminal=E=4)
             if col_pulsos is None:
                 col_pulsos = 3
             if col_term is None:
@@ -2083,15 +2303,13 @@ def run_analysis_api():
             pulsos = df0.iloc[:, col_pulsos].apply(_parse_pulses).astype("int64")
             terminal = df0.iloc[:, col_term].astype(str).str.strip()
 
-            # limpia terminal
             terminal = terminal.replace({"nan": "", "None": "", "#VALUE!": "", "#N/A": "", "#REF!": ""})
-            terminal = terminal.str.replace(r"\.0$", "", regex=True)  # por si viene "1026308.0"
+            terminal = terminal.str.replace(r"\.0$", "", regex=True)
             terminal = terminal.str.strip()
 
             tmp = pd.DataFrame({"terminal": terminal, "pulsos": pulsos})
             tmp["src"] = tag
 
-            # quita basura y deja solo terminales numéricas
             tmp = tmp[tmp["terminal"].ne("")]
             tmp = tmp[~tmp["terminal"].str.lower().isin(["total", "totales"])]
             tmp = tmp[tmp["terminal"].str.match(r"^\d+$", na=False)]
@@ -2103,6 +2321,110 @@ def run_analysis_api():
         _CICLO_UNION_CACHE["df"] = out.copy()
         return out.copy()
 
+    # =========================================================
+    # ✅ NUEVO: Continuidad (Buses/Motos) por Google Sheets
+    # =========================================================
+    def _analyze_continuidad(df_hora: pd.DataFrame, df_dia: pd.DataFrame, period: str, pv: str, machine: str) -> dict:
+        """
+        df_hora: Resumen Hora (Fecha, Hora, Referencia, Cantidad por referencia, Total por hora)
+        df_dia : Resumen Día x Ref (Fecha, Referencia, Cantidad del día)
+        """
+        if df_hora is None or df_hora.empty:
+            return {"status": "error", "message": "Continuidad: hoja 'Resumen Hora' sin datos."}
+
+        c_fecha = _find_col_local(df_hora, "fecha")
+        c_hora = _find_col_local(df_hora, "hora")
+        c_ref = _find_col_local(df_hora, "referencia")
+        c_qty_ref = _find_col_local(df_hora, "cantidad")          # "Cantidad por referencia"
+        c_total_h = _find_col_local(df_hora, "total por hora")    # exacto
+        if not c_total_h:
+            c_total_h = _find_col_local(df_hora, "total")         # fallback
+
+        if not c_fecha or not c_hora or not c_ref:
+            return {"status": "error", "message": "Continuidad: faltan columnas (Fecha/Hora/Referencia) en Resumen Hora."}
+
+        dt = _build_dt_from_fecha_hora(df_hora, c_fecha, c_hora)
+        m = _mask_by_period(dt, period, pv)
+        sub = df_hora.loc[m].copy()
+        if sub.empty:
+            return {
+                "status": "ok",
+                "machine": machine,
+                "period": period,
+                "period_value": pv,
+                "kpis_ui": {
+                    "Total pruebas": "0",
+                    "Horas registradas": "0",
+                    "Referencias únicas": "0",
+                    "Promedio por hora": "0.00",
+                },
+                "terminal_usage": {"labels": [], "manual": [], "carrete": [], "otros": [], "total": []},
+                "top_refs_day": []
+            }
+
+        # numéricos
+        if c_qty_ref:
+            sub[c_qty_ref] = pd.to_numeric(sub[c_qty_ref], errors="coerce").fillna(0)
+        if c_total_h:
+            sub[c_total_h] = pd.to_numeric(sub[c_total_h], errors="coerce").fillna(0)
+
+        # Total pruebas (evitar duplicar por referencia): max por (Fecha, Hora)
+        key_hour = [c_fecha, c_hora]
+        if c_total_h:
+            total_por_hora_unique = sub.groupby(key_hour, dropna=False)[c_total_h].max()
+            total_pruebas = int(total_por_hora_unique.sum())
+            horas_reg = int(total_por_hora_unique.shape[0])
+        else:
+            total_pruebas = int(sub[c_qty_ref].sum()) if c_qty_ref else int(len(sub))
+            horas_reg = int(sub.groupby(key_hour).size().shape[0])
+
+        refs_unicas = int(sub[c_ref].astype(str).str.strip().nunique())
+        promedio_hora = (total_pruebas / horas_reg) if horas_reg > 0 else 0.0
+
+        # barras “Referencias más usadas” (reusamos terminal_usage)
+        if c_qty_ref:
+            grp_ref = sub.groupby(c_ref, dropna=False)[c_qty_ref].sum().sort_values(ascending=False).head(12)
+        else:
+            grp_ref = sub.groupby(c_ref, dropna=False).size().sort_values(ascending=False).head(12)
+
+        labels = [str(x) for x in grp_ref.index.tolist()]
+        totals = [int(x) for x in grp_ref.values.tolist()]
+
+        # top_refs desde Resumen Día x Ref (si existe)
+        top_refs = []
+        if df_dia is not None and not df_dia.empty:
+            cd_fecha = _find_col_local(df_dia, "fecha")
+            cd_ref = _find_col_local(df_dia, "referencia")
+            cd_qty = _find_col_local(df_dia, "cantidad")
+            if cd_fecha and cd_ref and cd_qty:
+                dd = pd.to_datetime(df_dia[cd_fecha], errors="coerce", dayfirst=True).dt.normalize()
+                m2 = _mask_by_period(dd, period, pv)
+                dsub = df_dia.loc[m2].copy()
+                dsub[cd_qty] = pd.to_numeric(dsub[cd_qty], errors="coerce").fillna(0)
+                grp = dsub.groupby(cd_ref, dropna=False)[cd_qty].sum().sort_values(ascending=False).head(10)
+                top_refs = [{"label": str(k), "value": int(v)} for k, v in grp.items()]
+
+        return {
+            "status": "ok",
+            "machine": machine,
+            "period": period,
+            "period_value": pv,
+            "kpis_ui": {
+                "Total pruebas": str(total_pruebas),
+                "Horas registradas": str(horas_reg),
+                "Referencias únicas": str(refs_unicas),
+                "Promedio por hora": f"{promedio_hora:.2f}",
+            },
+            "terminal_usage": {
+                "labels": labels,
+                "manual": totals,
+                "carrete": [0] * len(totals),
+                "otros": [0] * len(totals),
+                "total": totals,
+            },
+            "top_refs_day": top_refs,
+        }
+
     try:
         result = None  # ✅ evita UnboundLocalError (result siempre existe)
 
@@ -2110,13 +2432,12 @@ def run_analysis_api():
         analysis_key = (request.form.get("analysis_key", "") or "").strip()
         machine = (request.form.get("machine", "") or "").strip().upper()
         subcat = (request.form.get("subcat", "") or "").strip().lower()
-        machine_id = (request.form.get("machine_id") or "").strip()  # ✅ NUEVO
+        machine_id = (request.form.get("machine_id") or "").strip()
 
         # ✅ Normalizar analysis_key (alias)
         analysis_key = analysis_key.strip().lower()
         if analysis_key in ("aplicacion_excel", "app", "aplicacion1"):
             analysis_key = "aplicacion"
-        # ✅ Alias ciclo/aplicadores
         if analysis_key in ("ciclo", "cicloaplicadores", "ciclo_aplicador", "ciclo-aplicadores"):
             analysis_key = "ciclo_aplicadores"
 
@@ -2126,20 +2447,17 @@ def run_analysis_api():
 
         operator = (request.form.get("operator", "") or "").strip() or "General"
 
-        # ✅ Solo filtrar por hora cuando el usuario lo haya aplicado explícitamente
         time_apply = (request.form.get("time_apply", "0") or "0").strip()
         time_apply = time_apply in ("1", "true", "True", "YES", "yes", "on")
 
         raw_time_start = (request.form.get("time_start", "") or "").strip()
         raw_time_end = (request.form.get("time_end", "") or "").strip()
 
-        # ✅ week/month: horas en blanco (y nunca aplican)
         if period in ("week", "month"):
             time_start = ""
             time_end = ""
             time_apply = False
         else:
-            # ✅ day: se muestran (min/max o defaults), pero SOLO aplican si time_apply=True
             time_start = raw_time_start or "00:00"
             time_end = raw_time_end or "23:59"
 
@@ -2161,8 +2479,11 @@ def run_analysis_api():
         is_gsheet_app = (analysis_key == "aplicacion" and filename == GSHEET_APP_TOKEN)
         is_gsheet_hp = (analysis_key == "corte" and machine == "HP" and filename == GSHEET_HP_TOKEN)
         is_gsheet_thb = (analysis_key == "corte" and machine == "THB" and filename == GSHEET_THB_TOKEN)
-        # ✅ ciclo/aplicadores usa el mismo token de app
         is_gsheet_ciclo = (analysis_key == "ciclo_aplicadores" and filename == GSHEET_APP_TOKEN)
+
+        # ✅ NUEVO: continuidad tokens (buses/motos)
+        is_gsheet_cont_buses = (analysis_key == "continuidad" and filename == GSHEET_CONT_BUSES_TOKEN)
+        is_gsheet_cont_motos = (analysis_key == "continuidad" and filename == GSHEET_CONT_MOTOS_TOKEN)
 
         if is_gsheet_app:
             path = GSHEET_APP_TOKEN
@@ -2172,6 +2493,10 @@ def run_analysis_api():
             path = GSHEET_THB_TOKEN
         elif is_gsheet_ciclo:
             path = GSHEET_APP_TOKEN
+        elif is_gsheet_cont_buses:
+            path = GSHEET_CONT_BUSES_TOKEN
+        elif is_gsheet_cont_motos:
+            path = GSHEET_CONT_MOTOS_TOKEN
         else:
             path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
             if not os.path.exists(path):
@@ -2364,7 +2689,7 @@ def run_analysis_api():
             grp = df.groupby("terminal", dropna=True)["pulsos"].sum().sort_values(ascending=False)
 
             labels = grp.index.astype(str).tolist()
-            totals = [int(x) for x in grp.values.tolist()]  # ✅ ints puros (jsonify seguro)
+            totals = [int(x) for x in grp.values.tolist()]
 
             result = {
                 "status": "ok",
@@ -2372,12 +2697,10 @@ def run_analysis_api():
                 "period": "total",
                 "period_value": "",
                 "rows_total": int(len(df)),
-
                 "kpis_ui": {
                     "Terminales únicos": str(int(len(labels))),
                     "Pulsos totales": str(int(grp.sum())),
                 },
-
                 "terminal_usage": {
                     "labels": labels,
                     "manual": totals,
@@ -2385,15 +2708,55 @@ def run_analysis_api():
                     "otros": [0] * len(totals),
                     "total": totals,
                 },
-
                 "note": "UNION: suma col D desde fila 3 en 4 libros (GSHEET_GID_UNION..GSHEET_GID_UNION4).",
             }
             return _nocache_json({"ok": True, "result": result}, 200)
 
+        # =========================================================
+        # ✅ CONTINUIDAD (BUSES / MOTOS) por Google Sheets
+        # =========================================================
+        elif analysis_key == "continuidad":
+            ttl = int(getattr(config, "GSHEET_TTL_S", 10) or 10)
+
+            if filename == GSHEET_CONT_BUSES_TOKEN:
+                sheet_id = getattr(config, "CONT_BUSES_SHEET_ID", "") or ""
+                gid_hora = int(getattr(config, "CONT_BUSES_GID_RESUMEN_HORA", 0) or 0)
+                gid_dia = int(getattr(config, "CONT_BUSES_GID_RESUMEN_DIA_REF", 0) or 0)
+                machine = "BUSES"
+            elif filename == GSHEET_CONT_MOTOS_TOKEN:
+                sheet_id = getattr(config, "CONT_MOTOS_SHEET_ID", "") or ""
+                gid_hora = int(getattr(config, "CONT_MOTOS_GID_RESUMEN_HORA", 0) or 0)
+                gid_dia = int(getattr(config, "CONT_MOTOS_GID_RESUMEN_DIA_REF", 0) or 0)
+                machine = "MOTOS"
+            else:
+                return _nocache_json(
+                    {"ok": False, "error": "Continuidad requiere token de Google Sheets (buses/motos)."}, 400)
+
+            if not sheet_id or gid_hora is None or gid_dia is None:
+                return _nocache_json({"ok": False, "error": "Falta config Continuidad en config.py."}, 400)
+
+            df_hora = load_gsheet_tab_csv_smart(sheet_id, gid_hora, ttl_s=ttl).copy()
+            df_dia = load_gsheet_tab_csv_smart(sheet_id, gid_dia, ttl_s=ttl).copy()
+
+            result = _analyze_continuidad(df_hora, df_dia, period=period, pv=period_value, machine=machine)
+
+            if not isinstance(result, dict):
+                return _nocache_json({"ok": False, "error": "El análisis Continuidad no devolvió un dict válido."}, 500)
+            if result.get("status") != "ok":
+                return _nocache_json({"ok": False, "error": result.get("message", "Error ejecutando continuidad.")},
+                                     400)
+            # ✅ COMPAT: expón KPIs en 2 nombres
+            if "kpis_ui" in result and "kpis" not in result:
+                result["kpis"] = result["kpis_ui"]
+
+            return _nocache_json({"ok": True, "result": result}, 200)
+
         return _nocache_json({"ok": False, "error": f"analysis_key no soportado: {analysis_key}"}, 400)
+
 
     except Exception as e:
         return _nocache_json({"ok": False, "error": f"Error interno: {e}"}, 500)
+
 
 
 

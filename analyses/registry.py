@@ -9,3 +9,4 @@ def register_analysis(key: str, title: str, fn: Callable[..., Any]) -> None:
 
 def get_analyses() -> Dict[str, Dict[str, Any]]:
     return _ANALYSES
+

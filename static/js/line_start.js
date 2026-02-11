@@ -169,22 +169,42 @@ function selectMachine(name, el){
 
   const label = document.getElementById("machineLabel");
   const input = document.getElementById("machineInput");
+
+  // Corte (HP/THB) - Google Sheets
   const inputGs = document.getElementById("machineInputGs");
   const gsheetWrap = document.getElementById("gsheetHpWrap");
 
+  // ✅ Continuidad (BUSES/MOTOS) - Google Sheets
+  const inputGsCont = document.getElementById("machineInputGsCont");
+  const gsheetContWrap = document.getElementById("gsheetContWrap");
+
   if(label) label.textContent = name;
   if(input) input.value = name;
+
+  // =========================
+  // ✅ CORTE: Google Sheets (solo HP/THB y solo si estás en corte)
+  // =========================
   if(inputGs) inputGs.value = name;
 
-  // ✅ Mostrar botón Google Sheets solo si es HP
   if(gsheetWrap){
+    const isCorte = (window.LINE_START_CFG?.line_key === "corte");
     const m = String(name).toUpperCase();
-    gsheetWrap.style.display = (m === "HP" || m === "THB") ? "block" : "none";
+    gsheetWrap.style.display = (isCorte && (m === "HP" || m === "THB")) ? "block" : "none";
+  }
 
+  // =========================
+  // ✅ CONTINUIDAD: Google Sheets (BUSES/MOTOS)
+  // =========================
+  if(inputGsCont) inputGsCont.value = name;
+
+  if(gsheetContWrap){
+    const isCont = (window.LINE_START_CFG?.line_key === "continuidad");
+    gsheetContWrap.style.display = isCont ? "block" : "none";
   }
 
   gateUploadBlock();
 }
+
 
 
 // =========================
@@ -558,59 +578,257 @@ function periodValueOk(){
   return !!pv && pv !== "No hay registros para este periodo";
 }
 
+function _parseFirstNumFromEl(el){
+  const t = el ? (el.textContent || "") : "";
+
+  // 1) Primero intenta HH:MM:SS o HH:MM
+  const mt = String(t).match(/\b(\d{1,2}):(\d{2})(?::(\d{2}))?\b/);
+  if(mt){
+    const hh = Number(mt[1]) || 0;
+    const mm = Number(mt[2]) || 0;
+    const ss = Number(mt[3]) || 0;
+    return hh + (mm/60) + (ss/3600); // horas decimales (para cálculo)
+  }
+
+  // 2) Si no hay horas, toma el primer número (con coma o punto)
+  const m = String(t || "").replace(",", ".").match(/-?\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : NaN;
+}
+
+
+function _stripPctText(s){
+  return String(s || "").replace(/\(\s*\d+(?:\.\d+)?\s*%\s*\)/g, "").trim();
+}
+
+function _fmtHHMMFromHoursDec(h){
+  // truncado a minuto (sin redondeo)
+  const mins = Math.max(0, Math.trunc((Number(h)||0) * 60));
+  const hh = Math.floor(mins / 60);
+  const mm = mins % 60;
+  return String(hh).padStart(2,"0") + ":" + String(mm).padStart(2,"0");
+}
+
+
+function _fmtPct1(x){
+  const r = Math.round((Number(x)||0) * 10) / 10;
+  if(!Number.isFinite(r)) return "0%";
+  if(Math.abs(r - Math.round(r)) < 1e-9) return `${Math.round(r)}%`;
+  return `${r.toFixed(1)}%`;
+}
+
+function _fmtPctPartsTo100(prodSec, otherSec, mealSec){
+  const p = Math.max(0, Number(prodSec)  || 0);
+  const o = Math.max(0, Number(otherSec) || 0);
+  const m = Math.max(0, Number(mealSec)  || 0);
+  const base = p + o + m;
+
+  if(base <= 0){
+    return { prodPct: "0%", otherPct: "0%", mealPct: "0%" };
+  }
+
+  let pp = Math.round(100 * p / base);
+  let op = Math.round(100 * o / base);
+  let mp = Math.round(100 * m / base);
+
+  // Ajusta el último “existente” para cerrar 100
+  let key = (m > 0) ? "meal" : (o > 0) ? "other" : "prod";
+  const sum = pp + op + mp;
+  const d = 100 - sum;
+
+  if(key === "meal") mp += d;
+  else if(key === "other") op += d;
+  else pp += d;
+
+  // clamps
+  if(pp < 0) pp = 0;
+  if(op < 0) op = 0;
+  if(mp < 0) mp = 0;
+
+  return { prodPct: `${pp}%`, otherPct: `${op}%`, mealPct: `${mp}%` };
+}
+
+
+
+// ✅ Ajusta No registrado (y %) en la card de HP para que cierre con Horas Disponibles
+function adjustHpNoRegistradoUI(){
+  const cards = Array.from(document.querySelectorAll("#inlineKpis .kpi-card"));
+  const getCard = (title)=> cards.find(c =>
+    (c.querySelector(".kpi-title")?.textContent || "").trim() === title
+  );
+
+  const hdCard   = getCard("Horas Disponibles");
+  const effCard  = getCard("Tiempo Trabajado");
+  const otroCard = getCard("Tiempos Perdidos");
+  if(!hdCard || !effCard || !otroCard) return;
+
+  const hdEl   = hdCard.querySelector(".kpi-value");
+  const effEl  = effCard.querySelector(".kpi-value");
+  const otroEl = otroCard.querySelector(".kpi-split-left .kpi-value") || otroCard.querySelector(".kpi-value");
+  if(!hdEl || !effEl || !otroEl) return;
+
+  const hdVal   = _parseFirstNumFromEl(hdEl);
+  const effVal  = _parseFirstNumFromEl(effEl);
+  const otroVal = _parseFirstNumFromEl(otroEl);
+  if(!Number.isFinite(hdVal) || !Number.isFinite(effVal) || !Number.isFinite(otroVal)) return;
+
+  // =========================
+  // 1) No registrado base (lo que falta para llegar a Horas Disponibles)
+  // =========================
+  let nr = hdVal - (effVal + otroVal);
+  if(!Number.isFinite(nr) || nr < 0) nr = 0;
+  nr = _trunc2(nr);
+
+  // =========================
+  // 2) ✅ MOVER EXCEDENTE de Parada 105 → No registrado (SOLO VISUAL)
+  //    Si (eff + otro) > hd, el exceso lo sacamos de Parada 105 (hasta donde alcance)
+  // =========================
+  const overflow = Math.max(0, _trunc2((effVal + otroVal) - hdVal)); // horas decimales
+  let moved = 0;
+
+  // localizar bloques
+  const blocks = Array.from(otroCard.querySelectorAll(".kpi-sub-block"));
+  const findBlock = (labelLower)=> blocks.find(b =>
+    (b.querySelector(".kpi-sub-label")?.textContent || "").trim().toLowerCase() === labelLower
+  );
+
+  const b105 = findBlock("parada 105");
+  let bNR  = findBlock("no registrado");
+
+  // asegurar bloque NR
+  if(!bNR){
+    const row = otroCard.querySelector(".kpi-sub-row");
+    if(row){
+      const div = document.createElement("div");
+      div.className = "kpi-sub-divider";
+      row.appendChild(div);
+
+      bNR = document.createElement("div");
+      bNR.className = "kpi-sub-block";
+      bNR.innerHTML = `
+        <div class="kpi-sub-label">No registrado</div>
+        <div class="kpi-sub-value-big">0.00</div>
+      `;
+      row.appendChild(bNR);
+    }
+  }
+
+  // si existe parada 105 y hay overflow, lo movemos
+  if(b105 && overflow > 0){
+    const v105El = b105.querySelector(".kpi-sub-value-big");
+    const v105 = _parseFirstNumFromEl(v105El);
+
+    if(Number.isFinite(v105) && v105 > 0){
+      moved = Math.min(v105, overflow);
+      const v105New = _trunc2(Math.max(0, v105 - moved));
+
+      if(v105El) v105El.textContent = _fmt2(v105New);
+      nr = _trunc2(nr + moved);
+    }
+  }
+
+  // pintar NR final
+  const nrTxt = _fmt2(nr);
+  const nrValEl = bNR?.querySelector(".kpi-sub-value-big");
+  if(nrValEl) nrValEl.textContent = nrTxt;
+
+  // =========================
+  // 3) % (base = Horas Disponibles)
+  // =========================
+  const base = hdVal;
+  if(base > 0){
+    const pctEff  = _fmtPct1(100 * effVal  / base);
+    const pctOtro = _fmtPct1(100 * otroVal / base);
+
+    const effTimeTxt = _stripPctText(effEl.textContent);
+    effEl.innerHTML = `${escHtml(effTimeTxt)} <span class="kpi-pct">(${escHtml(pctEff)})</span>`;
+
+    const otroTimeTxt = _stripPctText(otroEl.textContent);
+    otroEl.innerHTML = `${escHtml(otroTimeTxt)} <span class="kpi-pct">(${escHtml(pctOtro)})</span>`;
+  }
+}
+
+
+
+
+
+
+
 function makeCard(title, value, cls, spanClass){
   const card = document.createElement("div");
   card.className = `kpi-card ${cls || ""} ${spanClass || ""}`;
 
   const raw = String(value ?? "");
   const parts = raw.split("||");
-  const main = (parts[0] ?? "").trim();
+
+  const mainRaw = (parts[0] ?? "").trim();       // ✅ ahora sí existe
+  const mainDec = _replaceTimesToHourDec(mainRaw);
   const sub  = parts.slice(1).join("||").trim();
 
   if(sub){
-    // sub esperado: "105: 00:30 | No registrado: 01:15 | 44.7%"
-    const subClean = sub.replace(/^105:\s*/i, "").trim();
-    const pipeParts = subClean
+    const pipeParts = sub
       .split("|")
       .map(x => String(x || "").trim())
       .filter(Boolean);
 
-    let v105 = subClean;
+    let v105 = "";
+    let v104 = "";
     let nrVal = "";
     let pctVal = "";
 
-    const pctRe = /^\(?\s*\d+(\.\d+)?\s*%\s*\)?$/;
+    const pctRe = /^\(?\s*\d+(\.\d+)?\s*%\s*\)?$/i;
 
-    if(pipeParts.length >= 2){
-      // 1) 105
-      v105 = pipeParts[0];
+    for(const seg of pipeParts){
+      const s = seg.trim();
 
-      // 2) resto (NR + posible % al final)
-      const restParts = pipeParts.slice(1);
-
-      // si el último es porcentaje, lo sacamos
-      const last = (restParts[restParts.length - 1] || "").trim();
-      if(pctRe.test(last)){
-        pctVal = last.replace(/[()]/g, "").trim(); // "44.7%"
+      // ✅ excluir 000 / Desconocido SOLO del desglose
+      if(/^(\(?\s*)?(?:parada\s*)?000\s*:/i.test(s) || /desconocido/i.test(s)){
+        continue;
       }
 
-      // texto NR sin el %
-      const restNoPct = (pctVal ? restParts.slice(0, -1) : restParts).join(" | ").trim();
+      // % (14.2%)
+      if(pctRe.test(s)){
+        pctVal = s.replace(/[()]/g, "").trim();
+        continue;
+      }
 
-      // extraer valor de no registrado
-      const m = restNoPct.match(/^no\s*registrado\s*:\s*(.+)$/i);
-      nrVal = (m ? (m[1] || "").trim() : restNoPct);
+      // Parada 105 / 105
+      let m = s.match(/^(?:parada\s*)?105\s*:\s*(.+)$/i);
+      if(m){
+        v105 = (m[1] || "").trim();
+        continue;
+      }
 
-      // limpieza por si viene algo raro pegado
-      nrVal = nrVal.replace(/\(?\s*\d+(\.\d+)?\s*%\s*\)?\s*$/i, "").trim();
-      nrVal = nrVal.replace(/\s*\|\s*$/g, "").trim();
+      // Parada 104 / 104
+      m = s.match(/^(?:parada\s*)?104\s*:\s*(.+)$/i);
+      if(m){
+        v104 = (m[1] || "").trim();
+        continue;
+      }
+
+      // No registrado
+      m = s.match(/^no\s*registrado\s*:\s*(.+)$/i);
+      if(m){
+        nrVal = (m[1] || "").trim();
+        continue;
+      }
+
+      // Back-compat
+      if(!v105) v105 = s;
     }
 
-    // ✅ AHORA: el % va al lado del valor grande (main)
-    // ✅ % gris (separate span)
+    // defaults
+    if(!v105) v105 = "0.00";
+    if(!v104) v104 = "0.00";
+    if(!nrVal) nrVal = "0.00";
+
+    // ✅ convertir HH:MM -> horas decimales (si venían así)
+    v105  = _replaceTimesToHourDec(v105);
+    v104  = _replaceTimesToHourDec(v104);
+    nrVal = _replaceTimesToHourDec(nrVal);
+
     const mainHtml = pctVal
-      ? `${escHtml(main)} <span class="kpi-pct">(${escHtml(pctVal)})</span>`
-      : `${escHtml(main)}`;
+      ? `${escHtml(mainDec)} <span class="kpi-pct">(${escHtml(pctVal)})</span>`
+      : `${escHtml(mainDec)}`;
 
     card.innerHTML = `
       <div class="kpi-title">${escHtml(title)}</div>
@@ -633,30 +851,39 @@ function makeCard(title, value, cls, spanClass){
               <div class="kpi-sub-label">No registrado</div>
               <div class="kpi-sub-value-big">${escHtml(nrVal)}</div>
             </div>
+
+            <div class="kpi-sub-divider"></div>
+
+            <div class="kpi-sub-block">
+              <div class="kpi-sub-label">Parada 104</div>
+              <div class="kpi-sub-value-big">${escHtml(v104)}</div>
+            </div>
           </div>
         </div>
       </div>
     `;
-
     return card;
   }
 
-    // ✅ Si viene "3:30 (50.8%)" => el % va en gris
-    let mainHtmlSimple = escHtml(main);
-    const mPct = String(main || "").match(/^(.*?)(\s*\(\s*\d+(?:\.\d+)?\s*%\s*\)\s*)$/);
-    if(mPct){
-      const left = (mPct[1] || "").trim();
-      const pct  = (mPct[2] || "").trim();
-      mainHtmlSimple = `${escHtml(left)} <span class="kpi-pct">${escHtml(pct)}</span>`;
-    }
+  // Simple: puede venir "3.30 (50.8%)"
+  let mainHtmlSimple = escHtml(_replaceTimesToHourDec(mainRaw));
 
-    card.innerHTML = `
-      <div class="kpi-title">${escHtml(title)}</div>
-      <div class="kpi-value">${mainHtmlSimple}</div>
-    `;
-    return card;
+  const mPct = String(mainRaw || "").match(/^(.*?)(\s*\(\s*\d+(?:\.\d+)?\s*%\s*\)\s*)$/);
+  if(mPct){
+    const left = (mPct[1] || "").trim();
+    const pct  = (mPct[2] || "").trim();
+    mainHtmlSimple = `${escHtml(_replaceTimesToHourDec(left))} <span class="kpi-pct">${escHtml(pct)}</span>`;
+  }
 
+  card.innerHTML = `
+    <div class="kpi-title">${escHtml(title)}</div>
+    <div class="kpi-value">${mainHtmlSimple}</div>
+  `;
+  return card;
 }
+
+
+
 
 
 
@@ -759,18 +986,165 @@ function paretoTitle(period){
 }
 
 function secToHHMM(sec){
-  const s = Math.max(0, Number(sec) || 0);
-  const hh = Math.floor(s / 3600);
-  const mm = Math.floor((s % 3600) / 60);
-  return String(hh).padStart(2,"0") + ":" + String(mm).padStart(2,"0");
+  // ✅ ahora devuelve horas decimales (2 decimales, truncado)
+  return _fmtHourDecFromSec(sec);
 }
 
 function secToHHMMSS(sec){
-  const s = Math.max(0, Math.floor(Number(sec) || 0));
-  const hh = Math.floor(s / 3600);
-  const mm = Math.floor((s % 3600) / 60);
-  const ss = s % 60;
-  return String(hh).padStart(2,"0") + ":" + String(mm).padStart(2,"0") + ":" + String(ss).padStart(2,"0");
+  // ✅ ahora también devuelve horas decimales
+  return _fmtHourDecFromSec(sec);
+}
+
+
+function _trunc2(x){
+  const n = Number(x);
+  if(!Number.isFinite(n)) return 0;
+  return Math.trunc(n * 100) / 100; // ✅ sin redondeo
+}
+
+function _fmtHourDecPartsToOneHour(prodSec, otherSec, mealSec){
+  // Trabaja en HORAS (no strings) y fuerza cierre visual a 1.00
+  const p = Math.max(0, Number(prodSec) || 0) / 3600;
+  const o = Math.max(0, Number(otherSec) || 0) / 3600;
+  const m = Math.max(0, Number(mealSec) || 0) / 3600;
+
+  // Redondea dos y el tercero lo ajusta
+  let p2 = _round2(p);
+  let o2 = _round2(o);
+
+  // Remanente para cerrar 1.00
+  let m2 = _round2(1 - (p2 + o2));
+
+  // clamps por si por redondeo queda -0.01 o 1.01
+  if(m2 < 0){
+    // quítaselo a "Otro" primero (o a Efectivo si prefieres)
+    o2 = _round2(o2 + m2);
+    m2 = 0;
+  }
+  if(o2 < 0){ o2 = 0; }
+
+  // segunda pasada por si quedó 1.01 etc
+  const sum = _round2(p2 + o2 + m2);
+  if(sum !== 1){
+    // ajusta el último (comida) para cerrar exacto
+    m2 = _round2(m2 + (1 - sum));
+    if(m2 < 0) m2 = 0;
+  }
+
+  return {
+    prodStr: _fmt2(p2),
+    otherStr: _fmt2(o2),
+    mealStr: _fmt2(m2),
+  };
+}
+
+function _fmtHourDecPartsToTotal(prodSec, otherSec, mealSec){
+  const p = Math.max(0, Number(prodSec)  || 0) / 3600;
+  const o = Math.max(0, Number(otherSec) || 0) / 3600;
+  const m = Math.max(0, Number(mealSec)  || 0) / 3600;
+
+  // total real y total que vas a mostrar
+  const totalRaw = p + o + m;
+  const total2 = _round2(totalRaw);
+
+  // redondea 2 y ajusta el último para que SUMA == total2
+  let p2 = _round2(p);
+  let o2 = _round2(o);
+  let m2 = _round2(m);
+
+  // elige cuál ajustar: prioridad al último que exista (>0), si no, comida, si no, otro, si no, efectivo
+  let adjustKey = "meal";
+  if(m2 > 0 || m > 0) adjustKey = "meal";
+  else if(o2 > 0 || o > 0) adjustKey = "other";
+  else adjustKey = "prod";
+
+  const sum2 = _round2(p2 + o2 + m2);
+  const delta = _round2(total2 - sum2);
+
+  if(adjustKey === "meal") m2 = _round2(m2 + delta);
+  if(adjustKey === "other") o2 = _round2(o2 + delta);
+  if(adjustKey === "prod")  p2 = _round2(p2 + delta);
+
+  // clamps por si queda -0.01 por redondeos extremos
+  if(p2 < 0) p2 = 0;
+  if(o2 < 0) o2 = 0;
+  if(m2 < 0) m2 = 0;
+
+  // segunda pasada por seguridad
+  const sum3 = _round2(p2 + o2 + m2);
+  if(sum3 !== total2){
+    // fuerza el ajuste al mismo key
+    const d2 = _round2(total2 - sum3);
+    if(adjustKey === "meal") m2 = _round2(m2 + d2);
+    if(adjustKey === "other") o2 = _round2(o2 + d2);
+    if(adjustKey === "prod")  p2 = _round2(p2 + d2);
+  }
+
+  return {
+    totalStr: _fmt2(total2),
+    prodStr:  _fmt2(p2),
+    otherStr: _fmt2(o2),
+    mealStr:  _fmt2(m2),
+    total2
+  };
+}
+
+
+function _round2(x){
+  const n = Number(x);
+  if(!Number.isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+}
+function _fmt2(x){
+  return _round2(x).toFixed(2);
+}
+
+
+function _fmtHourDecFromSec(sec){
+  const s = Math.max(0, Number(sec) || 0);
+  const h = s / 3600;
+  return _trunc2(h).toFixed(2); // "9.13"
+}
+function _fmtHourDecPartsRaw(prodSec, otherSec, mealSec){
+  return {
+    prodStr:  _fmtHourDecFromSec(prodSec),
+    otherStr: _fmtHourDecFromSec(otherSec),
+    mealStr:  _fmtHourDecFromSec(mealSec),
+  };
+}
+
+
+function _fmtHourDecFromHHMM(str){
+  const t = String(str || "").trim();
+  // acepta "H:MM", "HH:MM", "HH:MM:SS" (si viene)
+  const m = t.match(/^(\d{1,2})\s*:\s*(\d{1,2})(?:\s*:\s*(\d{1,2}))?$/);
+  if(!m) return null;
+  const hh = Number(m[1]) || 0;
+  const mm = Number(m[2]) || 0;
+  const ss = Number(m[3]) || 0;
+  const dec = hh + (mm/60) + (ss/3600);
+  return _trunc2(dec).toFixed(2);
+}
+
+
+
+// ✅ convierte cualquier texto que contenga HH:MM o HH:MM:SS a horas decimales
+function _replaceTimesToHourDec(text){
+  const s = String(text ?? "");
+
+  // HH:MM:SS primero
+  let out = s.replace(/\b(\d{1,2}):(\d{2}):(\d{2})\b/g, (_,h,m,ss)=>{
+    const dec = (Number(h)||0) + (Number(m)||0)/60 + (Number(ss)||0)/3600;
+    return _trunc2(dec).toFixed(2);
+  });
+
+  // luego HH:MM (que no venga seguido de :SS)
+  out = out.replace(/\b(\d{1,2}):(\d{2})\b(?!:\d{2})/g, (_,h,m)=>{
+    const dec = (Number(h)||0) + (Number(m)||0)/60;
+    return _trunc2(dec).toFixed(2);
+  });
+
+  return out;
 }
 
 
@@ -838,9 +1212,44 @@ function renderParetoParadas(result){
 
     if(!titleEl || !wrap || !canvas) return;
 
-    const labels = pareto?.labels || [];
-    const durSec = pareto?.dur_sec || [];
+    let labels = pareto?.labels || [];
+    let durSec = pareto?.dur_sec || [];
     let cumPct = pareto?.cum_pct || [];
+
+    // ✅ FILTRAR: excluir "000" / "Desconocido" SOLO en Pareto
+    const filt = [];
+    for(let i=0; i<labels.length; i++){
+      const code = String(labels[i] ?? "").trim();
+      const sec  = Number(durSec[i] ?? 0) || 0;
+      if(sec <= 0) continue;
+
+      // excluir 000 y/o texto "desconocido"
+      const desc = (STOP_CODE_DESC[code] || code || "").toString().toLowerCase().trim();
+      if(code === "000" || desc === "desconocido") continue;
+
+      // ✅ excluir 105 del pareto (HP y THB)
+      if(code === "105") continue;
+
+      filt.push({ code, sec });
+    }
+
+    if(filt.length === 0){
+      destroyPareto();
+      return;
+    }
+
+    // reconstruir arrays ya filtrados
+    labels = filt.map(x => x.code);
+    durSec = filt.map(x => x.sec);
+
+    // ✅ recalcular cumPct (ya NO usamos el del backend porque cambió el total)
+    const totalSec = durSec.reduce((a,b)=>a+(Number(b)||0),0);
+    let run = 0;
+    cumPct = durSec.map(s=>{
+      run += (Number(s)||0);
+      return totalSec > 0 ? Math.round((run/totalSec)*100) : 0;
+    });
+
 
     if(!Array.isArray(labels) || !labels.length || !Array.isArray(durSec) || !durSec.length){
       destroyPareto();
@@ -1165,6 +1574,122 @@ function _causeLabel(c){
 }
 
 
+async function renderThbDayTarjetas(result){
+  const machineU = String(result?.machine || "").toUpperCase().trim();
+  const period = String(result?.period || "").trim();
+  if(machineU !== "THB" || period !== "day") return;
+
+  // contenedor: lo creamos debajo de prodHourWrap si no existe
+  let wrap = document.getElementById("thbDayTarjetasWrap");
+  const host = document.getElementById("prodHourWrap");
+  if(!host) return;
+
+  if(!wrap){
+    wrap = document.createElement("div");
+    wrap.id = "thbDayTarjetasWrap";
+    wrap.className = "thb-day-wrap";
+    host.appendChild(wrap);
+  }
+
+  const pvSel = document.getElementById("periodValueSelect");
+  const opSel = document.getElementById("operatorSelect");
+
+  const periodValue = String(pvSel ? pvSel.value : (result?.period_value || "")).trim();
+  const operator = String(opSel ? opSel.value : (result?.operator || "General")).trim();
+
+  if(!periodValue){
+    wrap.innerHTML = "";
+    return;
+  }
+
+  const url = (URLS && URLS.thb_tarjetas_day) ? String(URLS.thb_tarjetas_day) : "";
+  if(!url){
+    wrap.innerHTML = `<div class="thb-day-muted">Falta URLS.thb_tarjetas_day en el CFG.</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `
+    <div class="thb-day-head">
+      <div class="thb-day-title">Arneses y consecutivos del día</div>
+      <div class="thb-day-sub">${escHtml(periodValue)} · Operaria: <b>${escHtml(operator || "General")}</b></div>
+    </div>
+    <div class="thb-day-muted">Cargando…</div>
+  `;
+
+  try{
+    const qs = new URLSearchParams({
+      filename: String(CFG.filename || ""),
+      period_value: periodValue,
+      operator: operator,
+      limit: "500",
+      _: String(Date.now())
+    });
+
+    const resp = await fetch(`${url}?${qs.toString()}`, { cache:"no-store" });
+    const data = await resp.json();
+
+    if(!resp.ok || !data || data.ok !== true){
+      const msg = (data && data.error) ? data.error : `HTTP ${resp.status}`;
+      wrap.innerHTML = `<div class="thb-day-muted">Error: ${escHtml(msg)}</div>`;
+      return;
+    }
+
+    const items = Array.isArray(data.items) ? data.items : [];
+    if(items.length === 0){
+      wrap.innerHTML = `<div class="thb-day-muted">Sin registros para este día.</div>`;
+      return;
+    }
+
+    const rows = items.map((it, idx)=>{
+      const cod = String(it.codigo_arnes ?? "—");
+      const cantidad = Number(it.cantidad || 0) || 0;
+      const consecs = Array.isArray(it.consecutivos) ? it.consecutivos : [];
+
+      // mostrar lista (truncada) pero sin perder “por separado”
+      const maxShow = 30;
+      const shown = consecs.slice(0, maxShow);
+      const more = consecs.length - shown.length;
+
+      const listHtml = shown.map(x=>`<span class="thb-day-pill">${escHtml(String(x))}</span>`).join("");
+      const moreHtml = (more > 0) ? `<span class="thb-day-more">+${more} más…</span>` : "";
+
+      return `
+        <tr>
+          <td class="thb-day-idx">${idx+1}</td>
+          <td class="thb-day-code"><b>${escHtml(cod)}</b></td>
+          <td class="thb-day-count">${escHtml(String(cantidad))}</td>
+          <td class="thb-day-cons">${listHtml} ${moreHtml}</td>
+        </tr>
+      `;
+    }).join("");
+
+    wrap.innerHTML = `
+      <div class="thb-day-head">
+        <div class="thb-day-title">Arneses y consecutivos del día</div>
+        <div class="thb-day-sub">${escHtml(periodValue)} · Operaria: <b>${escHtml(operator || "General")}</b> · Total cortes: <b>${escHtml(String(data.total || 0))}</b></div>
+      </div>
+
+      <div class="thb-day-table-wrap">
+        <table class="thb-day-table">
+          <thead>
+            <tr>
+              <th class="thb-day-idx">#</th>
+              <th>Código arnés</th>
+              <th class="thb-day-count">Cant.</th>
+              <th>Consecutivos</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+
+  }catch(e){
+    wrap.innerHTML = `<div class="thb-day-muted">Error: ${escHtml(String(e))}</div>`;
+  }
+}
+
+
 function renderProdHour(result){
   const period = String(result?.period || "");
   const title = document.getElementById("prodHourTitle");
@@ -1217,25 +1742,64 @@ function renderProdHour(result){
     const circuits = Number(b.cut)||0;
     const meters = Number(b.meters)||0;
 
-    const prodSec = Number(b.prodSec)||0;
-    const deadSec = Number(b.deadSec)||0;
-    const mealSec = Number(b.mealSec)||0;
+    // ======= ✅ NORMALIZACIÓN DE UNIDADES (HORAS DECIMALES -> SEGUNDOS) =======
+    let prodSec = Number(b.prodSec)||0;
+    let deadSec = Number(b.deadSec)||0;
+    let mealSec = Number(b.mealSec)||0;
 
-    // ✅ “Otro” = SOLO lo que venga real del backend (Excel). NO completar a 3600.
-    //    Si el backend trae otherDeadSec úsalo; si no, usa deadSec-mealSec como fallback.
-    const otherDeadSecFinal = (b.otherDeadSec != null)
+    // si vienen como horas decimales (ej 0.36, 0.63, 0.26), convierto a segundos
+    const looksLikeHours =
+      (prodSec > 0 && prodSec < 24) || (deadSec > 0 && deadSec < 24) || (mealSec > 0 && mealSec < 24);
+
+    // más estricto: si hay decimales y valores pequeños, casi seguro son horas
+    const hasDecimals = (x)=> Math.abs(x - Math.trunc(x)) > 1e-9;
+    const probablyDecimalHours =
+      (hasDecimals(prodSec) && prodSec < 10) ||
+      (hasDecimals(deadSec) && deadSec < 10) ||
+      (hasDecimals(mealSec) && mealSec < 10);
+
+    const toSeconds = (v)=> Math.round(v * 3600);
+
+    if(looksLikeHours && probablyDecimalHours){
+      prodSec = toSeconds(prodSec);
+      deadSec = toSeconds(deadSec);
+      mealSec = toSeconds(mealSec);
+    }
+    // ======================================================================
+
+    // ✅ “Otro” = SOLO lo real del backend. NO completar a 3600.
+    let otherDeadSecFinal = (b.otherDeadSec != null)
       ? (Number(b.otherDeadSec)||0)
       : Math.max(0, deadSec - mealSec);
 
-    // ✅ Porcentajes SOLO sobre TIEMPO REAL (prod + dead).
-    //    NO se usa missingSec.
-    const totalAdj = Math.max(0, prodSec + deadSec);
-    const pctEff  = totalAdj > 0 ? Math.round((prodSec/totalAdj)*100) : 0;
-    const pctMeal = (mealSec > 0 && totalAdj > 0) ? Math.round((mealSec/totalAdj)*100) : 0;
-    const pctOther= totalAdj > 0 ? Math.max(0, 100 - pctEff - pctMeal) : 0;
+    // si otherDeadSec también viene como horas decimales, convierto igual
+    if(looksLikeHours && probablyDecimalHours && b.otherDeadSec != null){
+      otherDeadSecFinal = toSeconds(Number(b.otherDeadSec)||0);
+    }
+
+    if(machineU !== "HP"){
+      const sumHour = Math.max(0, prodSec) + Math.max(0, otherDeadSecFinal) + Math.max(0, mealSec);
+      const delta = 3600 - sumHour;
+      if(delta === 60){
+        prodSec += 60;
+      }
+    }
+
+
+
+
+    // ✅ % sobre el MISMO total que muestran los decimales (prod + other + comida)
+    // ✅ Porcentajes: cerrados a 100% usando (prod + other + comida)
+    const pct = _fmtPctPartsTo100(prodSec, otherDeadSecFinal, mealSec);
+    // ✅ pct.prodPct viene como "52%" -> número 52
+    const pctEffN = parseInt(String(pct.prodPct || "0").replace("%",""), 10) || 0;
+
+
+
+
 
     const isZero = circuits <= 0;
-    const good = (!isZero) && (pctEff >= 50);
+    const good = (!isZero) && (pctEffN >= 50);
 
     const mix = b.len_mix || null;
     const smallPct = mix ? Math.round(Number(mix.short_pct)||0) : 0;
@@ -1243,7 +1807,6 @@ function renderProdHour(result){
     const longPct  = mix ? Math.round(Number(mix.long_pct)||0)  : 0;
     const hasMix = mix && ((smallPct + medPct + longPct) > 0);
 
-    // ✅ SOLO barra apilada (Pequeño / Mediano / Largo)
     let sPct = smallPct, mPct = medPct, lPct = longPct;
     sPct = Math.max(0, Math.min(100, sPct));
     mPct = Math.max(0, Math.min(100, mPct));
@@ -1301,8 +1864,9 @@ function renderProdHour(result){
                 <div class="ph-otro-muted">Sin detalle de causas para esta hora.</div></div>`;
       }
 
-      // agrupar para evitar repetidos
       const agg = new Map();
+      let _seq203 = 0; // ✅ contador para NO agrupar 203
+
       for(const it of otherCauses){
         const sec = Number(it?.seconds ?? it?.sec ?? it?.downtime_s ?? it?.value ?? 0) || 0;
         if(sec <= 0) continue;
@@ -1324,10 +1888,19 @@ function renderProdHour(result){
 
         let kind = "other";
         let key = "";
+
         if(/^\d+$/.test(code)){
           kind = "stopcode";
-          key = `code:${code}`;
           desc = STOP_CODE_DESC[code] || desc || "—";
+
+            // ✅ 203 NO se agrupa: cada ocurrencia queda como item separado
+          if(String(code) === "203"){
+            _seq203 += 1;
+            key = `code:203#${_seq203}`;   // clave única => no suma
+          }else{
+            key = `code:${code}`;         // otros códigos sí se agrupan normal
+          }
+
         }else{
           const norm = normOtherKey(rawLabel || code || desc);
           key = `other:${norm || "unknown"}`;
@@ -1341,51 +1914,92 @@ function renderProdHour(result){
         else agg.set(key, { kind, code, desc, seconds: sec });
       }
 
+
       const arr = Array.from(agg.values()).sort((a,b)=> (b.seconds||0)-(a.seconds||0));
       if(!arr.length){
         return `<div class="ph-otro-panel"><div class="ph-otro-title">Causas de Paro</div>
                 <div class="ph-otro-muted">Sin detalle de causas para esta hora.</div></div>`;
       }
 
-      const items = arr.slice(0, 12).map(it=>{
+            // ====== ✅ TOP 12 + FALTANTE A 000 (para cuadrar con el BADGE "Otro") ======
+      // ✅ HP: NO cuadrar con 000. THB: sí puede cuadrar como antes.
+      const top = arr.slice(0, 12);
+
+      if(machineU !== "HP"){
+      // Lo que muestra el badge "Otro" (ya viene redondeado a 2 decimales por fmtParts)
+        const badgeOtherDec = Number(fmtParts?.otherStr || "0") || 0;
+
+      // Sumar lo que se verá en la lista (mismo truncado que usas en secToHHMMSS)
+        const decFromSec = (sec)=> Number(_fmtHourDecFromSec(sec)) || 0;
+
+        let sumShownDec = 0;
+        for(const it of top){
+          sumShownDec += decFromSec(it.seconds || 0);
+        }
+
+        const missingDec = _trunc2(Math.max(0, badgeOtherDec - sumShownDec));
+
+        if(missingDec > 0){
+          const missingSec = Math.round(missingDec * 3600);
+
+        // Busca 000 en el top para sumarle; si no está, lo crea
+          let idx000 = top.findIndex(x => String(x.code || "").trim() === "000");
+          if(idx000 >= 0){
+            top[idx000].seconds = (Number(top[idx000].seconds)||0) + missingSec;
+            top[idx000].kind = "stopcode";
+            top[idx000].desc = STOP_CODE_DESC["000"] || top[idx000].desc || "Desconocido";
+          }else{
+            top.push({ kind:"stopcode", code:"000", desc:(STOP_CODE_DESC["000"] || "Desconocido"), seconds: missingSec });
+          }
+        }
+      }
+
+
+      const items = top.map(it=>{
         const hhmm = secToHHMMSS(it.seconds || 0);
         if(it.kind === "stopcode" && it.code){
           return `<li><b>${escHtml(it.code)}</b> — ${escHtml(it.desc)} <span class="ph-otro-muted">(${escHtml(hhmm)})</span></li>`;
         }
         return `<li>${escHtml(it.desc)} <span class="ph-otro-muted">(${escHtml(hhmm)})</span></li>`;
       }).join("");
+      // ======================================================================
+
 
       return `<div class="ph-otro-panel">
                 <div class="ph-otro-title">Causas de Paro</div>
                 <ol class="ph-otro-list">${items}</ol>
               </div>`;
     }
+    // ✅ Cerrar decimales para que la SUMA sea igual al total real (prod + other + comida)
+    const fmtParts = (machineU === "HP")
+      ? _fmtHourDecPartsRaw(prodSec, otherDeadSecFinal, mealSec)   // ✅ HP: sin ajustar
+      : _fmtHourDecPartsToTotal(prodSec, otherDeadSecFinal, mealSec); // ✅ THB/otros: igual como estaba
 
-    // ✅ badges: SIEMPRE usar otherDeadSecFinal (real), y no inventar 1h.
+
     const timeBadges = (mealSec > 0) ? `
       <div class="ph-badge good">
-        <span>Efectivo: ${escHtml(secToHHMMSS(prodSec))}</span>
-        <span class="ph-badge-pct">${pctEff}%</span>
+        <span>Efectivo: ${escHtml(fmtParts.prodStr)}</span>
+        <span class="ph-badge-pct">${pct.prodPct}</span>
       </div>
 
       <button type="button" class="ph-badge bad ph-otro-btn">
-        <span>Otro: ${escHtml(secToHHMMSS(otherDeadSecFinal))}</span>
-        <span class="ph-badge-pct">${pctOther}%</span>
+        <span>Otro: ${escHtml(fmtParts.otherStr)}</span>
+        <span class="ph-badge-pct">${pct.otherPct}</span>
       </button>
 
       <div class="ph-badge meal">
-        <span>Comida: ${escHtml(secToHHMMSS(mealSec))}</span>
-        <span class="ph-badge-pct">${pctMeal}%</span>
+        <span>Comida: ${escHtml(fmtParts.mealStr)}</span>
+        <span class="ph-badge-pct">${pct.mealPct}</span>
       </div>
     ` : `
       <div class="ph-badge good">
-        <span>Efectivo: ${escHtml(secToHHMMSS(prodSec))}</span>
-        <span class="ph-badge-pct">${pctEff}%</span>
+        <span>Efectivo: ${escHtml(fmtParts.prodStr)}</span>
+        <span class="ph-badge-pct">${pct.prodPct}</span>
       </div>
 
       <button type="button" class="ph-badge bad ph-otro-btn">
-        <span>Otro: ${escHtml(secToHHMMSS(otherDeadSecFinal))}</span>
-        <span class="ph-badge-pct">${pctOther}%</span>
+        <span>Otro: ${escHtml(fmtParts.otherStr)}</span>
+        <span class="ph-badge-pct">${pct.otherPct}</span>
       </button>
     `;
 
@@ -1424,7 +2038,6 @@ function renderProdHour(result){
       });
     }
 
-    // ✅ THB: click sobre el número grande (circuitos)
     const circuitsLink = card.querySelector(".ph-circuits-link");
     if(circuitsLink){
       const pvSel = document.getElementById("periodValueSelect");
@@ -1459,11 +2072,15 @@ function renderProdHour(result){
 
   title.style.display = "block";
   wrap.style.display = "block";
+  renderThbDayTarjetas(result);
   const leg = document.getElementById("prodHourLegend");
   if(leg) leg.style.display = "flex";
 
   if(info) info.style.display = showLenMix ? "block" : "none";
 }
+
+
+
 
 
 
@@ -1519,8 +2136,8 @@ function renderInlineKPIs(result){
     { key: "Circuitos Planeados",           cls: "kpi-cyan",   span: "kpi-row-3" },
     { key: "Circuitos No Conformes",        cls: "kpi-red",    span: "kpi-row-3" },
 
-    { key: "Otro Tiempo de Ciclo (Muerto)", cls: "kpi-blue",   span: "kpi-row-2" },
-    { key: "Tiempo Efectivo",               cls: "kpi-green2", span: "kpi-row-2" },
+    { key: "Tiempos Perdidos ", cls: "kpi-blue",   span: "kpi-row-2" },
+    { key: "Tiempo Trabajado",               cls: "kpi-green2", span: "kpi-row-2" },
 
     { key: "Metros Planeados",              cls: "kpi-purple", span: "kpi-row-3" },
     { key: "Metros Extras",                 cls: "kpi-blue2",  span: "kpi-row-3" },
@@ -1535,8 +2152,8 @@ function renderInlineKPIs(result){
         { key: "Circuitos No Conformes", cls: "kpi-red",    span: "kpi-row-3" },
 
         { key: "Horas Disponibles",                  cls: "",           span: "kpi-row-4" }, // 3 cols (al lado)
-        { key: "Otro Tiempo de Ciclo (Muerto)", cls: "kpi-blue",   span: "kpi-row-2" }, // 6 cols
-        { key: "Tiempo Efectivo",               cls: "kpi-green2", span: "kpi-row-4" }, // 3 cols
+        { key: "Tiempos Perdidos", cls: "kpi-blue",   span: "kpi-row-2" }, // 6 cols
+        { key: "Tiempo Trabajado",               cls: "kpi-green2", span: "kpi-row-4" }, // 3 cols
 
         { key: "Metros Planeados", cls: "kpi-purple", span: "kpi-row-3" },
         { key: "Metros Extras",    cls: "kpi-blue2",  span: "kpi-row-3" },
@@ -1552,8 +2169,8 @@ function renderInlineKPIs(result){
       { key: "Circuitos No Conformes", cls: "kpi-red",    span: "kpi-row-3" },
 
       { key: "Horas Disponibles",            cls: "",           span: "kpi-row-4" },
-      { key: "Otro Tiempo de Ciclo (Muerto)", cls: "kpi-blue",   span: "kpi-row-2" },
-      { key: "Tiempo Efectivo",               cls: "kpi-green2", span: "kpi-row-4" },
+      { key: "Tiempos Perdidos", cls: "kpi-blue",   span: "kpi-row-2" },
+      { key: "Tiempo Trabajado",               cls: "kpi-green2", span: "kpi-row-4" },
     ];
   }
 
@@ -1569,8 +2186,8 @@ function renderInlineKPIs(result){
 
         // ✅ Fila de tiempos (como THB/HP): izquierda 3 cols, centro 6 cols, derecha 3 cols
         { key: "Horas activas",                 cls: "",          span: "kpi-row-4" }, // ✅ arriba izq
-        { key: "Otro Tiempo de Ciclo (Muerto)", cls: "kpi-purple",span: "kpi-row-2" }, // ✅ grande centro
-        { key: "Tiempo Efectivo",               cls: "kpi-green2",span: "kpi-row-4" }, // ✅ arriba der
+        { key: "Tiempos Perdidos", cls: "kpi-purple",span: "kpi-row-2" }, // ✅ grande centro
+        { key: "Tiempo Trabajado",               cls: "kpi-green2",span: "kpi-row-4" }, // ✅ arriba der
 
         { key: "Paradas planeadas (HH:MM)",    cls: "kpi-cyan2", span: "kpi-row-2" },
         { key: "Paradas no planeadas (HH:MM)", cls: "kpi-blue2", span: "kpi-row-2" },
@@ -1589,6 +2206,12 @@ function renderInlineKPIs(result){
       kpi.appendChild(makeCard(kk, vv, "", ""));
     }
   }
+
+    // ✅ HP: forzar cierre de No registrado con Horas Disponibles
+  if(m === "HP" || m === "THB"){
+    adjustHpNoRegistradoUI();
+  }
+
 
   renderHpTimesLine(result);
 

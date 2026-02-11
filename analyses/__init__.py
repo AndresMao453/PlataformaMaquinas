@@ -8,6 +8,7 @@ from analyses.corte import analyze_corte
 
 # Aplicación (AP1)
 from analyses.aplicacion_excel import analyze_aplicacion1
+from . import continuidad  # <-- para que corra register_analysis(...)
 
 from . import ciclo_aplicadores  # noqa: F401
 
