@@ -1574,121 +1574,6 @@ function _causeLabel(c){
 }
 
 
-async function renderThbDayTarjetas(result){
-  const machineU = String(result?.machine || "").toUpperCase().trim();
-  const period = String(result?.period || "").trim();
-  if(machineU !== "THB" || period !== "day") return;
-
-  // contenedor: lo creamos debajo de prodHourWrap si no existe
-  let wrap = document.getElementById("thbDayTarjetasWrap");
-  const host = document.getElementById("prodHourWrap");
-  if(!host) return;
-
-  if(!wrap){
-    wrap = document.createElement("div");
-    wrap.id = "thbDayTarjetasWrap";
-    wrap.className = "thb-day-wrap";
-    host.appendChild(wrap);
-  }
-
-  const pvSel = document.getElementById("periodValueSelect");
-  const opSel = document.getElementById("operatorSelect");
-
-  const periodValue = String(pvSel ? pvSel.value : (result?.period_value || "")).trim();
-  const operator = String(opSel ? opSel.value : (result?.operator || "General")).trim();
-
-  if(!periodValue){
-    wrap.innerHTML = "";
-    return;
-  }
-
-  const url = (URLS && URLS.thb_tarjetas_day) ? String(URLS.thb_tarjetas_day) : "";
-  if(!url){
-    wrap.innerHTML = `<div class="thb-day-muted">Falta URLS.thb_tarjetas_day en el CFG.</div>`;
-    return;
-  }
-
-  wrap.innerHTML = `
-    <div class="thb-day-head">
-      <div class="thb-day-title">Arneses y consecutivos del día</div>
-      <div class="thb-day-sub">${escHtml(periodValue)} · Operaria: <b>${escHtml(operator || "General")}</b></div>
-    </div>
-    <div class="thb-day-muted">Cargando…</div>
-  `;
-
-  try{
-    const qs = new URLSearchParams({
-      filename: String(CFG.filename || ""),
-      period_value: periodValue,
-      operator: operator,
-      limit: "500",
-      _: String(Date.now())
-    });
-
-    const resp = await fetch(`${url}?${qs.toString()}`, { cache:"no-store" });
-    const data = await resp.json();
-
-    if(!resp.ok || !data || data.ok !== true){
-      const msg = (data && data.error) ? data.error : `HTTP ${resp.status}`;
-      wrap.innerHTML = `<div class="thb-day-muted">Error: ${escHtml(msg)}</div>`;
-      return;
-    }
-
-    const items = Array.isArray(data.items) ? data.items : [];
-    if(items.length === 0){
-      wrap.innerHTML = `<div class="thb-day-muted">Sin registros para este día.</div>`;
-      return;
-    }
-
-    const rows = items.map((it, idx)=>{
-      const cod = String(it.codigo_arnes ?? "—");
-      const cantidad = Number(it.cantidad || 0) || 0;
-      const consecs = Array.isArray(it.consecutivos) ? it.consecutivos : [];
-
-      // mostrar lista (truncada) pero sin perder “por separado”
-      const maxShow = 30;
-      const shown = consecs.slice(0, maxShow);
-      const more = consecs.length - shown.length;
-
-      const listHtml = shown.map(x=>`<span class="thb-day-pill">${escHtml(String(x))}</span>`).join("");
-      const moreHtml = (more > 0) ? `<span class="thb-day-more">+${more} más…</span>` : "";
-
-      return `
-        <tr>
-          <td class="thb-day-idx">${idx+1}</td>
-          <td class="thb-day-code"><b>${escHtml(cod)}</b></td>
-          <td class="thb-day-count">${escHtml(String(cantidad))}</td>
-          <td class="thb-day-cons">${listHtml} ${moreHtml}</td>
-        </tr>
-      `;
-    }).join("");
-
-    wrap.innerHTML = `
-      <div class="thb-day-head">
-        <div class="thb-day-title">Arneses y consecutivos del día</div>
-        <div class="thb-day-sub">${escHtml(periodValue)} · Operaria: <b>${escHtml(operator || "General")}</b> · Total cortes: <b>${escHtml(String(data.total || 0))}</b></div>
-      </div>
-
-      <div class="thb-day-table-wrap">
-        <table class="thb-day-table">
-          <thead>
-            <tr>
-              <th class="thb-day-idx">#</th>
-              <th>Código arnés</th>
-              <th class="thb-day-count">Cant.</th>
-              <th>Consecutivos</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    `;
-
-  }catch(e){
-    wrap.innerHTML = `<div class="thb-day-muted">Error: ${escHtml(String(e))}</div>`;
-  }
-}
-
 
 function renderProdHour(result){
   const period = String(result?.period || "");
@@ -2072,7 +1957,6 @@ function renderProdHour(result){
 
   title.style.display = "block";
   wrap.style.display = "block";
-  renderThbDayTarjetas(result);
   const leg = document.getElementById("prodHourLegend");
   if(leg) leg.style.display = "flex";
 
