@@ -1892,6 +1892,19 @@ function renderProdHour(result){
       ? `<div class="ph-meters">${escHtml(fmtMetersEs(meters))}</div>`
       : ``;
 
+    // ✅ THB: mostrar TCNP + Longitud promedio + Tiempo nominal total
+    const tcnpSec = Number(b.tcnpSec)||0;
+    const tcnpLen = Number(b.tcnpLenMm)||0;
+    const tnomSec = Number(b.tcnpTotalSec)||0;
+
+    const tcnpHtml = ``;
+
+    const tnomHtml = (machineU === "THB" && tnomSec > 0)
+      ? `<div class="ph-tnom">Tnom: ${escHtml(secToHHMMSS(Math.round(tnomSec)))}</div>`
+      : ``;
+
+
+
     const card = document.createElement("div");
     card.className = "ph-card " + (isZero ? "ph-zero" : (good ? "ph-good" : "ph-bad"));
     card.innerHTML = `
@@ -1901,6 +1914,8 @@ function renderProdHour(result){
       </div>
       <div class="ph-unit">${(machineU === "APLICACION" || machineU === "UNION") ? "Crimpados" : "Circuitos"}</div>
       ${metersHtml}
+      ${tcnpHtml}
+      ${tnomHtml}
 
       <div class="ph-badges">
         ${timeBadges}

@@ -14,6 +14,50 @@ import re
 ANALYSIS_KEY = "corte_thb"
 ANALYSIS_TITLE = "Análisis Línea de Corte (THB)"
 
+# ============================================================
+# ✅ MODELO NOMINAL THB POR TIPO
+# t(L_mm) = a + b*L_mm
+# Tipo 1: 0 terminales
+# Tipo 2: 1 terminal
+# Tipo 3: 2 terminales
+# ============================================================
+
+THB_FIT_CALC = {
+    1: {"a": 0.7011303800366301, "b": 0.0001308951465201466},
+    2: {"a": 0.9724746750764526, "b": 0.00013737576452599423},
+    3: {"a": 1.0754718802170284, "b": 0.00013864252921535892},
+}
+
+THB_FIT_V8 = {
+    1: {"a": 0.7039453125, "b": 0.000125},
+    2: {"a": 0.9777343750000002, "b": 0.000125},
+    3: {"a": 1.0860069444444445, "b": 0.000125},
+}
+
+
+def _is_no_aplica(x: Any) -> bool:
+    s = str(x or "").strip().lower()
+    return (s == "") or (s == "no aplica") or (s == "na") or (s == "n/a") or (s == "none") or (s == "null")
+
+
+def _thb_tipo_from_terminals(t1: Any, t2: Any) -> int:
+    na1 = _is_no_aplica(t1)
+    na2 = _is_no_aplica(t2)
+    if na1 and na2:
+        return 1
+    if (na1 and not na2) or (not na1 and na2):
+        return 2
+    return 3
+
+
+def _thb_nominal_sec(L_mm: float, tipo: int, *, model: str = "calc") -> float:
+    if L_mm <= 0:
+        return 0.0
+    fit = (THB_FIT_CALC if model == "calc" else THB_FIT_V8).get(int(tipo), THB_FIT_CALC[1])
+    a = float(fit["a"])
+    b = float(fit["b"])
+    t = a + b * float(L_mm)
+    return float(max(t, 0.0))
 
 # ============================================================
 #  Utilidades robustas (fechas/horas/números)
@@ -208,6 +252,8 @@ class THBCols:
     col_long_mm: Optional[str]
     col_res_mm: Optional[str]
     col_arnes: Optional[str]
+    col_terminal1: Optional[str]   # ✅ NUEVO
+    col_terminal2: Optional[str]   # ✅ NUEVO
 
 
 def _resolve_thb_cols(df: pd.DataFrame) -> THBCols:
@@ -248,6 +294,9 @@ def _resolve_thb_cols(df: pd.DataFrame) -> THBCols:
 
     col_arnes = _find_col(df, ["código", "arnés"]) or _find_col(df, ["arnes"])
 
+    col_terminal1 = _find_col(df, ["terminal", "1"]) or _col_at(7)  # H
+    col_terminal2 = _find_col(df, ["terminal", "2"]) or _col_at(8)  # I
+
     return THBCols(
         col_fecha=col_fecha,
         col_hora=col_hora,
@@ -257,6 +306,8 @@ def _resolve_thb_cols(df: pd.DataFrame) -> THBCols:
         col_long_mm=col_long_mm,
         col_res_mm=col_res_mm,
         col_arnes=col_arnes,
+        col_terminal1=col_terminal1,
+        col_terminal2=col_terminal2,
     )
 
 
@@ -896,6 +947,7 @@ def _compute_hourly_buckets(
     """
     Retorna lista de buckets por hora:
       - prodSec, deadSec, mealSec, otherDeadSec, cut, meters, hadActivity, capacitySec
+      + ✅ THB: TC Nominal Ponderado por hora (tcnpSec), longitud ponderada (tcnpLenMm), total nominal (tcnpTotalSec)
     """
     LEN_SMALL_MAX = 300.0
     LEN_MED_MAX = 800.0
@@ -963,6 +1015,13 @@ def _compute_hourly_buckets(
 
         cut = 0
         meters = 0.0
+
+        # ✅ TC Nominal Ponderado por hora (seg/pieza) usando:
+        #    piezas buenas (q) y resultado verificación (mm)
+        tcnp_sec = 0.0
+        tcnp_len_mm = 0.0
+        tcnp_total_sec = 0.0
+
         had_corte = False
 
         if not sub.empty:
@@ -970,9 +1029,41 @@ def _compute_hourly_buckets(
                 cut = int(pd.to_numeric(sub[c_buenas], errors="coerce").fillna(0).sum())
 
             if c_buenas and c_resmm and (c_buenas in sub.columns) and (c_resmm in sub.columns):
-                buenas = pd.to_numeric(sub[c_buenas], errors="coerce").fillna(0)
-                resmm = sub[c_resmm].apply(_num_es)
+                buenas = pd.to_numeric(sub[c_buenas], errors="coerce").fillna(0).astype(float)
+                resmm = sub[c_resmm].apply(_num_es).astype(float)
+
+                # meters (lo de siempre)
                 meters = float(((buenas * resmm) / 1000.0).sum())
+
+                # ✅ TCNP por tipo (usa Terminal1/Terminal2 + modelo a+bL)
+                q_total = float(buenas.sum())
+                sum_q_mm = float((buenas * resmm).sum())
+
+                # Longitud promedio ponderada
+                if q_total > 0 and sum_q_mm > 0:
+                    tcnp_len_mm = sum_q_mm / q_total
+
+                # Si hay columnas de terminales, calcula tipo por fila.
+                c_t1 = getattr(cols_verif, "col_terminal1", None)
+                c_t2 = getattr(cols_verif, "col_terminal2", None)
+
+                if q_total > 0:
+                    if c_t1 and c_t2 and (c_t1 in sub.columns) and (c_t2 in sub.columns):
+                        tipos = sub.apply(lambda r: _thb_tipo_from_terminals(r.get(c_t1), r.get(c_t2)), axis=1)
+                    else:
+                        # fallback: si no hay terminales, asume tipo 1
+                        tipos = pd.Series([1] * len(sub), index=sub.index)
+
+                    # Tiempo nominal por fila: t = a + b*L según tipo
+                    # (modelo "calc"; si quieres comparar v=8, cambia model="v8")
+                    t_nom = [
+                        _thb_nominal_sec(float(L), int(tp), model="calc")
+                        for L, tp in zip(resmm.tolist(), tipos.tolist())
+                    ]
+                    t_nom = pd.Series(t_nom, index=sub.index, dtype="float64")
+
+                    tcnp_total_sec = float((buenas * t_nom).sum())
+                    tcnp_sec = float(tcnp_total_sec / q_total) if q_total > 0 else 0.0
 
             had_corte = (cut > 0) or (meters > 0)
 
@@ -985,11 +1076,11 @@ def _compute_hourly_buckets(
                     tot = pd.Series([0.0] * len(sub), index=sub.index, dtype="float64")
 
                 if c_buenas and (c_buenas in sub.columns):
-                    buenas = pd.to_numeric(sub[c_buenas], errors="coerce").fillna(0).astype(float)
+                    buenas2 = pd.to_numeric(sub[c_buenas], errors="coerce").fillna(0).astype(float)
                 else:
-                    buenas = pd.Series([0.0] * len(sub), index=sub.index, dtype="float64")
+                    buenas2 = pd.Series([0.0] * len(sub), index=sub.index, dtype="float64")
 
-                w = tot.where(tot > 0, buenas)
+                w = tot.where(tot > 0, buenas2)
                 w = w.where(w > 0, 1.0)
 
                 valid = pd.to_numeric(longmm, errors="coerce").notna() & (longmm > 0)
@@ -1068,7 +1159,6 @@ def _compute_hourly_buckets(
 
         had_activity = bool(had_corte or had_parada)
 
-
         bucket = {
             "hourLabel": f"{h:02d}:00",
             "hour": f"{h:02d}",
@@ -1081,6 +1171,12 @@ def _compute_hourly_buckets(
 
             "cut": int(cut),
             "meters": float(meters),
+
+            # ✅ NUEVO (solo THB): TC nominal ponderado por hora
+            "tcnpSec": float(tcnp_sec),           # seg/pieza
+            "tcnpLenMm": float(tcnp_len_mm),      # mm/pieza (promedio ponderado)
+            "tcnpTotalSec": float(tcnp_total_sec),# seg (total nominal hora)
+
             "hadActivity": bool(had_activity),
         }
         if sub_len_mix is not None:
@@ -1089,6 +1185,7 @@ def _compute_hourly_buckets(
         buckets.append(bucket)
 
     return buckets
+
 
 
 
@@ -1284,6 +1381,53 @@ def _compute_daily_kpis(
 
     metros_extras = float(metros_cortados - metros_solicitados)
 
+    # =========================================================
+    # ✅ NOMINAL (THB) por tipo: t(L)=a+bL
+    #   - q = piezas buenas
+    #   - L = resultado verificación (mm)
+    #   - tipo sale de Terminal1/Terminal2 (si existen; si no, asume tipo 1)
+    #
+    # KPIs:
+    #   - tnom_period_sec  = Σ(q_i * tnom_i)
+    #   - tcnp_period_sec  = tnom_period_sec / Σ(q_i)
+    #   - tcnp_period_len_mm = Σ(q_i*L_i)/Σ(q_i)
+    # =========================================================
+    tcnp_period_sec = 0.0
+    tcnp_period_len_mm = 0.0
+    tnom_period_sec = 0.0
+
+    if cols.col_piezas_buenas and cols.col_res_mm and (cols.col_piezas_buenas in df_verif.columns) and (cols.col_res_mm in df_verif.columns):
+        buenas_all = pd.to_numeric(df_verif[cols.col_piezas_buenas], errors="coerce").fillna(0.0).astype(float)
+        resmm_all = df_verif[cols.col_res_mm].apply(_num_es).astype(float)
+
+        q_total = float(buenas_all.sum())
+        sum_q_mm = float((buenas_all * resmm_all).sum())
+
+        if q_total > 0 and sum_q_mm > 0:
+            tcnp_period_len_mm = sum_q_mm / q_total
+
+            # tipos por fila (si no hay terminales, asume tipo 1)
+            if (
+                getattr(cols, "col_terminal1", None) and getattr(cols, "col_terminal2", None)
+                and (cols.col_terminal1 in df_verif.columns) and (cols.col_terminal2 in df_verif.columns)
+            ):
+                tipos = df_verif.apply(
+                    lambda r: _thb_tipo_from_terminals(r.get(cols.col_terminal1), r.get(cols.col_terminal2)),
+                    axis=1
+                )
+            else:
+                tipos = pd.Series([1] * len(df_verif), index=df_verif.index)
+
+            # tiempo nominal por fila (modelo "calc"; si quieres comparar v=8, cambia model="v8")
+            t_nom = [
+                _thb_nominal_sec(float(L), int(tp), model="calc")
+                for L, tp in zip(resmm_all.tolist(), tipos.tolist())
+            ]
+            t_nom = pd.Series(t_nom, index=df_verif.index, dtype="float64")
+
+            tnom_period_sec = float((buenas_all * t_nom).sum())
+            tcnp_period_sec = float(tnom_period_sec / q_total) if q_total > 0 else 0.0
+
     # muerto/105 (esto quedará como “base”; luego lo sobreescribimos con la versión IGNORA-HORA)
     total_dead_sec = 0
     meal_105_sec = 0
@@ -1319,6 +1463,16 @@ def _compute_daily_kpis(
                 df_paradas_iv=df_paradas_iv,
             )
             prod_sec = int(sum(b.get("prodSec", 0) for b in buckets))
+
+            # ✅ Para DAY: "Tiempo nominal" = suma de Tnom por hora (tarjetas)
+            # (para que cuadre EXACTO con lo que el usuario ve)
+            tnom_from_buckets = float(sum(float(b.get("tcnpTotalSec", 0) or 0) for b in buckets)) if buckets else 0.0
+            if tnom_from_buckets > 0:
+                tnom_period_sec = tnom_from_buckets
+                if piezas_buenas > 0:
+                    tcnp_period_sec = float(tnom_period_sec) / float(piezas_buenas)
+                else:
+                    tcnp_period_sec = 0.0
     else:
         prod_sec = _compute_prod_seconds_for_range(
             df_verif=df_verif,
@@ -1327,6 +1481,9 @@ def _compute_daily_kpis(
             df_paradas_iv=df_paradas_iv,
         )
         buckets = []
+
+        # (Para week/month ya queda usando df_verif completo del rango:
+        #  tnom_period_sec y tcnp_period_sec ya están calculados arriba)
 
     return {
         "circuitos_cortados": piezas_buenas,
@@ -1349,8 +1506,15 @@ def _compute_daily_kpis(
         "tiempo_efectivo_sec": prod_sec,
         "tiempo_efectivo_hhmm": _format_hmm_from_seconds(prod_sec),
 
+        # ✅ KPIs (THB): nominal ponderado del periodo
+        "tnom_total_sec": float(tnom_period_sec),
+        "tnom_total_hhmm": _seconds_to_hhmm(float(tnom_period_sec)),
+        "tcnp_sec": float(tcnp_period_sec),          # seg/pieza (promedio ponderado)
+        "tcnp_len_mm": float(tcnp_period_len_mm),    # mm/pieza (promedio ponderado)
+
         "hourly_buckets": buckets,
     }
+
 
 
 # ============================================================
@@ -1967,6 +2131,18 @@ def analyze_thb(
     kpis["pct_efectivo"] = pct_eff
     kpis["pct_otro_no_reg"] = pct_other_nr
 
+    # =========================================================
+    # ✅ KPI: Índice Operacional (IO) = Tnom / Tefectivo
+    #   - Tnom: tiempo nominal total del periodo (seg)
+    #   - Teff: tiempo efectivo (prod) del periodo (seg)
+    #   - En número (no %)
+    # =========================================================
+    tnom_sec = float(kpis.get("tnom_total_sec", 0) or 0)
+    teff_sec = float(kpis.get("tiempo_efectivo_sec", 0) or 0)
+
+    io = (tnom_sec / teff_sec) if teff_sec > 0 else 0.0
+    kpis["indice_operacional"] = float(io)
+
     ui = {
         "Circuitos Cortados": f"{kpis['circuitos_cortados']:,}".replace(",", "."),
         "Circuitos Planeados": f"{kpis['circuitos_planeados']:,}".replace(",", "."),
@@ -1985,6 +2161,11 @@ def analyze_thb(
         "Metros Cortados": f"{kpis['metros_cortados']:,.2f} m".replace(",", "X").replace(".", ",").replace("X", "."),
         "Metros Planeados": f"{kpis['metros_planeados']:,.2f} m".replace(",", "X").replace(".", ",").replace("X", "."),
         "Metros Extras": f"{kpis['metros_extras']:,.2f} m".replace(",", "X").replace(".", ",").replace("X", "."),
+
+        "Tiempo Nominal (Tnom)": kpis.get("tnom_total_hhmm", "00:00"),
+        "Índice Operacional (IO)": f"{kpis.get('indice_operacional', 0.0):.3f}",
+        #"TCNP (Nominal)": f"{kpis.get('tcnp_sec', 0.0):.4f} s/pz",
+
     }
 
     return {
