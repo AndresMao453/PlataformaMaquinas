@@ -656,7 +656,7 @@ function adjustHpNoRegistradoUI(){
     (c.querySelector(".kpi-title")?.textContent || "").trim() === title
   );
 
-  const hdCard   = getCard("Horas Disponibles");
+  const hdCard   = getCard("Tiempo Pagado");
   const effCard  = getCard("Tiempo Trabajado");
   const otroCard = getCard("Tiempos Perdidos");
   if(!hdCard || !effCard || !otroCard) return;
@@ -749,11 +749,48 @@ function adjustHpNoRegistradoUI(){
 
 
 
+function _oeeFormulaFor(label){
+  const k = String(label||"").trim().toLowerCase();
 
+  if(k === "rendimiento"){
+    // Ajusta si tu rendimiento usa otra ecuación
+    return "Rendimiento = Tiempo Nominal (Tnom) / Tiempo Trabajado (Teff)";
+  }
+  if(k === "disponibilidad"){
+    return "Disponibilidad = Tiempo Trabajado / Tiempo Pagado";
+  }
+  if(k === "calidad"){
+    return "Calidad = Circuitos Planeados / Circuitos Cortados";
+  }
+  return "";
+}
+
+function _bindOeeFormulaClicks(cardEl){
+  if(!cardEl) return;
+
+  // Solo dentro de la tarjeta OEE
+  const title = (cardEl.querySelector(".kpi-title")?.textContent || "").trim().toUpperCase();
+  if(title !== "OEE") return;
+
+  cardEl.querySelectorAll(".kpi-sub-label").forEach(lbl=>{
+    const txt = (lbl.textContent || "").trim();
+    const f = _oeeFormulaFor(txt);
+    if(!f) return;
+
+    lbl.style.cursor = "pointer";
+    lbl.title = "Click para ver fórmula";
+
+    lbl.addEventListener("click", (ev)=>{
+      ev.stopPropagation();
+      alert(f); // ✅ simple y funciona ya
+    });
+  });
+}
 
 
 
 function makeCard(title, value, cls, spanClass){
+
   const card = document.createElement("div");
   card.className = `kpi-card ${cls || ""} ${spanClass || ""}`;
 
@@ -770,20 +807,13 @@ function makeCard(title, value, cls, spanClass){
       .map(x => String(x || "").trim())
       .filter(Boolean);
 
-    let v105 = "";
-    let v104 = "";
-    let nrVal = "";
     let pctVal = "";
-
     const pctRe = /^\(?\s*\d+(\.\d+)?\s*%\s*\)?$/i;
 
+    // pares label:value (sirve para OEE y también para Tiempos Perdidos)
+    const items = [];
     for(const seg of pipeParts){
       const s = seg.trim();
-
-      // ✅ excluir 000 / Desconocido SOLO del desglose
-      if(/^(\(?\s*)?(?:parada\s*)?000\s*:/i.test(s) || /desconocido/i.test(s)){
-        continue;
-      }
 
       // % (14.2%)
       if(pctRe.test(s)){
@@ -791,44 +821,60 @@ function makeCard(title, value, cls, spanClass){
         continue;
       }
 
-      // Parada 105 / 105
-      let m = s.match(/^(?:parada\s*)?105\s*:\s*(.+)$/i);
-      if(m){
-        v105 = (m[1] || "").trim();
-        continue;
-      }
+      // label: valor
+      // label: valor
+        const m = s.match(/^(.+?)\s*:\s*(.+)$/);
+        if(m){
+          const rawLabel = m[1].trim();
+          const low = rawLabel.toLowerCase();
 
-      // Parada 104 / 104
-      m = s.match(/^(?:parada\s*)?104\s*:\s*(.+)$/i);
-      if(m){
-        v104 = (m[1] || "").trim();
-        continue;
-      }
+          // ✅ forzar "Parada 105/104" como antes
+          let pretty = rawLabel;
+          if(low === "105" || low === "parada 105") pretty = "Parada 105";
+          else if(low === "104" || low === "parada 104") pretty = "Parada 104";
+          else if(low.includes("no registrado")) pretty = "No registrado";
 
-      // No registrado
-      m = s.match(/^no\s*registrado\s*:\s*(.+)$/i);
-      if(m){
-        nrVal = (m[1] || "").trim();
-        continue;
-      }
-
-      // Back-compat
-      if(!v105) v105 = s;
+          items.push({
+            label: pretty,
+            val: _replaceTimesToHourDec(m[2].trim())
+          });
+        }
     }
-
-    // defaults
-    if(!v105) v105 = "0.00";
-    if(!v104) v104 = "0.00";
-    if(!nrVal) nrVal = "0.00";
-
-    // ✅ convertir HH:MM -> horas decimales (si venían así)
-    v105  = _replaceTimesToHourDec(v105);
-    v104  = _replaceTimesToHourDec(v104);
-    nrVal = _replaceTimesToHourDec(nrVal);
 
     const mainHtml = pctVal
       ? `${escHtml(mainDec)} <span class="kpi-pct">(${escHtml(pctVal)})</span>`
       : `${escHtml(mainDec)}`;
+
+    // si no hay desglose (caso raro), deja simple
+    if(!items.length){
+      card.innerHTML = `
+        <div class="kpi-title">${escHtml(title)}</div>
+        <div class="kpi-split">
+          <div class="kpi-split-left">
+            <div class="kpi-value">${mainHtml}</div>
+          </div>
+          <div class="kpi-split-right">
+            <div class="kpi-sub-row">
+              ${blocksHtml}
+            </div>
+          </div>
+        </div>
+      `;
+
+        // ✅ AQUÍ
+      _bindOeeFormulaClicks(card);
+
+      return card;
+    }
+
+    // render dinámico (3 bloques típicos)
+    const blocksHtml = items.map((it, idx) => `
+      ${idx ? `<div class="kpi-sub-divider"></div>` : ``}
+      <div class="kpi-sub-block">
+        <div class="kpi-sub-label">${escHtml(it.label)}</div>
+        <div class="kpi-sub-value-big">${escHtml(it.val)}</div>
+      </div>
+    `).join("");
 
     card.innerHTML = `
       <div class="kpi-title">${escHtml(title)}</div>
@@ -840,24 +886,7 @@ function makeCard(title, value, cls, spanClass){
 
         <div class="kpi-split-right">
           <div class="kpi-sub-row">
-            <div class="kpi-sub-block">
-              <div class="kpi-sub-label">Parada 105</div>
-              <div class="kpi-sub-value-big">${escHtml(v105)}</div>
-            </div>
-
-            <div class="kpi-sub-divider"></div>
-
-            <div class="kpi-sub-block">
-              <div class="kpi-sub-label">No registrado</div>
-              <div class="kpi-sub-value-big">${escHtml(nrVal)}</div>
-            </div>
-
-            <div class="kpi-sub-divider"></div>
-
-            <div class="kpi-sub-block">
-              <div class="kpi-sub-label">Parada 104</div>
-              <div class="kpi-sub-value-big">${escHtml(v104)}</div>
-            </div>
+            ${blocksHtml}
           </div>
         </div>
       </div>
@@ -1334,7 +1363,7 @@ function fmtIntEs(n){
 }
 function fmtMetersEs(m){
   const v = Number(m)||0;
-  return v.toLocaleString("es-CO", {minimumFractionDigits:2, maximumFractionDigits:2}) + " m";
+  return v.toLocaleString("es-CO", {minimumFractionDigits:1, maximumFractionDigits:1}) + " m";
 }
 
 function renderTerminalUsage(result){
@@ -1596,7 +1625,7 @@ function renderProdHour(result){
 
   const machineU = String(result?.machine || "").toUpperCase();
   const isAplic = (machineU === "APLICACION" || machineU === "UNION");
-  const showLenMix = (!isAplic) && (machineU !== "HP");
+  const showLenMix = (!isAplic) && (machineU !== "HP") && (machineU !== "THB");
   const showMeters = (!isAplic) && (machineU !== "HP");
 
   grid.innerHTML = "";
@@ -1863,12 +1892,12 @@ function renderProdHour(result){
 
     const timeBadges = (mealSec > 0) ? `
       <div class="ph-badge good">
-        <span>Efectivo: ${escHtml(fmtParts.prodStr)}</span>
+        <span>T. Trab: ${escHtml(fmtParts.prodStr)}</span>
         <span class="ph-badge-pct">${pct.prodPct}</span>
       </div>
 
       <button type="button" class="ph-badge bad ph-otro-btn">
-        <span>Otro: ${escHtml(fmtParts.otherStr)}</span>
+        <span>T. Perdido: ${escHtml(fmtParts.otherStr)}</span>
         <span class="ph-badge-pct">${pct.otherPct}</span>
       </button>
 
@@ -1878,12 +1907,12 @@ function renderProdHour(result){
       </div>
     ` : `
       <div class="ph-badge good">
-        <span>Efectivo: ${escHtml(fmtParts.prodStr)}</span>
+        <span>T. Trab: ${escHtml(fmtParts.prodStr)}</span>
         <span class="ph-badge-pct">${pct.prodPct}</span>
       </div>
 
       <button type="button" class="ph-badge bad ph-otro-btn">
-        <span>Otro: ${escHtml(fmtParts.otherStr)}</span>
+        <span>T. Perdido: ${escHtml(fmtParts.otherStr)}</span>
         <span class="ph-badge-pct">${pct.otherPct}</span>
       </button>
     `;
@@ -1897,10 +1926,21 @@ function renderProdHour(result){
     const tcnpLen = Number(b.tcnpLenMm)||0;
     const tnomSec = Number(b.tcnpTotalSec)||0;
 
-    const tcnpHtml = ``;
+    const tcnpHtml = (machineU === "THB" && tcnpSec > 0)
+      ? `<div class="ph-tcnp">T. Ciclo: ${escHtml(tcnpSec.toFixed(4))} s/pz</div>`
+      : ``;
+
+      // ✅ VN según el doc: VN = 3600 / TCNP  (unid/h)
+    const vnUph = (tcnpSec > 0) ? (3600 / tcnpSec) : 0;
+    // mismo formato que venías usando (miles es-CO) o cámbialo si quieres entero sin puntos
+    const vnTxt = escHtml(fmtIntEs(Math.round(vnUph)));
+
+    const vnHtml = (machineU === "THB" && tcnpSec > 0)
+      ? `<div class="ph-tcnp">Vel Nom: ${vnTxt} unid/h</div>`
+      : ``;
 
     const tnomHtml = (machineU === "THB" && tnomSec > 0)
-      ? `<div class="ph-tnom">Tnom: ${escHtml(secToHHMMSS(Math.round(tnomSec)))}</div>`
+      ? `<div class="ph-tnom">T. Corte: ${escHtml(secToHHMMSS(Math.round(tnomSec)))}</div>`
       : ``;
 
 
@@ -1914,8 +1954,13 @@ function renderProdHour(result){
       </div>
       <div class="ph-unit">${(machineU === "APLICACION" || machineU === "UNION") ? "Crimpados" : "Circuitos"}</div>
       ${metersHtml}
-      ${tcnpHtml}
-      ${tnomHtml}
+      ${(machineU === "HP") ? "" : `
+        <div class="ph-nom-box">
+          ${tcnpHtml}
+          ${vnHtml}
+          ${tnomHtml}
+        </div>
+      `}
 
       <div class="ph-badges">
         ${timeBadges}
@@ -1973,7 +2018,7 @@ function renderProdHour(result){
   title.style.display = "block";
   wrap.style.display = "block";
   const leg = document.getElementById("prodHourLegend");
-  if(leg) leg.style.display = "flex";
+  if(leg) leg.style.display = showLenMix ? "flex" : "none";
 
   if(info) info.style.display = showLenMix ? "block" : "none";
 }
@@ -2035,7 +2080,7 @@ function renderInlineKPIs(result){
     { key: "Circuitos Planeados",           cls: "kpi-cyan",   span: "kpi-row-3" },
     { key: "Circuitos No Conformes",        cls: "kpi-red",    span: "kpi-row-3" },
 
-    { key: "Tiempos Perdidos ", cls: "kpi-blue",   span: "kpi-row-2" },
+    { key: "Tiempos Perdidos", cls: "kpi-blue",   span: "kpi-row-2" },
     { key: "Tiempo Trabajado",               cls: "kpi-green2", span: "kpi-row-2" },
 
     { key: "Metros Planeados",              cls: "kpi-purple", span: "kpi-row-3" },
@@ -2050,28 +2095,35 @@ function renderInlineKPIs(result){
         { key: "Circuitos Planeados",    cls: "kpi-cyan",   span: "kpi-row-3" },
         { key: "Circuitos No Conformes", cls: "kpi-red",    span: "kpi-row-3" },
 
-        { key: "Horas Disponibles",                  cls: "",           span: "kpi-row-4" }, // 3 cols (al lado)
+        { key: "Tiempo Pagado",                  cls: "",           span: "kpi-row-4" }, // 3 cols (al lado)
         { key: "Tiempos Perdidos", cls: "kpi-blue",   span: "kpi-row-2" }, // 6 cols
         { key: "Tiempo Trabajado",               cls: "kpi-green2", span: "kpi-row-4" }, // 3 cols
 
-        { key: "Metros Planeados", cls: "kpi-purple", span: "kpi-row-3" },
-        { key: "Metros Extras",    cls: "kpi-blue2",  span: "kpi-row-3" },
-        { key: "Metros Cortados",  cls: "kpi-cyan2",  span: "kpi-row-3" },
+        { key: "Metros Planeados",  cls: "kpi-purple", span: "kpi-row-4q" },
+        { key: "Metros Extras",     cls: "kpi-blue2",  span: "kpi-row-4q" },
+        { key: "Metros Cortados",   cls: "kpi-cyan2",  span: "kpi-row-4q" },
+        { key: "Velocidad Nominal", cls: "",          span: "kpi-row-4q" },
+
+        // 🔻 fila inferior (3 KPIs en una fila)
+        { key: "Tiempo de Ciclo",  cls: "",         span: "kpi-row-3 kpi-narrow" },
+        { key: "OEE",              cls: "kpi-blue", span: "kpi-row-3 kpi-wide" },
+        { key: "Tiempo De Corte",  cls: "",         span: "kpi-row-3 kpi-narrow" },
       ];
     }
 
       // ✅ SOLO HP: Horas Disponibles en la fila de tiempos
-  if(m === "HP"){
-    order = [
-      { key: "Circuitos Cortados",     cls: "kpi-green",  span: "kpi-row-3" },
-      { key: "Circuitos Planeados",    cls: "kpi-cyan",   span: "kpi-row-3" },
-      { key: "Circuitos No Conformes", cls: "kpi-red",    span: "kpi-row-3" },
+  // ✅ SOLO HP: ORDEN -> Horas Disponibles | Tiempos Perdidos | Tiempo Trabajado
+    if(m === "HP"){
+      order = [
+        { key: "Circuitos Cortados",     cls: "kpi-green",  span: "kpi-row-3" },
+        { key: "Circuitos Planeados",    cls: "kpi-cyan",   span: "kpi-row-3" },
+        { key: "Circuitos No Conformes", cls: "kpi-red",    span: "kpi-row-3" },
 
-      { key: "Horas Disponibles",            cls: "",           span: "kpi-row-4" },
-      { key: "Tiempos Perdidos", cls: "kpi-blue",   span: "kpi-row-2" },
-      { key: "Tiempo Trabajado",               cls: "kpi-green2", span: "kpi-row-4" },
-    ];
-  }
+        { key: "Horas Disponibles",      cls: "",           span: "kpi-row-4" },  // 👈 1
+        { key: "Tiempos Perdidos",       cls: "kpi-blue",   span: "kpi-row-2" },  // 👈 2
+        { key: "Tiempo Trabajado",       cls: "kpi-green2", span: "kpi-row-4" },  // 👈 3
+      ];
+    }
 
 
 
@@ -2292,6 +2344,7 @@ document.addEventListener("DOMContentLoaded", ()=>{
   }
 
 
+
     // =========================
     // LIVE REFRESH (Aplicación/Unión + Corte) — SOLO HOY con registros
     // =========================
@@ -2395,6 +2448,171 @@ document.addEventListener("DOMContentLoaded", ()=>{
     startAutoRefresh();
 
 });
+
+
+// =========================
+// ✅ Popover profesional para fórmulas OEE (sin alert)
+// =========================
+(function bindOeeFormulaPopoverOnce(){
+  if(window.__OEE_POPOVER_BOUND) return;
+  window.__OEE_POPOVER_BOUND = true;
+
+  let __pop = null;
+  let __openKey = ""; // para toggle
+
+  function _oeeFormulaFor(label){
+    const k = String(label||"").trim().toLowerCase();
+
+    if(k.includes("rendimiento")){
+      return {
+        title: "Rendimiento",
+        formula: "Rendimiento = Tiempo de Corte / Tiempo Trabajado",
+        note: "Mide qué tan cerca estás del desempeño nominal."
+      };
+    }
+    if(k.includes("disponibilidad")){
+      return {
+        title: "Disponibilidad",
+        formula: "Disponibilidad = Tiempo Trabajado / Tiempo Pagado",
+        note: "Mide cuánto tiempo realmente estuvo disponible para producir."
+      };
+    }
+    if(k.includes("calidad")){
+      return {
+        title: "Calidad",
+        formula: "Calidad = Circuitos Planeados / Circuitos Cortados",
+        note: "Mide el cumplimiento de lo planeado vs lo ejecutado."
+      };
+    }
+    return null;
+  }
+
+  function _ensurePopover(){
+    if(__pop) return __pop;
+
+    const d = document.createElement("div");
+    d.className = "oee-popover";
+    d.style.display = "none";
+    d.innerHTML = `
+      <button type="button" class="oee-pop-close" aria-label="Cerrar">×</button>
+      <div class="oee-pop-title"></div>
+      <div class="oee-pop-formula"></div>
+      <div class="oee-pop-muted"></div>
+    `;
+    document.body.appendChild(d);
+
+    d.querySelector(".oee-pop-close")?.addEventListener("click", (ev)=>{
+      ev.stopPropagation();
+      _close();
+    });
+
+    // no cerrar si clic dentro
+    d.addEventListener("mousedown", (ev)=> ev.stopPropagation());
+    d.addEventListener("click", (ev)=> ev.stopPropagation());
+
+    __pop = d;
+    return __pop;
+  }
+
+  function _close(){
+    if(__pop) __pop.style.display = "none";
+    __openKey = "";
+  }
+
+  function _setContent(data){
+    const pop = _ensurePopover();
+    const t = pop.querySelector(".oee-pop-title");
+    const f = pop.querySelector(".oee-pop-formula");
+    const n = pop.querySelector(".oee-pop-muted");
+    if(t) t.textContent = data.title || "Fórmula";
+    if(f) f.textContent = data.formula || "";
+    if(n) n.textContent = data.note || "";
+  }
+
+  function _positionNear(anchorEl){
+    const pop = _ensurePopover();
+    const r = anchorEl.getBoundingClientRect();
+
+    pop.style.display = "block";
+
+    // medir después de mostrarse
+    const pr = pop.getBoundingClientRect();
+    const gap = 10;
+
+    // preferir derecha, si no cabe -> izquierda
+    let left = Math.round(r.right + gap);
+    if(left + pr.width > window.innerWidth - 8){
+      left = Math.round(r.left - gap - pr.width);
+    }
+    left = Math.max(8, Math.min(left, window.innerWidth - pr.width - 8));
+
+    // top alineado con label
+    let top = Math.round(r.top - 6);
+    if(top + pr.height > window.innerHeight - 8){
+      top = Math.round(window.innerHeight - pr.height - 8);
+    }
+    top = Math.max(8, top);
+
+    pop.style.left = `${left}px`;
+    pop.style.top  = `${top}px`;
+  }
+
+  // ✅ Delegación global (no se rompe con innerHTML)
+  document.addEventListener("click", (ev)=>{
+    const lbl = ev.target?.closest?.(".kpi-sub-label");
+    if(!lbl) return;
+
+    const card = lbl.closest(".kpi-card");
+    if(!card) return;
+
+    const title = (card.querySelector(".kpi-title")?.textContent || "")
+      .replace(/\s+/g," ")
+      .trim()
+      .toUpperCase();
+
+    if(!title.includes("OEE")) return;
+
+    const data = _oeeFormulaFor(lbl.textContent || "");
+    if(!data) return;
+
+    // toggle si clickeas lo mismo
+    const key = `${title}::${(lbl.textContent||"").trim().toLowerCase()}`;
+    if(__openKey === key && __pop && __pop.style.display === "block"){
+      _close();
+      return;
+    }
+
+    __openKey = key;
+
+    // estilo clickable
+    lbl.classList.add("oee-clickable");
+
+    ev.stopPropagation();
+    _setContent(data);
+    _positionNear(lbl);
+  }, true);
+
+  // click afuera cierra
+  document.addEventListener("mousedown", (ev)=>{
+    if(!__pop || __pop.style.display !== "block") return;
+    if(__pop.contains(ev.target)) return;
+    _close();
+  });
+
+  // ESC cierra
+  document.addEventListener("keydown", (ev)=>{
+    if(ev.key === "Escape") _close();
+  });
+
+  // reubicar si se mueve pantalla
+  window.addEventListener("resize", ()=>{
+    _close(); // simple: cierra en resize
+  });
+  window.addEventListener("scroll", ()=>{
+    _close(); // simple: cierra en scroll
+  }, { passive:true });
+})();
+
 
 // =========================
 // THB: Modal Tarjetas por hora (Consecutivo / Código del arnés)

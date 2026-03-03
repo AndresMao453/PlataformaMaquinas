@@ -2143,6 +2143,32 @@ def analyze_thb(
     io = (tnom_sec / teff_sec) if teff_sec > 0 else 0.0
     kpis["indice_operacional"] = float(io)
 
+    # ✅ KPI: Velocidad Nominal (VN) = 3600 / TCNP
+    tcnp_sec_period = float(kpis.get("tcnp_sec", 0.0) or 0.0)
+    vn_uph = (3600.0 / tcnp_sec_period) if tcnp_sec_period > 0 else 0.0
+    kpis["velocidad_nominal_uph"] = float(vn_uph)
+
+    # =========================
+    # ✅ OEE breakdown (Rendimiento / Disponibilidad / Calidad)
+    # =========================
+    good = float(kpis.get("circuitos_cortados", 0) or 0)
+    total = float(kpis.get("circuitos_planeados", 0) or 0)
+
+    teff = float(kpis.get("tiempo_efectivo_sec", 0) or 0)          # seg
+    tpaid = float(kpis.get("horas_hombre_sec", 0) or 0)            # seg
+    tnom = float(kpis.get("tnom_total_sec", 0) or 0)               # seg
+
+    calidad = (total / good) if good > 0 else 0.0                 # Q
+    disponibilidad = (teff / tpaid) if tpaid > 0 else 0.0          # A
+    rendimiento = (tnom / teff) if teff > 0 else 0.0               # P  (tu IO)
+
+    oee = disponibilidad * rendimiento * calidad
+
+    kpis["oee"] = float(oee)
+    kpis["oee_calidad"] = float(calidad)
+    kpis["oee_disponibilidad"] = float(disponibilidad)
+    kpis["oee_rendimiento"] = float(rendimiento)
+
     ui = {
         "Circuitos Cortados": f"{kpis['circuitos_cortados']:,}".replace(",", "."),
         "Circuitos Planeados": f"{kpis['circuitos_planeados']:,}".replace(",", "."),
@@ -2157,14 +2183,23 @@ def analyze_thb(
         ),
 
         "Tiempo Trabajado": f"{kpis['tiempo_efectivo_hhmm']} ({kpis.get('pct_efectivo', 0.0):.1f}%)",
-        "Horas Disponibles": kpis["horas_hombre_hhmm"],
-        "Metros Cortados": f"{kpis['metros_cortados']:,.2f} m".replace(",", "X").replace(".", ",").replace("X", "."),
-        "Metros Planeados": f"{kpis['metros_planeados']:,.2f} m".replace(",", "X").replace(".", ",").replace("X", "."),
-        "Metros Extras": f"{kpis['metros_extras']:,.2f} m".replace(",", "X").replace(".", ",").replace("X", "."),
+        "Tiempo Pagado": kpis["horas_hombre_hhmm"],
+        "Metros Cortados":  f"{kpis['metros_cortados']:,.1f} m".replace(",", "X").replace(".", ",").replace("X", "."),
+        "Metros Planeados": f"{kpis['metros_planeados']:,.1f} m".replace(",", "X").replace(".", ",").replace("X", "."),
+        "Metros Extras":    f"{kpis['metros_extras']:,.1f} m".replace(",", "X").replace(".", ",").replace("X", "."),
+        "Velocidad Nominal": f"{int(round(kpis.get('velocidad_nominal_uph', 0.0))):,} unid/h".replace(",", "."),
 
-        "Tiempo Nominal (Tnom)": kpis.get("tnom_total_hhmm", "00:00"),
-        "Índice Operacional (IO)": f"{kpis.get('indice_operacional', 0.0):.3f}",
-        #"TCNP (Nominal)": f"{kpis.get('tcnp_sec', 0.0):.4f} s/pz",
+        "Tiempo De Corte": kpis.get("tnom_total_hhmm", "00:00"),
+        #"Índice Operacional (IO)": f"{kpis.get('indice_operacional', 0.0):.3f}",
+        "Tiempo de Ciclo": f"{kpis.get('tcnp_sec', 0.0):.4f} s/pz",
+
+        "OEE": (
+            f"{(kpis.get('oee', 0.0) * 100):.1f}%||"
+            f"Rendimiento: {(kpis.get('oee_rendimiento', 0.0) * 100):.1f}% | "
+            f"Disponibilidad: {(kpis.get('oee_disponibilidad', 0.0) * 100):.1f}% | "
+            f"Calidad: {(kpis.get('oee_calidad', 0.0) * 100):.1f}%"
+        ),
+
 
     }
 

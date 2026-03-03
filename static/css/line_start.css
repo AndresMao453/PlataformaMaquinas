@@ -1941,3 +1941,113 @@ a.option-card.ciclo .pill{
   color:#0f172a;
   opacity:.85;
 }
+
+.ph-nom-box{
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(15,23,42,.12);
+  border-radius: 12px;
+  background: rgba(15,23,42,.04);  /* claro, básico */
+}
+.ph-nom-box .ph-tcnp,
+.ph-nom-box .ph-vn,
+.ph-nom-box .ph-tnom{
+  margin: 4px 0;
+}
+.kpi-row-4q{ grid-column: span 3; }  /* 12-column grid => 4 tarjetas por fila */
+
+.kpi-row-4q{
+  grid-column: span 3; /* si tu grid es de 12 columnas */
+}
+
+.kpi-sub-label{
+  cursor: pointer;
+}
+
+/* Popover fórmula OEE */
+.oee-popover{
+  position: fixed;
+  z-index: 99999;
+  width: min(360px, calc(100vw - 24px));
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 14px;
+  box-shadow: 0 14px 40px rgba(0,0,0,.18);
+  padding: 12px 12px;
+  color: #0f172a;
+}
+
+.oee-popover .oee-pop-title{
+  font-weight: 900;
+  font-size: 13px;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  opacity: .85;
+  margin-bottom: 6px;
+}
+
+.oee-popover .oee-pop-formula{
+  font-weight: 900;
+  font-size: 14px;
+  line-height: 1.35;
+  margin-bottom: 8px;
+}
+
+.oee-popover .oee-pop-muted{
+  font-size: 12px;
+  opacity: .72;
+  line-height: 1.35;
+}
+
+.oee-popover .oee-pop-close{
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 900;
+  color: rgba(15, 23, 42, .65);
+}
+.oee-popover .oee-pop-close:hover{ color: rgba(15, 23, 42, 1); }
+
+.kpi-sub-label.oee-clickable{
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+/* Porcentaje (texto entre paréntesis) más pequeño */
+.kpi-value .kpi-pct{
+  font-size: 0.65em;   /* prueba 0.60–0.75 */
+  font-weight: 800;    /* opcional: que no se vea tan “pesado” */
+  opacity: 0.75;       /* opcional */
+  margin-left: 6px;    /* opcional */
+}
+
+/* ✅ fila de 3: angosto | ancho | angosto */
+#inlineKpis{
+  /* si ya tienes grid, NO borres lo tuyo; solo asegúrate que exista grid */
+}
+
+/* Para cualquier card con estas clases: */
+#inlineKpis .kpi-card.kpi-wide{
+  grid-column: span 6 !important;
+}
+
+#inlineKpis .kpi-card.kpi-narrow{
+  grid-column: span 3 !important;
+}
+#inlineKpis{
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 18px; /* el que uses */
+}
+
+#inlineKpis .kpi-card{
+  max-width: none !important;
+  width: 100%;
+  min-width: 0; /* importante para grid */
+}
