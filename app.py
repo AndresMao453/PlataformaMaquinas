@@ -1530,17 +1530,109 @@ def thb_filter_options():
 
     # =========================================================
     # ✅ 3) THB: min/max hora desde verif
+    #    - max_time: hora máxima registrada (fin)
+    #    - min_time: para THB, usamos una estimación del INICIO del primer corte del día:
+    #          inicio_est = hora_fin_primera_fila - (piezas_buenas_primera_fila * t_ciclo_nominal)
+    #      donde t_ciclo_nominal se aproxima con el modelo THB (a + b*L_mm) según tipo de terminales.
     # =========================================================
     if machine == "THB":
         dt2 = dt_verif.loc[m_verif].dropna()
         if dt2.empty:
             return jsonify({"operators": ops, "min_time": "00:00", "max_time": "23:59"})
 
-        tod = (dt2 - dt2.dt.normalize()).dt.total_seconds()
-        min_s = int(tod.min())
-        max_s = int(tod.max())
-        return jsonify({"operators": ops, "min_time": _sec_to_hhmm(min_s), "max_time": _sec_to_hhmm(max_s)})
+        # ---- max: último fin registrado ----
+        dt_max = pd.to_datetime(dt2.max(), errors="coerce")
+        max_s = int(((dt_max - dt_max.normalize()).total_seconds()) if pd.notna(dt_max) else 23*3600+59*60)
 
+        # ---- min: estimación por primera fila ----
+        dt_min = pd.to_datetime(dt2.min(), errors="coerce")
+        min_dt_est = dt_min
+
+        # Helpers mínimos (no dependemos del módulo analyses.corte_thb aquí)
+        THB_FIT_CALC_LOCAL = {
+            1: {"a": 0.7011303800366301, "b": 0.0001308951465201466},
+            2: {"a": 0.9724746750764526, "b": 0.00013737576452599423},
+            3: {"a": 1.0754718802170284, "b": 0.00013864252921535892},
+        }
+
+        def _is_no_aplica_local(x):
+            s = str(x or "").strip().lower()
+            return (s == "") or (s in ("no aplica", "na", "n/a", "none", "null"))
+
+        def _tipo_from_terminals_local(t1, t2):
+            na1 = _is_no_aplica_local(t1)
+            na2 = _is_no_aplica_local(t2)
+            if na1 and na2:
+                return 1
+            if (na1 and not na2) or (not na1 and na2):
+                return 2
+            return 3
+
+        def _thb_nominal_sec_local(L_mm, tipo):
+            try:
+                L = float(L_mm or 0)
+            except Exception:
+                return 0.0
+            if L <= 0:
+                return 0.0
+            fit = THB_FIT_CALC_LOCAL.get(int(tipo) if tipo in (1,2,3) else 2, THB_FIT_CALC_LOCAL[2])
+            return float(fit["a"]) + float(fit["b"]) * float(L)
+
+        # localizar fila de la primera hora (dt_min) dentro del periodo
+        try:
+            dt_series = pd.to_datetime(dt_verif.loc[m_verif], errors="coerce")
+            idx_min = dt_series.idxmin()
+
+            # columnas relevantes
+            c_buenas = _find_col(df_verif, "piezas buenas") or _find_col(df_verif, "buenas") or _find_col(df_verif, "cortad")
+            c_total = _find_col(df_verif, "total de piezas") or _find_col(df_verif, "total")
+            c_long  = _find_col(df_verif, "long") or _find_col(df_verif, "mm") or _find_col(df_verif, "longitud")
+            c_t1    = _find_col(df_verif, "terminal 1") or _find_col(df_verif, "t1") or _find_col(df_verif, "terminal1")
+            c_t2    = _find_col(df_verif, "terminal 2") or _find_col(df_verif, "t2") or _find_col(df_verif, "terminal2")
+
+            piezas = 0
+            if c_buenas and c_buenas in df_verif.columns:
+                piezas = int(pd.to_numeric(df_verif.at[idx_min, c_buenas], errors="coerce") or 0)
+            if piezas <= 0 and c_total and c_total in df_verif.columns:
+                piezas = int(pd.to_numeric(df_verif.at[idx_min, c_total], errors="coerce") or 0)
+
+            # t_ciclo nominal aproximado (si hay longitud)
+            t_ciclo = 0.0
+            if c_long and c_long in df_verif.columns:
+                L_raw = pd.to_numeric(pd.Series([df_verif.at[idx_min, c_long]]), errors="coerce").iloc[0]
+                L_mm = float(L_raw) if pd.notna(L_raw) else 0.0
+
+                # heurística: si viene en METROS (ej 1.4), pásalo a mm
+                if 0 < L_mm <= 20:
+                    L_mm = L_mm * 1000.0
+                # si viene en CM (muy raro), convertir
+                if 20 < L_mm < 200:
+                    # puede ser cm; si tu sheet está en mm este bloque no aplica
+                    pass
+
+                tipo = _tipo_from_terminals_local(
+                    df_verif.at[idx_min, c_t1] if (c_t1 and c_t1 in df_verif.columns) else None,
+                    df_verif.at[idx_min, c_t2] if (c_t2 and c_t2 in df_verif.columns) else None,
+                )
+                t_ciclo = _thb_nominal_sec_local(L_mm, tipo)
+
+            dur_est = float(piezas) * float(t_ciclo) if (piezas > 0 and t_ciclo > 0) else 0.0
+            if pd.notna(dt_min) and dur_est > 0:
+                min_dt_est = dt_min - pd.to_timedelta(dur_est, unit="s")
+        except Exception:
+            # fallback: min_time = primera hora registrada (fin)
+            min_dt_est = dt_min
+
+        if pd.isna(min_dt_est):
+            min_s = 0
+        else:
+            min_s = int(((min_dt_est - min_dt_est.normalize()).total_seconds()))
+
+        return jsonify({
+            "operators": ops,
+            "min_time": _sec_to_hhmm(min_s),
+            "max_time": _sec_to_hhmm(max_s),
+        })
     # =========================================================
     # ✅ 4) HP: min/max hora desde Corte (+ Paradas si existe)
     # =========================================================
@@ -2607,8 +2699,8 @@ def run_analysis():
 # MAIN
 # =========================
 if __name__ == "__main__":
-    import webbrowser
-    webbrowser.open("http://127.0.0.1:5000")
-    app.run(debug=False, host="127.0.0.1", port=5000)
+    import os
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=False, host="0.0.0.0", port=port)
 
 

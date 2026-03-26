@@ -2051,3 +2051,45 @@ a.option-card.ciclo .pill{
   width: 100%;
   min-width: 0; /* importante para grid */
 }
+
+/* ===== THB: Lotes acumulados ===== */
+.thb-lotes-scroll{
+  width:100%;
+  overflow:auto;
+  border:1px solid #e5e7eb;
+  border-radius:16px;
+  background:#fff;
+}
+
+.thb-lotes-table{
+  width:100%;
+  min-width:980px;
+  border-collapse:collapse;
+  font-size:14px;
+}
+
+.thb-lotes-table th,
+.thb-lotes-table td{
+  padding:10px 12px;
+  border-bottom:1px solid #e5e7eb;
+  text-align:left;
+  vertical-align:middle;
+  white-space:nowrap;
+}
+
+.thb-lotes-table thead th{
+  position:sticky;
+  top:0;
+  z-index:1;
+  background:#f8fafc;
+  color:#0f172a;
+  font-weight:900;
+}
+
+.thb-lotes-table tbody tr:nth-child(even){
+  background:rgba(248,250,252,.9);
+}
+
+.thb-lotes-table tbody tr:hover{
+  background:rgba(30,102,255,.06);
+}

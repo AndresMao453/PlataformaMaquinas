@@ -1399,7 +1399,7 @@ def _compute_horas_disponibles_hp(
     if not days:
         return 0
 
-    BASE_LJ_SEC = (9 * 3600) + (8 * 60)    # 09:08
+    BASE_LJ_SEC = int(round(9.25 * 3600))     # 09:08
     BASE_VS_SEC = (6 * 3600) + (53 * 60)   # 06:53
 
     total = 0

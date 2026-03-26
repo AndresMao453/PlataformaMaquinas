@@ -252,6 +252,7 @@ class THBCols:
     col_long_mm: Optional[str]
     col_res_mm: Optional[str]
     col_arnes: Optional[str]
+    col_consecutivo: Optional[str]
     col_terminal1: Optional[str]   # ✅ NUEVO
     col_terminal2: Optional[str]   # ✅ NUEVO
 
@@ -293,6 +294,7 @@ def _resolve_thb_cols(df: pd.DataFrame) -> THBCols:
     )
 
     col_arnes = _find_col(df, ["código", "arnés"]) or _find_col(df, ["arnes"])
+    col_consecutivo = _find_col(df, ["consecutivo", "tarjeta"]) or _find_col(df, ["consecutivo"])
 
     col_terminal1 = _find_col(df, ["terminal", "1"]) or _col_at(7)  # H
     col_terminal2 = _find_col(df, ["terminal", "2"]) or _col_at(8)  # I
@@ -306,11 +308,143 @@ def _resolve_thb_cols(df: pd.DataFrame) -> THBCols:
         col_long_mm=col_long_mm,
         col_res_mm=col_res_mm,
         col_arnes=col_arnes,
+        col_consecutivo=col_consecutivo,
         col_terminal1=col_terminal1,
         col_terminal2=col_terminal2,
     )
 
+def _fmt_lote_dt(x: Any) -> str:
+    ts = pd.to_datetime(x, errors="coerce")
+    if pd.isna(ts):
+        return ""
+    return ts.strftime("%Y-%m-%d %H:%M:%S")
 
+
+def _consecutivo_lote_key(x: Any) -> str:
+    if x is None or (isinstance(x, float) and pd.isna(x)):
+        return ""
+
+    s = str(x).strip()
+    if not s or s.lower() == "nan":
+        return ""
+
+    try:
+        n = float(s.replace(",", "."))
+        if np.isfinite(n) and abs(n - round(n)) < 1e-9:
+            return str(int(round(n)))
+    except Exception:
+        pass
+
+    return s
+
+
+def _build_thb_lotes_acumulados(
+    df_verif: pd.DataFrame,
+    dt_verif: pd.Series,
+    cols: THBCols,
+) -> List[Dict[str, Any]]:
+    if df_verif is None or df_verif.empty or dt_verif is None or len(dt_verif) == 0:
+        return []
+
+    if not cols.col_arnes or cols.col_arnes not in df_verif.columns:
+        return []
+
+    if not cols.col_consecutivo or cols.col_consecutivo not in df_verif.columns:
+        return []
+
+    work = df_verif.copy()
+    work["_dt_lote"] = pd.to_datetime(dt_verif, errors="coerce")
+    work = work.loc[work["_dt_lote"].notna()].copy()
+    if work.empty:
+        return []
+
+    work["_arnes_lote"] = work[cols.col_arnes].astype(str).str.strip()
+    work["_cons_lote"] = work[cols.col_consecutivo].apply(_consecutivo_lote_key)
+
+    work = work.loc[
+        (work["_arnes_lote"] != "") &
+        (work["_arnes_lote"].str.lower() != "nan") &
+        (work["_cons_lote"] != "")
+    ].copy()
+    if work.empty:
+        return []
+
+    work = work.sort_values(["_dt_lote"], kind="stable").reset_index(drop=True)
+
+    lotes_out = []
+    lotes_activos_por_arnes = {}
+    next_lote_global = 0
+
+    def _nuevo_lote(arnes: str, cons: str, dt: pd.Timestamp):
+        nonlocal next_lote_global
+
+        next_lote_global += 1
+        lote = {
+            "lote": int(next_lote_global),
+            "codigo_arnes": arnes,
+            "consecutivo_inicio": cons,
+            "consecutivo_fin": cons,
+            "inicio_dt": dt,
+            "fin_dt": dt,
+            "tarjetas": 1,
+            "vistos": {cons},
+            "dias_set": {dt.date()},
+        }
+        lotes_activos_por_arnes[arnes] = lote
+        lotes_out.append(lote)
+
+    for _, row in work.iterrows():
+        arnes = str(row["_arnes_lote"] or "").strip()
+        cons = str(row["_cons_lote"] or "").strip()
+        dt = pd.to_datetime(row["_dt_lote"], errors="coerce")
+
+        if not arnes or not cons or pd.isna(dt):
+            continue
+
+        lote_activo = lotes_activos_por_arnes.get(arnes)
+
+        # Si esa referencia nunca ha aparecido, crea su primer lote
+        if lote_activo is None:
+            _nuevo_lote(arnes, cons, dt)
+            continue
+
+        # Si el consecutivo ya había aparecido en el lote activo de ESA referencia,
+        # entonces abre un nuevo lote para esa referencia.
+        if cons in lote_activo["vistos"]:
+            _nuevo_lote(arnes, cons, dt)
+            continue
+
+        # Si no se repite, sigue en el mismo lote,
+        # aunque hayan pasado otros días o se hayan procesado otras referencias entre medio.
+        lote_activo["vistos"].add(cons)
+        lote_activo["consecutivo_fin"] = cons
+        lote_activo["fin_dt"] = dt
+        lote_activo["tarjetas"] += 1
+        lote_activo["dias_set"].add(dt.date())
+
+    # salida final limpia
+    out = []
+    for lote in sorted(lotes_out, key=lambda x: x["inicio_dt"]):
+        inicio_dt = pd.to_datetime(lote["inicio_dt"], errors="coerce")
+        fin_dt = pd.to_datetime(lote["fin_dt"], errors="coerce")
+
+        dur_sec = 0
+        if pd.notna(inicio_dt) and pd.notna(fin_dt):
+            dur_sec = int(max(0, (fin_dt - inicio_dt).total_seconds()))
+
+        out.append({
+            "lote": int(lote["lote"]),
+            "codigo_arnes": str(lote["codigo_arnes"]),
+            "consecutivo_inicio": str(lote["consecutivo_inicio"]),
+            "consecutivo_fin": str(lote["consecutivo_fin"]),
+            "inicio": _fmt_lote_dt(inicio_dt),
+            "fin": _fmt_lote_dt(fin_dt),
+            "duracion_hhmm": _format_hmm_from_seconds(dur_sec),
+            "tarjetas": int(lote["tarjetas"]),
+            "dias": int(len(lote["dias_set"])),
+        })
+
+    return out
 
 def _coerce_excel_date_series(s: pd.Series) -> pd.Series:
     """
@@ -761,15 +895,17 @@ def _attach_other_causes_to_buckets_thb(
     """
     Agrega a cada bucket:
       bucket["other_causes"] = [
-        {"code": "201", "seconds": 123, "hhmm": "00:02", "desc": "..."},
+        {"code": "203", "seconds": 420, "hhmm": "00:07", "desc": "..."},
+        {"code": "203", "seconds": 180, "hhmm": "00:03", "desc": "..."},
         ...
       ]
-    Solo para "Otro" (excluye 105).
+
+    ✅ Cambio: NO acumula por código. Si hay 2+ paradas del mismo código en la hora,
+              se muestran como entradas separadas (una por evento).
     """
     if not buckets_in:
         return
 
-    # default
     for b in buckets_in:
         b["other_causes"] = []
 
@@ -817,7 +953,6 @@ def _attach_other_causes_to_buckets_thb(
         tmp.loc[tmp["desc"].str.lower().isin(["nan", "none"]), "desc"] = ""
         tmp = tmp[tmp["desc"].ne("")]
         if not tmp.empty:
-            # primer desc no vacío por código
             for c, grp in tmp.groupby("codigo", dropna=False):
                 v = grp["desc"].iloc[0]
                 if v:
@@ -831,15 +966,12 @@ def _attach_other_causes_to_buckets_thb(
             return desc_map[code]
         return _desc_from_dict(code) or ""
 
-
-
     # arrays ns para overlap rápido
     start_ns = p["dt_start"].astype("datetime64[ns]").astype("int64").to_numpy()
     end_ns = p["dt_end"].astype("datetime64[ns]").astype("int64").to_numpy()
     codes_np = p["codigo"].astype(str).to_numpy()
 
     for b in buckets_in:
-        # saca la hora del bucket (viene "hour"="07" o "hourLabel"="07:00")
         h_raw = str(b.get("hour") or b.get("hourLabel") or "").strip()
         h_txt = h_raw.split(":")[0] if h_raw else ""
         try:
@@ -849,12 +981,12 @@ def _attach_other_causes_to_buckets_thb(
             continue
 
         h0 = pd.Timestamp(f"{day_iso} {h:02d}:00:00")
-        h1 = h0 + pd.Timedelta(hours=1)   # ✅ misma ventana que _compute_hourly_buckets
-
+        h1 = h0 + pd.Timedelta(hours=1)
 
         h0_ns = int(h0.value)
         h1_ns = int(h1.value)
 
+        # overlap por fila (evento)
         ol_ns = np.minimum(end_ns, h1_ns) - np.maximum(start_ns, h0_ns)
         ol_ns = np.maximum(0, ol_ns)
 
@@ -862,75 +994,77 @@ def _attach_other_causes_to_buckets_thb(
             b["other_causes"] = []
             continue
 
-        acc: Dict[str, int] = {}
+        # ✅ en vez de acumular por código, creamos un item por evento
+        events_min: List[Tuple[str, int]] = []  # (codigo, minutos)
         for code, ns in zip(codes_np, ol_ns):
-            if not code or str(code).strip() == MEAL_CODE:
+            cc = str(code).strip()
+            if (not cc) or (cc == MEAL_CODE):
                 continue
             sec = int(ns / 1e9)
             if sec <= 0:
                 continue
-            cc = str(code).strip()
-            acc[cc] = acc.get(cc, 0) + sec
 
-        if not acc:
+            # cuantiza cada evento a minutos
+            m = int(round(sec / 60.0))
+            if m <= 0:
+                m = 1  # si hubo solape, al menos 1 min para que se vea
+            events_min.append((cc, m))
+
+        # unknown (del bucket) también entra como evento "000"
+        unk = int(b.get("unknownSec") or 0)
+        if unk > 0:
+            m_unk = int(round(unk / 60.0))
+            if m_unk > 0:
+                events_min.append(("000", m_unk))
+
+        if not events_min:
             b["other_causes"] = []
             continue
 
-        # ✅ agrega desconocido si existe (viene del backend como unknownSec)
-        unk = int(b.get("unknownSec") or 0)
-        if unk > 0:
-            acc["000"] = acc.get("000", 0) + int(unk)
-
-        # ✅ cuantiza causas a minutos igual que KPIs y fuerza suma = otherDeadSec
+        # ✅ ajustar para que sume EXACTO lo que dice otherDeadSec del bucket
         target_sec = int(b.get("otherDeadSec") or 0)
-        target_min = max(0, target_sec // 60)  # otherDeadSec siempre múltiplo de 60
+        target_min = max(0, target_sec // 60)
 
-        # segundos -> minutos (redondeo) por código
-        acc_min = {c: int(round(float(s) / 60.0)) for c, s in acc.items()}
-
-        # limpia ceros/negativos
-        acc_min = {c: m for c, m in acc_min.items() if m > 0}
-
-        # asegura buffer para ajustar
-        if target_min > 0 and "000" not in acc_min:
-            acc_min["000"] = 0
-
-        sum_min = sum(acc_min.values())
+        sum_min = sum(m for _, m in events_min)
         delta = target_min - sum_min
 
-        # Ajuste preferido: "000" (Desconocido). Si no existe, ajusta el mayor.
-        if delta != 0 and acc_min:
-            adj_code = "000" if "000" in acc_min else max(acc_min, key=acc_min.get)
-            acc_min[adj_code] = max(0, acc_min.get(adj_code, 0) + delta)
+        if delta != 0:
+            # preferimos ajustar el "000" (Desconocido). Si no existe, ajusta el último evento.
+            idx = None
+            for i in range(len(events_min) - 1, -1, -1):
+                if events_min[i][0] == "000":
+                    idx = i
+                    break
+            if idx is None:
+                idx = len(events_min) - 1
 
-        # Re-chequeo final por si el clamp dejó desbalance
-        sum_min2 = sum(acc_min.values())
-        if acc_min and sum_min2 != target_min:
-            delta2 = target_min - sum_min2
-            adj_code2 = "000" if "000" in acc_min else max(acc_min, key=acc_min.get)
-            acc_min[adj_code2] = max(0, acc_min.get(adj_code2, 0) + delta2)
+            c0, m0 = events_min[idx]
+            m1 = max(0, m0 + delta)
+            events_min[idx] = (c0, m1)
 
-        # minutos -> segundos (ya consistentes con el KPI)
-        acc_q = {c: int(m * 60) for c, m in acc_min.items() if m > 0}
+            # si quedó en 0, lo eliminamos
+            events_min = [(c, m) for (c, m) in events_min if m > 0]
 
-        items_all = sorted(acc_q.items(), key=lambda kv: kv[1], reverse=True)
+        # ordenar por duración desc
+        events_min.sort(key=lambda x: x[1], reverse=True)
 
-        # si hay demasiadas causas, agrupa el resto para no romper la suma visual
-        if top_n and len(items_all) > top_n:
+        # top_n opcional (si quieres ver TODO, pon top_n=0 o un número muy grande)
+        if top_n and len(events_min) > top_n:
             keep_n = max(1, top_n - 1)
-            keep = items_all[:keep_n]
-            rest_sec = sum(s for _, s in items_all[keep_n:])
-            keep.append(("999", int(rest_sec)))
-            items_all = keep
+            keep = events_min[:keep_n]
+            rest_min = sum(m for _, m in events_min[keep_n:])
+            keep.append(("999", rest_min))
+            events_min = keep
 
+        # salida final (min -> sec)
         b["other_causes"] = [
             {
                 "code": c,
-                "seconds": int(s),  # ✅ múltiplos de 60
-                "hhmm": _seconds_to_hhmm(float(s)),  # ✅ ahora sí cuadra exacto
+                "seconds": int(m * 60),
+                "hhmm": _seconds_to_hhmm(float(m * 60)),
                 "desc": ("Otros" if c == "999" else _get_desc(c)),
             }
-            for c, s in items_all
+            for c, m in events_min
         ]
 
 
@@ -2038,7 +2172,7 @@ def analyze_thb(
     # ✅ KPI NUEVO: Horas/Hombre (ignora ventana horaria)
     # =========================================================
     hh_sec = _compute_horas_hombre_thb(
-        period=period,
+period=period,
         r0=r0,
         r1=r1,
         df_verif=df_no_hour,          # <- sin filtro hora
@@ -2046,6 +2180,8 @@ def analyze_thb(
         cols=cols,
         operator=operator,            # <- respeta filtro operaria
         df_paradas_iv=df_paradas_iv_all,
+            df_verif_all_ops=df_period_all,
+        dt_verif_all_ops=dt_period_all,
     )
     kpis["horas_hombre_sec"] = int(hh_sec)
     kpis["horas_hombre_hhmm"] = _format_hmm_from_seconds(int(hh_sec))
@@ -2055,6 +2191,12 @@ def analyze_thb(
 
     dt_min = dt_f.min() if dt_f is not None and not dt_f.dropna().empty else None
     dt_max = dt_f.max() if dt_f is not None and not dt_f.dropna().empty else None
+
+    lotes_acumulados = _build_thb_lotes_acumulados(
+        df_verif=df_no_hour,
+        dt_verif=dt_no_hour,
+        cols=cols,
+    )
 
     # =========================================================
     # ✅ NO REGISTRADO (LÓGICA FINAL) — 105 y 106 NO se mezclan con "Otro"
@@ -2216,7 +2358,8 @@ def analyze_thb(
         "time_end": time_end,
 
         "rows_total": int(len(df_f)),
-        "rows_with_datetime_in_period": int(pd.to_datetime(dt_f, errors="coerce").notna().sum()) if dt_f is not None else 0,
+        "rows_with_datetime_in_period": int(
+            pd.to_datetime(dt_f, errors="coerce").notna().sum()) if dt_f is not None else 0,
 
         "dt_min": dt_min.isoformat(sep=" ") if dt_min is not None and not pd.isna(dt_min) else None,
         "dt_max": dt_max.isoformat(sep=" ") if dt_max is not None and not pd.isna(dt_max) else None,
@@ -2225,6 +2368,7 @@ def analyze_thb(
         "kpis_ui": ui,
         "pareto": pareto,
         "top_arnes": top_arnes,
+        "lotes_acumulados": lotes_acumulados,
     }
 
 
@@ -2255,18 +2399,19 @@ def _compute_horas_hombre_thb(
     cols: THBCols,
     operator: str,
     df_paradas_iv: Optional[pd.DataFrame],
+    df_verif_all_ops: Optional[pd.DataFrame] = None,
+    dt_verif_all_ops: Optional[pd.Series] = None,
 ) -> int:
     """
-    Horas/Hombre (regla fija por # tarjetas):
+    Tiempo Pagado (Horas/Hombre) THB.
 
-    - Tarjetas = cantidad de buckets por hora con algún registro (prod/dead/unknown/meal > 0).
-    - Lun-Jue:
-        - si tarjetas >= 1 => 09:08
-        - si tarjetas >= 11 => 10:08  (09:08 + 1h)
-    - Vie y Sáb:
-        - si tarjetas >= 1 => 06:53
-        - si tarjetas >= 9  => 07:53  (06:53 + 1h)
-    - Week/Month: suma diaria.
+    - Si operator == General: usa regla de turno por # tarjetas (9.25 / 10.25 / 11.25 ...).
+    - Si operator != General:
+        - Si en el día hubo >=2 operarias: paga por horas trabajadas de esa operaria (cards * 1h)
+          y descuenta Parada 105 SOLO en ventanas fijas:
+              08:30-08:45 (15 min) y 13:30-14:00 (30 min),
+          pero solo si realmente hay intervalos 105 solapando esas ventanas.
+        - Si en el día hubo solo 1 operaria: se comporta igual que General.
     """
 
     if (df_verif is None or df_verif.empty) and (df_paradas_iv is None or df_paradas_iv.empty):
@@ -2294,6 +2439,41 @@ def _compute_horas_hombre_thb(
                 n += 1
         return int(n)
 
+    def _overlap(a0: pd.Timestamp, a1: pd.Timestamp, b0: pd.Timestamp, b1: pd.Timestamp) -> int:
+        # segundos de solape entre [a0,a1) y [b0,b1)
+        start = max(a0.value, b0.value)
+        end = min(a1.value, b1.value)
+        return int(max(0, (end - start) / 1e9))
+
+    def _sum_overlap_105_in_window(df_p: Optional[pd.DataFrame], w0: pd.Timestamp, w1: pd.Timestamp) -> int:
+        # suma de solape con código 105 dentro de la ventana [w0,w1)
+        if df_p is None or df_p.empty:
+            return 0
+        if ("dt_start" not in df_p.columns) or ("dt_end" not in df_p.columns):
+            return 0
+        d = df_p.copy()
+        if "codigo" not in d.columns:
+            return 0
+        d["codigo"] = d["codigo"].apply(_code_to_str).astype(str).str.strip()
+        d = d.loc[d["codigo"].eq("105")].copy()
+        if d.empty:
+            return 0
+        d["dt_start"] = pd.to_datetime(d["dt_start"], errors="coerce")
+        d["dt_end"] = pd.to_datetime(d["dt_end"], errors="coerce")
+        d = d.dropna(subset=["dt_start", "dt_end"])
+        if d.empty:
+            return 0
+
+        total = 0
+        for _, r in d.iterrows():
+            s = r["dt_start"]
+            e = r["dt_end"]
+            if e <= w0 or s >= w1:
+                continue
+            total += _overlap(s, e, w0, w1)
+        # no puede exceder la ventana
+        return int(min(total, int((w1 - w0).total_seconds())))
+
     # -------------------------
     # Días con datos (verif + paradas)
     # -------------------------
@@ -2314,19 +2494,28 @@ def _compute_horas_hombre_thb(
     if not days:
         return 0
 
+    # timeline principal (posiblemente filtrada por operaria)
     dtv = pd.to_datetime(dt_verif, errors="coerce") if dt_verif is not None else pd.Series([], dtype="datetime64[ns]")
 
-    BASE_LJ_SEC = (9 * 3600) + (8 * 60)   # 09:08
-    BASE_VS_SEC = (6 * 3600) + (53 * 60)  # 06:53
+    # timeline "all ops" (sin filtrar operaria) para contar operarias del día
+    dt_all_ops = pd.to_datetime(dt_verif_all_ops, errors="coerce") if dt_verif_all_ops is not None else None
+
+    # ✅ Base General
+    BASE_LJ_SEC = int(round(9.25 * 3600))  # Lun-Jue
+    BASE_VS_SEC = (6 * 3600) + (53 * 60)  # Sábado (y si quieres usarlo también para viernes NO, ya lo separamos)        # Vie/Sáb
+
+    op = (operator or "").strip()
+    is_general = _is_general_operator(op)
 
     total_hh = 0
 
     for d in sorted(days):
         day = pd.Timestamp(d)
-        day_start = pd.Timestamp(day.strftime("%Y-%m-%d 00:00:00"))
-        day_end   = pd.Timestamp(day.strftime("%Y-%m-%d 23:59:59.999"))
+        day_iso = day.strftime("%Y-%m-%d")
+        day_start = pd.Timestamp(f"{day_iso} 00:00:00")
+        day_end   = pd.Timestamp(f"{day_iso} 23:59:59.999")
 
-        # filtrar verif del día
+        # verif del día (ya viene filtrado por operaria si aplica)
         if dtv is not None and not dtv.dropna().empty:
             m_v = (dtv >= day_start) & (dtv <= day_end)
             df_v = df_verif.loc[m_v].copy()
@@ -2335,8 +2524,13 @@ def _compute_horas_hombre_thb(
             df_v = df_verif.iloc[0:0].copy()
             dt_v = pd.Series([], dtype="datetime64[ns]")
 
-        # filtrar paradas que tocan el día
-        if df_paradas_iv is not None and not df_paradas_iv.empty and ("dt_start" in df_paradas_iv.columns) and ("dt_end" in df_paradas_iv.columns):
+        # paradas que tocan el día (ya vienen filtradas por operaria según tu pipeline)
+        if (
+            df_paradas_iv is not None
+            and not df_paradas_iv.empty
+            and ("dt_start" in df_paradas_iv.columns)
+            and ("dt_end" in df_paradas_iv.columns)
+        ):
             m_p = (df_paradas_iv["dt_end"] >= day_start) & (df_paradas_iv["dt_start"] <= day_end)
             df_p = df_paradas_iv.loc[m_p].copy()
         else:
@@ -2349,33 +2543,78 @@ def _compute_horas_hombre_thb(
             selected_day=day,
             df_paradas_iv=df_p,
         )
-
         cards = _count_cards(buckets if isinstance(buckets, list) else [])
 
         if cards <= 0:
-            continue  # no suma HH
+            continue
 
+        # -------------------------
+        # ¿Cuántas operarias hubo ese día? (sin filtrar)
+        # -------------------------
+        multi_ops_day = False
+        if (not is_general) and (df_verif_all_ops is not None) and (dt_all_ops is not None) and cols.col_nombre:
+            m_day_all = dt_all_ops.notna() & (dt_all_ops >= day_start) & (dt_all_ops <= day_end)
+            if m_day_all.any() and (cols.col_nombre in df_verif_all_ops.columns):
+                ops_day = df_verif_all_ops.loc[m_day_all, cols.col_nombre].astype(str).str.strip()
+                uniq_ops = [x for x in ops_day.unique().tolist() if x and x.lower() != "nan"]
+                multi_ops_day = (len(uniq_ops) >= 2)   # ✅ TU NUEVA CONDICIÓN (2 o más)
+
+        # =========================================================
+        # ✅ SI OPERARIA (no General) Y HUBO 2+ OPERARIAS:
+        # Tiempo Pagado = cards*1h - 105(en ventanas fijas)
+        # =========================================================
+        if (not is_general) and multi_ops_day:
+            hh_day = int(cards) * 3600
+
+            # ventanas fijas (105)
+            w1_0 = pd.Timestamp(f"{day_iso} 08:30:00")
+            w1_1 = pd.Timestamp(f"{day_iso} 08:45:00")  # 15 min
+            w2_0 = pd.Timestamp(f"{day_iso} 08:45:00")
+            w2_1 = pd.Timestamp(f"{day_iso} 09:00:00")  # 15 min
+
+            w3_0 = pd.Timestamp(f"{day_iso} 13:00:00")
+            w3_1 = pd.Timestamp(f"{day_iso} 13:30:00")  # 30 min
+            w4_0 = pd.Timestamp(f"{day_iso} 13:30:00")
+            w4_1 = pd.Timestamp(f"{day_iso} 14:00:00")  # 30 min
+
+            disc_105 = 0
+            disc_105 += _sum_overlap_105_in_window(df_p, w1_0, w1_1)
+            disc_105 += _sum_overlap_105_in_window(df_p, w2_0, w2_1)
+            disc_105 += _sum_overlap_105_in_window(df_p, w3_0, w3_1)
+            disc_105 += _sum_overlap_105_in_window(df_p, w4_0, w4_1)
+
+            hh_day = max(0, hh_day - int(disc_105))
+            total_hh += hh_day
+            continue
+
+        # -------------------------
+        # GENERAL (o día con 1 sola operaria): regla de turno
+        # -------------------------
         wd = int(day.dayofweek)  # 0 lun ... 4 vie ... 5 sab ... 6 dom
 
-        # Lun-Jue
         if wd in (0, 1, 2, 3):
-            hh = BASE_LJ_SEC
-            if cards >= 11:
-                hh += 3600
-            total_hh += hh
+            extra_h = max(0, int(cards) - 10)
+            total_hh += int(BASE_LJ_SEC + extra_h * 3600)
+        elif wd == 4:
+            # ✅ VIERNES: base 7h. Si hay horas extra (cards>7), sumar extras pero restar 45 min (30+15) una sola vez.
+            BASE_FRI_SEC = 7 * 3600
+            extra_h = max(0, int(cards) - 7)
+            hh_day = int(BASE_FRI_SEC + extra_h * 3600)
 
-        # Vie o Sáb
-        elif wd in (4, 5):
-            hh = BASE_VS_SEC
-            if cards >= 9:   # "mayor que 8"
-                hh += 3600
-            total_hh += hh
+            # si hubo horas extra (8,9,...) descontar 45 min una sola vez
+            if extra_h > 0:
+                hh_day -= (45 * 60)
 
-        # Dom: no cuenta (si quieres que cuente como sábado, lo cambiamos)
+            total_hh += max(0, hh_day)
+
+        elif wd == 5:
+            # ✅ SÁBADO: se mantiene como lo tienes (6:53 base, extras sobre 8)
+            extra_h = max(0, int(cards) - 8)
+            total_hh += int(BASE_VS_SEC + extra_h * 3600)
         else:
             continue
 
-    # truncar a minuto (igual que tu estilo)
+    # truncar a minuto
     total_hh = (int(total_hh) // 60) * 60
     return int(total_hh)
 

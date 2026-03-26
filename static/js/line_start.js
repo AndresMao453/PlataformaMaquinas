@@ -245,6 +245,7 @@ function hideInlineResults(){
   destroyPareto();
   destroyTerminalUsage();
   hideProdHour();
+  hideThbLotes();
 
   const hpLine = document.getElementById("hpTimesLine");
   if(hpLine){
@@ -1132,7 +1133,7 @@ function _fmt2(x){
 function _fmtHourDecFromSec(sec){
   const s = Math.max(0, Number(sec) || 0);
   const h = s / 3600;
-  return _trunc2(h).toFixed(2); // "9.13"
+  return (Math.round(h * 100) / 100).toFixed(2);
 }
 function _fmtHourDecPartsRaw(prodSec, otherSec, mealSec){
   return {
@@ -1152,7 +1153,7 @@ function _fmtHourDecFromHHMM(str){
   const mm = Number(m[2]) || 0;
   const ss = Number(m[3]) || 0;
   const dec = hh + (mm/60) + (ss/3600);
-  return _trunc2(dec).toFixed(2);
+  return (Math.round(dec * 100) / 100).toFixed(2);
 }
 
 
@@ -1578,7 +1579,70 @@ function hideProdHour(){
   if(leg) leg.style.display = "none";
 }
 
+function hideThbLotes(){
+  const t = document.getElementById("thbLotesTitle");
+  const w = document.getElementById("thbLotesWrap");
+  const b = document.getElementById("thbLotesTableBox");
 
+  if(b) b.innerHTML = "";
+  if(t) t.style.display = "none";
+  if(w) w.style.display = "none";
+}
+
+function renderThbLotes(result){
+  const t = document.getElementById("thbLotesTitle");
+  const w = document.getElementById("thbLotesWrap");
+  const b = document.getElementById("thbLotesTableBox");
+  if(!t || !w || !b) return;
+
+  const machineU = String(result?.machine || "").toUpperCase().trim();
+  if(machineU !== "THB"){
+    hideThbLotes();
+    return;
+  }
+
+  const rows = result?.lotes_acumulados || [];
+  if(!Array.isArray(rows) || rows.length === 0){
+    hideThbLotes();
+    return;
+  }
+
+  t.style.display = "block";
+  w.style.display = "block";
+
+  b.innerHTML = `
+    <div class="thb-lotes-scroll">
+      <table class="thb-lotes-table">
+        <thead>
+          <tr>
+            <th>Lote</th>
+            <th>Código arnés</th>
+            <th>Consecutivo inicio</th>
+            <th>Consecutivo fin</th>
+            <th>Inicio</th>
+            <th>Fin</th>
+            <th>Duración</th>
+            <th>Tarjetas</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr>
+              <td>${escHtml(r?.lote ?? "")}</td>
+              <td>${escHtml(r?.codigo_arnes ?? "")}</td>
+              <td>${escHtml(r?.consecutivo_inicio ?? "")}</td>
+              <td>${escHtml(r?.consecutivo_fin ?? "")}</td>
+              <td>${escHtml(r?.inicio ?? "")}</td>
+              <td>${escHtml(r?.fin ?? "")}</td>
+              <td>${escHtml(r?.duracion_hhmm ?? "")}</td>
+              <td>${escHtml(fmtIntEs(r?.tarjetas ?? 0))}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
 
 function hourRangeLabel(hourLabel){
   const raw = String(hourLabel || "").trim();
@@ -2188,6 +2252,7 @@ function renderInlineKPIs(result){
 
   renderTerminalUsage(result);
   renderProdHour(result);
+  //renderThbLotes(result);
 }
 
 async function runInlineAnalysis(form, opts = {}){
