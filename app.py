@@ -12,7 +12,7 @@ import requests
 
 import numpy as np  # ✅ (solicitado)
 import pandas as pd
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file
 from werkzeug.utils import secure_filename
 
 import config
@@ -1530,109 +1530,17 @@ def thb_filter_options():
 
     # =========================================================
     # ✅ 3) THB: min/max hora desde verif
-    #    - max_time: hora máxima registrada (fin)
-    #    - min_time: para THB, usamos una estimación del INICIO del primer corte del día:
-    #          inicio_est = hora_fin_primera_fila - (piezas_buenas_primera_fila * t_ciclo_nominal)
-    #      donde t_ciclo_nominal se aproxima con el modelo THB (a + b*L_mm) según tipo de terminales.
     # =========================================================
     if machine == "THB":
         dt2 = dt_verif.loc[m_verif].dropna()
         if dt2.empty:
             return jsonify({"operators": ops, "min_time": "00:00", "max_time": "23:59"})
 
-        # ---- max: último fin registrado ----
-        dt_max = pd.to_datetime(dt2.max(), errors="coerce")
-        max_s = int(((dt_max - dt_max.normalize()).total_seconds()) if pd.notna(dt_max) else 23*3600+59*60)
+        tod = (dt2 - dt2.dt.normalize()).dt.total_seconds()
+        min_s = int(tod.min())
+        max_s = int(tod.max())
+        return jsonify({"operators": ops, "min_time": _sec_to_hhmm(min_s), "max_time": _sec_to_hhmm(max_s)})
 
-        # ---- min: estimación por primera fila ----
-        dt_min = pd.to_datetime(dt2.min(), errors="coerce")
-        min_dt_est = dt_min
-
-        # Helpers mínimos (no dependemos del módulo analyses.corte_thb aquí)
-        THB_FIT_CALC_LOCAL = {
-            1: {"a": 0.7011303800366301, "b": 0.0001308951465201466},
-            2: {"a": 0.9724746750764526, "b": 0.00013737576452599423},
-            3: {"a": 1.0754718802170284, "b": 0.00013864252921535892},
-        }
-
-        def _is_no_aplica_local(x):
-            s = str(x or "").strip().lower()
-            return (s == "") or (s in ("no aplica", "na", "n/a", "none", "null"))
-
-        def _tipo_from_terminals_local(t1, t2):
-            na1 = _is_no_aplica_local(t1)
-            na2 = _is_no_aplica_local(t2)
-            if na1 and na2:
-                return 1
-            if (na1 and not na2) or (not na1 and na2):
-                return 2
-            return 3
-
-        def _thb_nominal_sec_local(L_mm, tipo):
-            try:
-                L = float(L_mm or 0)
-            except Exception:
-                return 0.0
-            if L <= 0:
-                return 0.0
-            fit = THB_FIT_CALC_LOCAL.get(int(tipo) if tipo in (1,2,3) else 2, THB_FIT_CALC_LOCAL[2])
-            return float(fit["a"]) + float(fit["b"]) * float(L)
-
-        # localizar fila de la primera hora (dt_min) dentro del periodo
-        try:
-            dt_series = pd.to_datetime(dt_verif.loc[m_verif], errors="coerce")
-            idx_min = dt_series.idxmin()
-
-            # columnas relevantes
-            c_buenas = _find_col(df_verif, "piezas buenas") or _find_col(df_verif, "buenas") or _find_col(df_verif, "cortad")
-            c_total = _find_col(df_verif, "total de piezas") or _find_col(df_verif, "total")
-            c_long  = _find_col(df_verif, "long") or _find_col(df_verif, "mm") or _find_col(df_verif, "longitud")
-            c_t1    = _find_col(df_verif, "terminal 1") or _find_col(df_verif, "t1") or _find_col(df_verif, "terminal1")
-            c_t2    = _find_col(df_verif, "terminal 2") or _find_col(df_verif, "t2") or _find_col(df_verif, "terminal2")
-
-            piezas = 0
-            if c_buenas and c_buenas in df_verif.columns:
-                piezas = int(pd.to_numeric(df_verif.at[idx_min, c_buenas], errors="coerce") or 0)
-            if piezas <= 0 and c_total and c_total in df_verif.columns:
-                piezas = int(pd.to_numeric(df_verif.at[idx_min, c_total], errors="coerce") or 0)
-
-            # t_ciclo nominal aproximado (si hay longitud)
-            t_ciclo = 0.0
-            if c_long and c_long in df_verif.columns:
-                L_raw = pd.to_numeric(pd.Series([df_verif.at[idx_min, c_long]]), errors="coerce").iloc[0]
-                L_mm = float(L_raw) if pd.notna(L_raw) else 0.0
-
-                # heurística: si viene en METROS (ej 1.4), pásalo a mm
-                if 0 < L_mm <= 20:
-                    L_mm = L_mm * 1000.0
-                # si viene en CM (muy raro), convertir
-                if 20 < L_mm < 200:
-                    # puede ser cm; si tu sheet está en mm este bloque no aplica
-                    pass
-
-                tipo = _tipo_from_terminals_local(
-                    df_verif.at[idx_min, c_t1] if (c_t1 and c_t1 in df_verif.columns) else None,
-                    df_verif.at[idx_min, c_t2] if (c_t2 and c_t2 in df_verif.columns) else None,
-                )
-                t_ciclo = _thb_nominal_sec_local(L_mm, tipo)
-
-            dur_est = float(piezas) * float(t_ciclo) if (piezas > 0 and t_ciclo > 0) else 0.0
-            if pd.notna(dt_min) and dur_est > 0:
-                min_dt_est = dt_min - pd.to_timedelta(dur_est, unit="s")
-        except Exception:
-            # fallback: min_time = primera hora registrada (fin)
-            min_dt_est = dt_min
-
-        if pd.isna(min_dt_est):
-            min_s = 0
-        else:
-            min_s = int(((min_dt_est - min_dt_est.normalize()).total_seconds()))
-
-        return jsonify({
-            "operators": ops,
-            "min_time": _sec_to_hhmm(min_s),
-            "max_time": _sec_to_hhmm(max_s),
-        })
     # =========================================================
     # ✅ 4) HP: min/max hora desde Corte (+ Paradas si existe)
     # =========================================================
@@ -1780,7 +1688,14 @@ def app_filter_options():
         return jsonify({"operators": [], "min_time": "00:00", "max_time": "23:59"})
 
 
-from analyses.corte_thb import analyze_thb
+from analyses.corte_thb import (
+    analyze_thb,
+    _resolve_thb_cols,
+    _build_dt as _thb_build_dt,
+    _num_es as _thb_num_es,
+    _normalize_period_value as _thb_normalize_period_value,
+    _period_bounds as _thb_period_bounds,
+)
 from analyses.corte_hp import analyze_hp
 
 
@@ -1934,6 +1849,619 @@ def _load_union_pulsos_4books() -> pd.DataFrame:
 
 
 
+
+
+
+
+# =========================
+# EXPORT THB -> Excel por día / semana / mes
+# =========================
+def _load_thb_data_for_export(filename: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    cache_thb = THB_CACHE.get(filename)
+
+    if filename == GSHEET_THB_TOKEN:
+        sheet_id = getattr(config, "THB_SHEET_ID", "") or ""
+        gid_verif = int(getattr(config, "THB_GID_VERIF", 0) or 0)
+        gid_par = int(getattr(config, "THB_GID_PARADAS", 0) or 0)
+        ttl = int(getattr(config, "GSHEET_TTL_S", 10) or 10)
+
+        if not sheet_id or not gid_verif or not gid_par:
+            raise RuntimeError("Falta config THB en config.py (THB_SHEET_ID/THB_GID_*).")
+
+        df_verif = load_gsheet_tab_csv_smart(sheet_id, gid_verif, ttl_s=ttl).copy()
+        df_paradas = load_gsheet_tab_csv_smart(sheet_id, gid_par, ttl_s=ttl).copy()
+        df_paradas = _normalize_gsheet_paradas_duration_to_seconds(df_paradas)
+        df_paradas = _hp_gsheet_fix_paradas_duration(df_paradas)
+
+        try:
+            if filename in THB_CACHE and isinstance(THB_CACHE[filename], dict):
+                THB_CACHE[filename]["df"] = df_verif.copy()
+                THB_CACHE[filename]["df_paradas"] = df_paradas.copy()
+            else:
+                THB_CACHE[filename] = {"df": df_verif.copy(), "df_paradas": df_paradas.copy()}
+        except Exception:
+            pass
+
+        return df_verif, df_paradas
+
+    path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"No existe el archivo: {filename}")
+
+    if cache_thb and isinstance(cache_thb.get("df"), pd.DataFrame):
+        df_verif = cache_thb["df"].copy()
+        df_paradas = cache_thb.get("df_paradas", pd.DataFrame()).copy()
+        return df_verif, df_paradas
+
+    try:
+        df_verif = _read_excel_smart(path, "Verificación de Medidas").copy()
+    except Exception:
+        df_verif = _read_excel_smart(path, "Verificacion de Medidas").copy()
+
+    df_paradas = _read_excel_smart(path, "Paradas").copy()
+
+    try:
+        if filename in THB_CACHE and isinstance(THB_CACHE[filename], dict):
+            THB_CACHE[filename]["df"] = df_verif.copy()
+            THB_CACHE[filename]["df_paradas"] = df_paradas.copy()
+        else:
+            THB_CACHE[filename] = {"df": df_verif.copy(), "df_paradas": df_paradas.copy()}
+    except Exception:
+        pass
+
+    return df_verif, df_paradas
+
+
+
+def _safe_xlsx_sheet_title(title: str) -> str:
+    s = str(title or "").strip()
+    s = re.sub(r'[\\/*?:\[\]]+', "-", s)
+    s = s[:31].strip()
+    return s or "Hoja"
+
+
+def _get_thb_export_template_path() -> str:
+    """
+    Busca el modelo OEE para la exportación THB.
+    Prioridad:
+      1) misma carpeta de app.py
+      2) subcarpeta templates_excel/
+      3) uploads/
+      4) rutas de trabajo locales (útil en desarrollo)
+    """
+    base_dir = Path(__file__).resolve().parent
+    candidates = [
+        base_dir / "Modelo OEE.xlsx",
+        base_dir / "Modelo OEE - Copia.xlsx",
+        base_dir / "templates_excel" / "Modelo OEE.xlsx",
+        base_dir / "templates_excel" / "Modelo OEE - Copia.xlsx",
+        base_dir / app.config.get("UPLOAD_FOLDER", "uploads") / "Modelo OEE.xlsx",
+        base_dir / app.config.get("UPLOAD_FOLDER", "uploads") / "Modelo OEE - Copia.xlsx",
+        Path("/mnt/data/Modelo OEE.xlsx"),
+        Path("/mnt/data/Modelo OEE - Copia.xlsx"),
+    ]
+
+    for p in candidates:
+        try:
+            if p.exists():
+                return str(p)
+        except Exception:
+            continue
+
+    raise FileNotFoundError(
+        "No encontré el archivo 'Modelo OEE.xlsx'. Déjalo en la misma carpeta de app.py o en templates_excel/."
+    )
+
+
+def _thb_days_for_period_export(df_verif: pd.DataFrame, period: str, period_value: str, operator: str = "") -> list[pd.Timestamp]:
+    cols = _resolve_thb_cols(df_verif)
+    if not cols.col_fecha:
+        return []
+
+    dt = _thb_build_dt(df_verif, cols.col_fecha, cols.col_hora)
+    pv = _thb_normalize_period_value(period, period_value)
+    r0, r1 = _thb_period_bounds(period, pv)
+    if r0 is None or r1 is None:
+        return []
+
+    m = dt.notna() & (dt >= r0) & (dt < r1)
+
+    op = (operator or "").strip()
+    if op and op.lower() != "general" and cols.col_nombre and cols.col_nombre in df_verif.columns:
+        m = m & df_verif[cols.col_nombre].astype(str).str.strip().eq(op)
+
+    days = (
+        pd.to_datetime(dt.loc[m], errors="coerce")
+        .dropna()
+        .dt.normalize()
+        .drop_duplicates()
+        .sort_values()
+        .tolist()
+    )
+    return [pd.Timestamp(d) for d in days]
+
+
+def _thb_paid_hours_for_export_row(hour_int: int) -> float:
+    """
+    Tiempo pagado por hora según la regla solicitada:
+      - 08:00 a 09:00 -> 0.75 h
+      - 13:00 a 14:00 -> 0.50 h
+      - resto         -> 1.00 h
+    """
+    try:
+        hh = int(hour_int)
+    except Exception:
+        hh = -1
+
+    if hh == 8:
+        return 0.75
+    if hh == 13:
+        return 0.50
+    return 1.00
+
+ARNES_TO_REFERENCIA = {
+    "50000120": "RIDUCO",
+    "50010521": "SOFTECON",
+    "50020120": "RIDUCO",
+    "50020425": "CHR",
+    "50020521": "SOFTECON",
+    "50030521": "SOFTECON",
+    "50040521": "SOFTECON",
+    "50050521": "SOFTECON",
+    "50060820": "CR4 - 160",
+    "50070521": "SOFTECON",
+    "50080521": "SOFTECON",
+    "50090521": "SOFTECON",
+    "50130625": "CR4",
+    "50211025": "NKD",
+    "50221125": "CR4 - NUEVA",
+    "50231025": "CHR",
+    "50301021": "SPECIAL",
+    "50001221": "HERO",
+}
+
+def _clean_arnes_code(x: object) -> str:
+    if x is None:
+        return ""
+    s = str(x).strip()
+    if not s or s.lower() in ("nan", "none"):
+        return ""
+    s = re.sub(r"\.0$", "", s)
+    s = re.sub(r"\s+", "", s)
+    return s
+
+def _map_referencia_from_arnes(codigo_arnes: object) -> str:
+    code = _clean_arnes_code(codigo_arnes)
+    return ARNES_TO_REFERENCIA.get(code, "")
+
+def _thb_export_rows_for_day(
+    df_verif: pd.DataFrame,
+    day: pd.Timestamp,
+    buckets: list[dict],
+    operator: str = "",
+) -> list[dict]:
+    cols = _resolve_thb_cols(df_verif)
+    if not cols.col_fecha:
+        return []
+
+    dt = _thb_build_dt(df_verif, cols.col_fecha, cols.col_hora)
+    day0 = pd.Timestamp(day).normalize()
+    day1 = day0 + pd.Timedelta(days=1)
+
+    m = dt.notna() & (dt >= day0) & (dt < day1)
+
+    op_fixed = (operator or "").strip()
+    if op_fixed and op_fixed.lower() != "general" and cols.col_nombre and cols.col_nombre in df_verif.columns:
+        m = m & df_verif[cols.col_nombre].astype(str).str.strip().eq(op_fixed)
+
+    sub = df_verif.loc[m].copy()
+    dt_sub = dt.loc[m].copy()
+
+    c_total = cols.col_total_piezas if cols.col_total_piezas in sub.columns else None
+    c_buenas = cols.col_piezas_buenas if cols.col_piezas_buenas in sub.columns else None
+    c_nombre = cols.col_nombre if cols.col_nombre in sub.columns else None
+    c_arnes = cols.col_arnes if cols.col_arnes in sub.columns else None
+
+    bucket_by_hour = {}
+    for b in (buckets or []):
+        try:
+            hh = int(str(b.get("hour") or "0"))
+        except Exception:
+            continue
+        bucket_by_hour[hh] = b
+
+    hours = sorted(bucket_by_hour.keys())
+    if not hours and not sub.empty:
+        hours = sorted(pd.to_datetime(dt_sub, errors="coerce").dropna().dt.hour.unique().tolist())
+
+    rows = []
+    last_operator = op_fixed if (op_fixed and op_fixed.lower() != "general") else "General"
+
+    for hh in hours:
+        h0 = day0 + pd.Timedelta(hours=int(hh))
+        h1 = h0 + pd.Timedelta(hours=1)
+
+        dt_hour = pd.to_datetime(dt_sub, errors="coerce")
+        in_hour = dt_hour.notna() & (dt_hour >= h0) & (dt_hour < h1)
+        hour_df = sub.loc[in_hour].copy()
+
+        planned_calc = 0
+        cut = 0
+
+        if c_total:
+            tot = pd.to_numeric(hour_df[c_total], errors="coerce").fillna(0).astype(float)
+        else:
+            tot = pd.Series([], dtype="float64")
+
+        if c_buenas:
+            buenas = pd.to_numeric(hour_df[c_buenas], errors="coerce").fillna(0).astype(float)
+        else:
+            buenas = pd.Series([], dtype="float64")
+
+        if not tot.empty:
+            if not buenas.empty:
+                planned_calc = int(tot.where(tot > 0, buenas).sum())
+            else:
+                planned_calc = int(tot.sum())
+
+        if not buenas.empty:
+            cut = int(buenas.sum())
+        elif not tot.empty:
+            cut = int(tot.sum())
+
+        # ✅ pedido del usuario: No conformes = cortados - planeados
+        reject = max(0, int(cut) - int(planned_calc))
+
+        if c_nombre and not hour_df.empty and not op_fixed:
+            ops = hour_df[c_nombre].dropna().astype(str).str.strip()
+            ops = ops[ops.ne("")]
+            if not ops.empty:
+                try:
+                    last_operator = ops.mode().iloc[0]
+                except Exception:
+                    last_operator = ops.iloc[0]
+
+        b = bucket_by_hour.get(int(hh), {})
+
+        # ✅ pedido del usuario: tiempos perdidos NO deben sumar comida.
+        lost_sec = int(b.get("otherDeadSec", 0) or 0)
+
+        # Tiempo de ciclo nominal ponderado (h/uni)
+        tcnp_sec = float(b.get("tcnpSec", 0.0) or 0.0)
+
+        referencias = []
+
+        if c_arnes and c_arnes in hour_df.columns and not hour_df.empty:
+            vals_arnes = hour_df[c_arnes].dropna().astype(str).str.strip()
+            vals_arnes = vals_arnes[vals_arnes.ne("")]
+
+            vistos = set()
+            for arnes_raw in vals_arnes.tolist():
+                codigo_arnes = _clean_arnes_code(arnes_raw)
+                if not codigo_arnes:
+                    continue
+
+                ref = _map_referencia_from_arnes(codigo_arnes)
+                if not ref:
+                    continue
+
+                ref_key = ref.strip().upper()
+                if ref_key in vistos:
+                    continue
+
+                vistos.add(ref_key)
+                referencias.append(ref.strip())
+
+        referencia = ", ".join(referencias)
+
+        rows.append({
+            "fecha": day0.to_pydatetime(),
+            "referencia": referencia,
+            "equipo": "THB",
+            "operario": (op_fixed if (op_fixed and op_fixed.lower() != "general") else last_operator) or "General",
+            "inicio": h0.to_pydatetime(),
+            "fin": h1.to_pydatetime(),
+            # ✅ pedido del usuario: Producción Planeada vacía
+            "pp": None,
+            "pn": int(cut),
+            "rx": int(reject),
+            "tp_h": float(_thb_paid_hours_for_export_row(int(hh))),
+            "tx_h": round(lost_sec / 3600.0, 3),
+            "tc_h_uni": (tcnp_sec / 3600.0) if tcnp_sec > 0 else None,
+        })
+
+    return rows
+
+
+def _ensure_thb_template_capacity(ws, needed_rows: int, body_start: int = 7, body_end: int = 38, total_row: int = 40):
+    """
+    Amplía el cuerpo si alguna vez se necesitaran más filas que las del modelo.
+    """
+    from copy import copy
+
+    capacity = int(body_end - body_start + 1)
+    if needed_rows <= capacity:
+        return body_end, total_row
+
+    extra = int(needed_rows - capacity)
+    ws.insert_rows(total_row, amount=extra)
+
+    src_row = body_end
+    for i in range(extra):
+        trg_row = body_end + 1 + i
+        for col in range(1, 23):  # A:V
+            src = ws.cell(src_row, col)
+            dst = ws.cell(trg_row, col)
+            if src.has_style:
+                dst._style = copy(src._style)
+            if src.number_format:
+                dst.number_format = src.number_format
+            if src.font:
+                dst.font = copy(src.font)
+            if src.fill:
+                dst.fill = copy(src.fill)
+            if src.border:
+                dst.border = copy(src.border)
+            if src.alignment:
+                dst.alignment = copy(src.alignment)
+            if src.protection:
+                dst.protection = copy(src.protection)
+
+        src_h = ws.row_dimensions[src_row].height
+        if src_h is not None:
+            ws.row_dimensions[trg_row].height = src_h
+
+    return body_end + extra, total_row + extra
+
+
+def _clear_thb_template_body(ws, body_start: int, body_end: int):
+    for row in range(body_start, body_end + 1):
+        for col in range(1, 23):  # A:V
+            ws.cell(row, col).value = None
+
+
+def _write_thb_template_totals(ws, body_start: int, body_end: int, total_row: int):
+    ws.cell(total_row, 2).value = "TOTAL"
+
+    # ✅ Producción Planeada queda vacía también en total
+    ws.cell(total_row, 7).value = None
+
+    ws.cell(total_row, 8).value = f'=SUM(H{body_start}:H{body_end})'
+    ws.cell(total_row, 9).value = f'=SUM(I{body_start}:I{body_end})'
+    ws.cell(total_row, 10).value = f'=SUM(J{body_start}:J{body_end})'
+    ws.cell(total_row, 11).value = f'=SUM(K{body_start}:K{body_end})'
+    ws.cell(total_row, 12).value = f'=SUM(L{body_start}:L{body_end})'
+    ws.cell(total_row, 13).value = f'=SUM(M{body_start}:M{body_end})'
+    ws.cell(total_row, 14).value = f'=SUM(N{body_start}:N{body_end})'
+    ws.cell(total_row, 15).value = None
+    ws.cell(total_row, 16).value = f'=SUM(P{body_start}:P{body_end})'
+    ws.cell(total_row, 17).value = f'=SUM(Q{body_start}:Q{body_end})'
+    ws.cell(total_row, 18).value = f'=IFERROR(M{total_row}/K{total_row},"")'
+    ws.cell(total_row, 19).value = f'=IFERROR(P{total_row}/M{total_row},"")'
+    ws.cell(total_row, 20).value = f'=IFERROR(Q{total_row}/P{total_row},"")'
+    ws.cell(total_row, 21).value = f'=IFERROR(Q{total_row}/K{total_row},"")'
+    ws.cell(total_row, 22).value = f'=IFERROR(H{total_row}/G{total_row},"")'
+
+
+def _build_thb_export_workbook(day_exports: list[dict], period: str) -> io.BytesIO:
+    from openpyxl import load_workbook
+    from openpyxl.styles import Border, Side, PatternFill
+
+    template_path = _get_thb_export_template_path()
+    base_wb = load_workbook(template_path)
+
+    if "Por hora" not in base_wb.sheetnames:
+        raise RuntimeError("El modelo OEE debe tener una hoja llamada 'Por hora'.")
+
+    # hoja maestra intacta
+    master_ws = base_wb["Por hora"]
+
+    # crear TODAS las hojas como copia de la maestra
+    sheets_to_fill = []
+    for item in day_exports:
+        ws = base_wb.copy_worksheet(master_ws)
+        ws.title = _safe_xlsx_sheet_title(item["sheet_title"])
+        sheets_to_fill.append((ws, item))
+
+    def _clear_row_values(ws, row_idx: int, col_start: int = 1, col_end: int = 22):
+        for c in range(col_start, col_end + 1):
+            ws.cell(row_idx, c).value = None
+
+    def _clear_rows_values(ws, row_start: int, row_end: int, col_start: int = 1, col_end: int = 22):
+        for r in range(row_start, row_end + 1):
+            for c in range(col_start, col_end + 1):
+                ws.cell(r, c).value = None
+
+    def _clear_rows_borders(ws, row_start: int, row_end: int, col_start: int = 1, col_end: int = 22):
+        empty_border = Border()
+        for r in range(row_start, row_end + 1):
+            for c in range(col_start, col_end + 1):
+                ws.cell(r, c).border = empty_border
+
+    fill_gray = PatternFill(fill_type="solid", fgColor="D9D9D9")
+    fill_white = PatternFill(fill_type="solid", fgColor="FFFFFF")
+
+    for ws, item in sheets_to_fill:
+        rows = item.get("rows", []) or []
+
+        body_start = 7
+        body_end = 38
+        total_row_template = 40
+
+        # activar filtros en fila 6
+        ws.auto_filter.ref = f"A6:V6"
+
+
+
+        body_end, _ = _ensure_thb_template_capacity(
+            ws,
+            needed_rows=len(rows),
+            body_start=body_start,
+            body_end=body_end,
+            total_row=total_row_template,
+        )
+
+        _clear_thb_template_body(ws, body_start, body_end)
+        _clear_rows_values(ws, body_start, max(ws.max_row, body_end + 10), 1, 22)
+        _clear_rows_borders(ws, body_start, max(ws.max_row, body_end + 10), 1, 22)
+
+        # escribir filas
+        for idx, row in enumerate(rows, start=body_start):
+            ws.cell(idx, 1).value = row["fecha"]
+            ws.cell(idx, 2).value = row.get("referencia", "") or ""
+            ws.cell(idx, 3).value = row.get("equipo", "THB") or "THB"
+            ws.cell(idx, 4).value = row.get("operario", "") or ""
+            ws.cell(idx, 5).value = row["inicio"]
+            ws.cell(idx, 6).value = row["fin"]
+
+            # Producción Planeada vacía
+            ws.cell(idx, 7).value = None
+
+            ws.cell(idx, 8).value = row["pn"]
+            ws.cell(idx, 9).value = row["rx"]
+            ws.cell(idx, 10).value = f'=IFERROR(H{idx}-I{idx},"")'
+            ws.cell(idx, 11).value = row["tp_h"]
+            ws.cell(idx, 12).value = row["tx_h"]
+            ws.cell(idx, 13).value = f'=IFERROR(K{idx}-L{idx},"")'
+
+            if row["tc_h_uni"] in (None, 0):
+                ws.cell(idx, 14).value = None
+            else:
+                ws.cell(idx, 14).value = row["tc_h_uni"]
+
+            ws.cell(idx, 15).value = f'=IFERROR(1/N{idx},"")'
+            ws.cell(idx, 16).value = f'=IF(M{idx}=0,"",IFERROR(IF($P$2=1,H{idx}/O{idx},H{idx}*N{idx}),""))'
+            ws.cell(idx, 17).value = f'=IFERROR(IF($Q$2=1,J{idx}/O{idx},J{idx}*N{idx}),"")'
+            ws.cell(idx, 18).value = f'=IFERROR(M{idx}/K{idx},"")'
+            ws.cell(idx, 19).value = f'=IFERROR(P{idx}/M{idx},"")'
+            ws.cell(idx, 20).value = f'=IFERROR(Q{idx}/P{idx},"")'
+            ws.cell(idx, 21).value = f'=IFERROR(Q{idx}/K{idx},"")'
+            ws.cell(idx, 22).value = f'=IFERROR(H{idx}/G{idx},"")'
+
+            ws.cell(idx, 1).number_format = "dd/mm/yyyy"
+            ws.cell(idx, 5).number_format = "hh:mm"
+            ws.cell(idx, 6).number_format = "hh:mm"
+            ws.cell(idx, 11).number_format = "0.00"
+            ws.cell(idx, 12).number_format = "0.00"
+            ws.cell(idx, 14).number_format = "0.0000"
+
+            # franjas alternadas
+            row_fill = fill_gray if ((idx - body_start) % 2 == 0) else fill_white
+            for col in range(1, 23):
+                ws.cell(idx, col).fill = row_fill
+
+        # TOTAL con una fila en blanco antes
+        last_data_row = body_start + len(rows) - 1 if rows else body_start - 1
+        blank_row = max(body_start, last_data_row + 1)
+        total_row = blank_row + 1
+
+        _clear_row_values(ws, blank_row, 1, 22)
+        _clear_row_values(ws, total_row, 1, 22)
+
+        _write_thb_template_totals(ws, body_start, max(last_data_row, body_start), total_row)
+
+        # quitar palabra TOTAL
+        ws.cell(total_row, 2).value = None
+
+        ws.cell(total_row, 11).number_format = "0.00"
+        ws.cell(total_row, 12).number_format = "0.00"
+        ws.cell(total_row, 14).number_format = "0.0000"
+
+        # línea del total
+        thin_black = Side(style="thin", color="000000")
+        for c in range(8, 23):
+            ws.cell(total_row, c).border = Border(top=thin_black, bottom=thin_black)
+
+    # borrar hoja maestra original
+    base_wb.remove(master_ws)
+
+    if base_wb.worksheets:
+        base_wb.active = 0
+
+    bio = io.BytesIO()
+    base_wb.save(bio)
+    bio.seek(0)
+    return bio
+
+
+@app.get("/export_thb_excel")
+def export_thb_excel():
+    try:
+        filename = (request.args.get("filename") or "").strip()
+        machine = (request.args.get("machine") or "THB").strip().upper()
+        period = (request.args.get("period") or "day").strip().lower()
+        period_value = (request.args.get("period_value") or "").strip()
+        operator = (request.args.get("operator") or "").strip()
+
+        if machine != "THB":
+            return jsonify({"ok": False, "error": "Esta exportación solo aplica para THB."}), 400
+        if not filename:
+            return jsonify({"ok": False, "error": "Falta filename."}), 400
+        if not period_value:
+            return jsonify({"ok": False, "error": "Falta period_value."}), 400
+
+        df_verif, df_paradas = _load_thb_data_for_export(filename)
+        days = _thb_days_for_period_export(df_verif, period, period_value, operator=operator)
+
+        if not days:
+            return jsonify({"ok": False, "error": "No se encontraron días con datos para exportar."}), 404
+
+        day_exports = []
+        for day in days:
+            result_day = analyze_thb(
+                df_verif,
+                period="day",
+                period_value=day.strftime("%Y-%m-%d"),
+                machine="THB",
+                operator=operator,
+                time_start="",
+                time_end="",
+                df_paradas=df_paradas,
+            )
+
+            if not isinstance(result_day, dict) or result_day.get("status") != "ok":
+                continue
+
+            rows = _thb_export_rows_for_day(
+                df_verif=df_verif,
+                day=day,
+                buckets=result_day.get("kpis", {}).get("hourly_buckets", []),
+                operator=operator,
+            )
+            if not rows:
+                continue
+
+            day_exports.append({
+                "sheet_title": day.strftime("%Y-%m-%d"),
+                "rows": rows,
+            })
+
+        if not day_exports:
+            return jsonify({"ok": False, "error": "No hubo datos exportables para los días seleccionados."}), 404
+
+        period_tag = {
+            "day": period_value,
+            "week": period_value.replace("/", "-"),
+            "month": period_value,
+        }.get(period, period_value)
+
+        download_name = f"THB_{period}_{period_tag}.xlsx".replace("/", "-").replace("\\", "-")
+        payload = _build_thb_export_workbook(day_exports, period)
+
+        resp = send_file(
+            payload,
+            as_attachment=True,
+            download_name=download_name,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        return resp
+
+    except Exception as e:
+        app.logger.exception("export_thb_excel failed")
+        return jsonify({"ok": False, "error": f"Error exportando Excel THB: {e}"}), 500
 
 
 @app.post("/run_analysis_api")
@@ -2699,8 +3227,8 @@ def run_analysis():
 # MAIN
 # =========================
 if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 5000))
-    app.run(debug=False, host="0.0.0.0", port=port)
+    import webbrowser
+    webbrowser.open("http://127.0.0.1:5000")
+    app.run(debug=False, host="127.0.0.1", port=5000)
 
 

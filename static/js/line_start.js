@@ -2018,13 +2018,13 @@ function renderProdHour(result){
       </div>
       <div class="ph-unit">${(machineU === "APLICACION" || machineU === "UNION") ? "Crimpados" : "Circuitos"}</div>
       ${metersHtml}
-      ${(machineU === "HP") ? "" : `
+      ${(machineU === "THB") ? `
         <div class="ph-nom-box">
           ${tcnpHtml}
           ${vnHtml}
           ${tnomHtml}
         </div>
-      `}
+      ` : ""}
 
       <div class="ph-badges">
         ${timeBadges}
@@ -2091,7 +2091,44 @@ function renderProdHour(result){
 
 
 
+function buildThbExportUrl(result){
+  if(!URLS.export_thb_excel) return "";
 
+  const p = new URLSearchParams();
+  p.set("filename", _cfgStr(CFG.filename));
+  p.set("machine", "THB");
+  p.set("period", String(result?.period || document.getElementById("periodInput")?.value || "day"));
+  p.set("period_value", String(result?.period_value || getPeriodValue() || ""));
+
+  const op = String(document.getElementById("operatorSelect")?.value || result?.operator || "General").trim();
+  if(op) p.set("operator", op);
+
+  p.set("_", String(Date.now()));
+  return `${URLS.export_thb_excel}?${p.toString()}`;
+}
+
+function updateThbExportAction(result){
+  const box = document.getElementById("inlineActions");
+  const callout = document.getElementById("thbDownloadCallout");
+  if(!box) return;
+
+  const isThb = String(result?.machine || "").toUpperCase() === "THB";
+  if(!isThb || !URLS.export_thb_excel){
+    box.style.display = "none";
+    box.innerHTML = "";
+    if(callout) callout.style.display = "none";
+    return;
+  }
+
+  const url = buildThbExportUrl(result);
+
+  box.innerHTML = `
+    <a class="btn thb-download-callout-link" href="${escHtml(url)}">Descargar Excel THB</a>
+  `;
+  box.style.display = "flex";
+
+  if(callout) callout.style.display = "block";
+}
 
 
 // =========================
@@ -2105,8 +2142,10 @@ function renderInlineKPIs(result){
   const paretoTtl = document.getElementById("inlineParetoTitle");
   const dbg = document.getElementById("inlineDebug");
   const dbgPre = document.getElementById("inlineDebugPre");
+  const actions = document.getElementById("inlineActions");
 
   if(!box || !hdr || !ttl || !kpi || !paretoTtl || !dbg || !dbgPre) return;
+  if(actions){ actions.style.display = "none"; actions.innerHTML = ""; }
 
   box.style.display = "block";
   dbg.style.display = "none";
@@ -2120,13 +2159,8 @@ function renderInlineKPIs(result){
   destroyPareto();
   hideProdHour();
 
-  hdr.innerHTML = `
-    Máquina: <b>${escHtml(result.machine||"")}</b>
-    ${result.period && result.period_value ? `— Periodo: <b>${escHtml(result.period)}</b> (<b>${escHtml(result.period_value)}</b>)` : ""}
-    ${result.operator ? `— Operaria: <b>${escHtml(result.operator)}</b>` : ""}
-    ${result.time_start && result.time_end ? `— Hora: <b>${escHtml(result.time_start)}</b> a <b>${escHtml(result.time_end)}</b>` : ""}
-    ${result.rows_total != null ? `— Filas: <b>${escHtml(result.rows_total)}</b>` : ""}
-  `;
+  hdr.innerHTML = ``;
+  hdr.style.display = "none";
 
   ttl.textContent = periodTitle(result.period);
   ttl.style.display = "block";
@@ -2137,78 +2171,54 @@ function renderInlineKPIs(result){
     dbgPre.textContent = JSON.stringify(result, null, 2);
     return;
   }
+
   const m = String(result.machine || "").toUpperCase();
 
   let order = [
-    { key: "Circuitos Cortados",            cls: "kpi-green",  span: "kpi-row-3" },
-    { key: "Circuitos Planeados",           cls: "kpi-cyan",   span: "kpi-row-3" },
-    { key: "Circuitos No Conformes",        cls: "kpi-red",    span: "kpi-row-3" },
+    { key: "Circuitos Cortados",     cls: "kpi-green",  span: "kpi-row-3" },
+    { key: "Circuitos Planeados",    cls: "kpi-cyan",   span: "kpi-row-3" },
+    { key: "Circuitos No Conformes", cls: "kpi-red",    span: "kpi-row-3" },
 
-    { key: "Tiempos Perdidos", cls: "kpi-blue",   span: "kpi-row-2" },
-    { key: "Tiempo Trabajado",               cls: "kpi-green2", span: "kpi-row-2" },
+    { key: "Tiempos Perdidos",       cls: "kpi-blue",   span: "kpi-row-2" },
+    { key: "Tiempo Trabajado",       cls: "kpi-green2", span: "kpi-row-2" },
 
-    { key: "Metros Planeados",              cls: "kpi-purple", span: "kpi-row-3" },
-    { key: "Metros Extras",                 cls: "kpi-blue2",  span: "kpi-row-3" },
-    { key: "Metros Cortados",               cls: "kpi-cyan2",  span: "kpi-row-3" },
+    { key: "Metros Planeados",       cls: "kpi-purple", span: "kpi-row-3" },
+    { key: "Metros Extras",          cls: "kpi-blue2",  span: "kpi-row-3" },
+    { key: "Metros Cortados",        cls: "kpi-cyan2",  span: "kpi-row-3" },
   ];
 
-  // ✅ SOLO THB: poner Horas/Hombre en la fila de tiempos, al lado de "Otro Tiempo"
-    if(m === "THB"){
-      order = [
-        { key: "Circuitos Cortados",     cls: "kpi-green",  span: "kpi-row-3" },
-        { key: "Circuitos Planeados",    cls: "kpi-cyan",   span: "kpi-row-3" },
-        { key: "Circuitos No Conformes", cls: "kpi-red",    span: "kpi-row-3" },
+  if(m === "THB"){
+    order = [
+      { key: "OEE",              cls: "kpi-blue",   span: "kpi-row-1" },
+      { key: "Metros Planeados", cls: "kpi-purple", span: "kpi-row-3" },
+      { key: "Metros Extras",    cls: "kpi-blue2",  span: "kpi-row-3" },
+      { key: "Metros Cortados",  cls: "kpi-cyan2",  span: "kpi-row-3" },
+    ];
+  }
 
-        { key: "Tiempo Pagado",                  cls: "",           span: "kpi-row-4" }, // 3 cols (al lado)
-        { key: "Tiempos Perdidos", cls: "kpi-blue",   span: "kpi-row-2" }, // 6 cols
-        { key: "Tiempo Trabajado",               cls: "kpi-green2", span: "kpi-row-4" }, // 3 cols
+  if(m === "HP"){
+    order = [
+      { key: "Circuitos Cortados",     cls: "kpi-green",  span: "kpi-row-3" },
+      { key: "Circuitos Planeados",    cls: "kpi-cyan",   span: "kpi-row-3" },
+      { key: "Circuitos No Conformes", cls: "kpi-red",    span: "kpi-row-3" },
 
-        { key: "Metros Planeados",  cls: "kpi-purple", span: "kpi-row-4q" },
-        { key: "Metros Extras",     cls: "kpi-blue2",  span: "kpi-row-4q" },
-        { key: "Metros Cortados",   cls: "kpi-cyan2",  span: "kpi-row-4q" },
-        { key: "Velocidad Nominal", cls: "",          span: "kpi-row-4q" },
+      { key: "Horas Disponibles",      cls: "",           span: "kpi-row-4" },
+      { key: "Tiempos Perdidos",       cls: "kpi-blue",   span: "kpi-row-2" },
+      { key: "Tiempo Trabajado",       cls: "kpi-green2", span: "kpi-row-4" },
+    ];
+  }
 
-        // 🔻 fila inferior (3 KPIs en una fila)
-        { key: "Tiempo de Ciclo",  cls: "",         span: "kpi-row-3 kpi-narrow" },
-        { key: "OEE",              cls: "kpi-blue", span: "kpi-row-3 kpi-wide" },
-        { key: "Tiempo De Corte",  cls: "",         span: "kpi-row-3 kpi-narrow" },
-      ];
-    }
+  if(m === "APLICACION" || m === "UNION"){
+    order = [
+      { key: "Crimpados",         cls: "kpi-green",  span: "kpi-row-3" },
+      { key: "Crimpados Carrete", cls: "kpi-cyan",   span: "kpi-row-3" },
+      { key: "Crimpados Manual",  cls: "kpi-red",    span: "kpi-row-3" },
 
-      // ✅ SOLO HP: Horas Disponibles en la fila de tiempos
-  // ✅ SOLO HP: ORDEN -> Horas Disponibles | Tiempos Perdidos | Tiempo Trabajado
-    if(m === "HP"){
-      order = [
-        { key: "Circuitos Cortados",     cls: "kpi-green",  span: "kpi-row-3" },
-        { key: "Circuitos Planeados",    cls: "kpi-cyan",   span: "kpi-row-3" },
-        { key: "Circuitos No Conformes", cls: "kpi-red",    span: "kpi-row-3" },
-
-        { key: "Horas Disponibles",      cls: "",           span: "kpi-row-4" },  // 👈 1
-        { key: "Tiempos Perdidos",       cls: "kpi-blue",   span: "kpi-row-2" },  // 👈 2
-        { key: "Tiempo Trabajado",       cls: "kpi-green2", span: "kpi-row-4" },  // 👈 3
-      ];
-    }
-
-
-
-
-
-    if(m === "APLICACION" || m === "UNION"){
-      order = [
-        { key: "Crimpados",         cls: "kpi-green", span: "kpi-row-3" },
-        { key: "Crimpados Carrete", cls: "kpi-cyan",  span: "kpi-row-3" },
-        { key: "Crimpados Manual",  cls: "kpi-red",   span: "kpi-row-3" },
-
-        // ✅ Fila de tiempos (como THB/HP): izquierda 3 cols, centro 6 cols, derecha 3 cols
-        { key: "Horas activas",                 cls: "",          span: "kpi-row-4" }, // ✅ arriba izq
-        { key: "Tiempos Perdidos", cls: "kpi-purple",span: "kpi-row-2" }, // ✅ grande centro
-        { key: "Tiempo Trabajado",               cls: "kpi-green2",span: "kpi-row-4" }, // ✅ arriba der
-
-        { key: "Paradas planeadas (HH:MM)",    cls: "kpi-cyan2", span: "kpi-row-2" },
-        { key: "Paradas no planeadas (HH:MM)", cls: "kpi-blue2", span: "kpi-row-2" },
-      ];
-    }
-
+      { key: "Tiempo Pagado",     cls: "",           span: "kpi-row-4" },
+      { key: "Tiempos Perdidos",  cls: "kpi-purple", span: "kpi-row-2" },
+      { key: "Tiempo Trabajado",  cls: "kpi-green2", span: "kpi-row-4" },
+    ];
+  }
 
   order.forEach(item => {
     if(Object.prototype.hasOwnProperty.call(ui, item.key)){
@@ -2216,18 +2226,73 @@ function renderInlineKPIs(result){
     }
   });
 
-  for(const [kk, vv] of Object.entries(ui)){
-    if(!order.some(o => o.key === kk)){
-      kpi.appendChild(makeCard(kk, vv, "", ""));
-    }
+  const hiddenKpis = Object.entries(ui).filter(([kk]) => !order.some(o => o.key === kk));
+
+  if(hiddenKpis.length){
+    const detailsWrap = document.createElement("div");
+    detailsWrap.style.gridColumn = "1 / -1";
+    detailsWrap.style.marginTop = "10px";
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn secondary";
+    btn.textContent = "Ver detalle de indicadores";
+
+    const extraGrid = document.createElement("div");
+    extraGrid.className = "kpi-grid";
+    extraGrid.style.display = "none";
+    extraGrid.style.marginTop = "12px";
+
+    const detailOrder = [
+      // fila 1
+      { key: "Producción Buena",        cls: "kpi-green",  span: "kpi-row-3" },
+      { key: "Producción Total",        cls: "kpi-cyan",   span: "kpi-row-3" },
+      { key: "Producción con Defectos", cls: "kpi-red",    span: "kpi-row-3" },
+
+      // fila 2
+      { key: "Tiempo Pagado",           cls: "kpi-blue",   span: "kpi-row-2" },
+      { key: "Tiempo Perdido",          cls: "kpi-purple", span: "kpi-row-2" },
+      { key: "Tiempos Perdidos",        cls: "kpi-purple", span: "kpi-row-2" },
+
+      // fila 3
+      { key: "Tiempo Trabajado",        cls: "kpi-green2", span: "kpi-row-4" },
+      { key: "Tiempo De Corte",         cls: "kpi-cyan2",  span: "kpi-row-4" },
+      { key: "Tiempo de Corte",         cls: "kpi-cyan2",  span: "kpi-row-4" },
+      { key: "Tiempo de Ciclo",         cls: "",           span: "kpi-row-4" },
+      { key: "Velocidad Nominal",       cls: "kpi-blue2",  span: "kpi-row-4" },
+    ];
+
+    const used = new Set();
+
+    detailOrder.forEach(item => {
+      if(Object.prototype.hasOwnProperty.call(ui, item.key) && !used.has(item.key)){
+        extraGrid.appendChild(makeCard(item.key, ui[item.key], item.cls, item.span));
+        used.add(item.key);
+      }
+    });
+
+    Object.entries(ui).forEach(([kk, vv]) => {
+      if(order.some(o => o.key === kk)) return;
+      if(used.has(kk)) return;
+      extraGrid.appendChild(makeCard(kk, vv, "", "kpi-row-4"));
+    });
+
+    btn.addEventListener("click", () => {
+      const open = extraGrid.style.display !== "none";
+      extraGrid.style.display = open ? "none" : "grid";
+      btn.textContent = open ? "Ver detalle de indicadores" : "Ocultar detalle de indicadores";
+    });
+
+    detailsWrap.appendChild(btn);
+    detailsWrap.appendChild(extraGrid);
+    kpi.appendChild(detailsWrap);
   }
 
-    // ✅ HP: forzar cierre de No registrado con Horas Disponibles
   if(m === "HP" || m === "THB"){
     adjustHpNoRegistradoUI();
   }
 
-
+  updateThbExportAction(result);
   renderHpTimesLine(result);
 
   const mu = String(result.machine || "").toUpperCase();

@@ -285,6 +285,18 @@
 
           <div id="inlineResults" class="card" style="margin-top:14px; display:none;">
             <div id="inlineHeader" class="subtitle" style="margin:0 0 6px 0;"></div>
+            <div id="inlineTopBar" class="inline-topbar">
+              <div class="inline-topbar-left">
+                <p id="thbDownloadCallout" class="thb-download-callout" style="display:none;">
+                  Accede al análisis detallado de indicadores, producción y tiempos operativos por día, semana o mes.
+                  <span class="thb-download-callout-strong">Haz clic aquí y explora toda la información:</span>
+                </p>
+              </div>
+
+              <div class="inline-topbar-right">
+                <div id="inlineActions"></div>
+              </div>
+            </div>
             <div id="inlineTitle" class="inline-title" style="display:none;"></div>
 
             <div id="inlineKpis" class="kpi-grid"></div>
@@ -337,14 +349,6 @@
 
             <div id="prodHourWrap" class="card" style="margin-top:12px; padding:14px; display:none;">
               <div id="prodHourGrid" class="prod-hour-grid"></div>
-            </div>
-
-            <div id="thbLotesTitle" class="inline-title" style="display:none; margin-top:18px;">
-              Lotes acumulados
-            </div>
-
-            <div id="thbLotesWrap" class="card" style="margin-top:12px; padding:14px; display:none;">
-              <div id="thbLotesTableBox"></div>
             </div>
 
             <div id="thbTarjetasModal" class="thb-modal" style="display:none;">
@@ -443,6 +447,7 @@ document.addEventListener("DOMContentLoaded", () => {
       thb_filter_options: {{ url_for('thb_filter_options')|tojson }},
       app_filter_options: {{ url_for('app_filter_options')|tojson }},
       run_analysis_api: {{ url_for('run_analysis_api')|tojson }},
+      export_thb_excel: {{ url_for('export_thb_excel')|tojson }},
       thb_tarjetas_hour: {{ url_for('thb_tarjetas_hour')|tojson }}
     }
   };

@@ -2312,11 +2312,11 @@ period=period,
     kpis["oee_rendimiento"] = float(rendimiento)
 
     ui = {
-        "Circuitos Cortados": f"{kpis['circuitos_cortados']:,}".replace(",", "."),
-        "Circuitos Planeados": f"{kpis['circuitos_planeados']:,}".replace(",", "."),
-        "Circuitos No Conformes": f"{kpis['circuitos_no_conformes']:,}".replace(",", "."),
+        "Producción Total": f"{kpis['circuitos_cortados']:,}".replace(",", "."),
+        "Producción Buena": f"{kpis['circuitos_planeados']:,}".replace(",", "."),
+        "Producción con Defectos": f"{kpis['circuitos_no_conformes']:,}".replace(",", "."),
 
-        "Tiempos Perdidos": (
+        "Tiempo Perdido": (
             f"{kpis['otro_tiempo_hhmm']}||"
             f"105: {kpis['parada_105_hhmm']} | "
             f"No registrado: {kpis['no_registrado_hhmm']} | "
@@ -2337,9 +2337,9 @@ period=period,
 
         "OEE": (
             f"{(kpis.get('oee', 0.0) * 100):.1f}%||"
-            f"Rendimiento: {(kpis.get('oee_rendimiento', 0.0) * 100):.1f}% | "
-            f"Disponibilidad: {(kpis.get('oee_disponibilidad', 0.0) * 100):.1f}% | "
-            f"Calidad: {(kpis.get('oee_calidad', 0.0) * 100):.1f}%"
+            f"Indice de Eficiencia Operacional: {(kpis.get('oee_rendimiento', 0.0) * 100):.1f}% | "
+            f"Indice de Disponibilidad: {(kpis.get('oee_disponibilidad', 0.0) * 100):.1f}% | "
+            f"Indice de Calidad: {(kpis.get('oee_calidad', 0.0) * 100):.1f}%"
         ),
 
 
