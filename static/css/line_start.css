@@ -3462,9 +3462,13 @@ img{
   }
 
   /* ---------- KPI grid ---------- */
-  #inlineKpis,
-  .kpi-grid{
+  #inlineKpis{
     display:grid !important;
+    grid-template-columns:1fr !important;
+    gap:12px !important;
+  }
+
+  #inlineKpis .kpi-grid{
     grid-template-columns:1fr !important;
     gap:12px !important;
   }
@@ -3588,4 +3592,19 @@ img{
   .thb-download-callout{
     font-size:15px !important;
   }
+}
+
+/* FIX: detalle de indicadores debe respetar oculto/visible en celular */
+#inlineKpis .kpi-grid{
+  display: none;
+}
+
+#inlineKpis .kpi-grid[style*="display: grid"],
+#inlineKpis .kpi-grid[style*="display:grid"]{
+  display: grid !important;
+}
+
+#inlineKpis .kpi-grid[style*="display: none"],
+#inlineKpis .kpi-grid[style*="display:none"]{
+  display: none !important;
 }
