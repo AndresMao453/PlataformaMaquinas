@@ -3397,3 +3397,195 @@ img{
   align-items: center !important;
   white-space: nowrap !important;
 }
+
+/* FIX exacto: botón Volver en crimpado (Aplicación / Unión) */
+.subcat-wrap .btn.secondary,
+.subcat-wrap a.btn.secondary{
+  width: auto !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  display: inline-flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  white-space: nowrap !important;
+}
+
+/* contenedor del botón */
+.subcat-wrap > div:last-child{
+  display: block !important;
+  width: auto !important;
+}
+
+.subcat-wrap > div:last-child .btn.secondary{
+  width: auto !important;
+}
+
+/* =========================================================
+   FIX FINAL MOBILE: OEE, Tiempos Perdidos y Descargar Excel THB
+   ========================================================= */
+
+@media (max-width: 760px){
+
+  /* ---------- Top bar descarga THB ---------- */
+  .inline-topbar{
+    display:flex !important;
+    flex-direction:column !important;
+    align-items:stretch !important;
+    gap:14px !important;
+  }
+
+  .inline-topbar-left,
+  .inline-topbar-right{
+    width:100% !important;
+    min-width:0 !important;
+    flex:1 1 auto !important;
+  }
+
+  #inlineActions{
+    width:100% !important;
+    display:flex !important;
+    justify-content:center !important;
+  }
+
+  #inlineActions .btn,
+  #inlineActions a.btn{
+    width:100% !important;
+    max-width:100% !important;
+    text-align:center !important;
+    margin:0 !important;
+  }
+
+  .thb-download-callout{
+    font-size:16px !important;
+    line-height:1.35 !important;
+    margin:0 !important;
+  }
+
+  /* ---------- KPI grid ---------- */
+  #inlineKpis,
+  .kpi-grid{
+    display:grid !important;
+    grid-template-columns:1fr !important;
+    gap:12px !important;
+  }
+
+  #inlineKpis .kpi-card,
+  .kpi-card,
+  .kpi-row-1,
+  .kpi-row-2,
+  .kpi-row-3,
+  .kpi-row-4,
+  .kpi-row-4q,
+  .kpi-wide,
+  .kpi-narrow{
+    grid-column: span 1 !important;
+    width:100% !important;
+    max-width:100% !important;
+    min-width:0 !important;
+  }
+
+  .kpi-card{
+    padding:16px 14px !important;
+    border-radius:16px !important;
+    overflow:hidden !important;
+  }
+
+  .kpi-title{
+    font-size:.78rem !important;
+    line-height:1.2 !important;
+    word-break:break-word !important;
+  }
+
+  .kpi-value{
+    font-size:2rem !important;
+    line-height:1.05 !important;
+    word-break:break-word !important;
+  }
+
+  /* ---------- OEE y cards con desglose interno ---------- */
+  .kpi-split{
+    display:flex !important;
+    flex-direction:column !important;
+    align-items:flex-start !important;
+    gap:14px !important;
+  }
+
+  .kpi-split-left{
+    width:100% !important;
+    min-width:0 !important;
+  }
+
+  .kpi-split-right{
+    width:100% !important;
+    min-width:0 !important;
+    flex:1 1 auto !important;
+    border-left:none !important;
+    border-top:2px solid rgba(15,23,42,.12) !important;
+    padding-left:0 !important;
+    padding-top:12px !important;
+    text-align:left !important;
+  }
+
+  .kpi-sub-row{
+    display:grid !important;
+    grid-template-columns:1fr !important;
+    gap:10px !important;
+    white-space:normal !important;
+  }
+
+  .kpi-sub-block{
+    min-width:0 !important;
+    width:100% !important;
+  }
+
+  .kpi-sub-divider{
+    display:none !important;
+  }
+
+  .kpi-sub-label{
+    font-size:.72rem !important;
+    line-height:1.2 !important;
+    word-break:break-word !important;
+    white-space:normal !important;
+  }
+
+  .kpi-sub-value,
+  .kpi-sub-value-big{
+    font-size:1.6rem !important;
+    line-height:1.05 !important;
+    word-break:break-word !important;
+  }
+
+  /* ---------- Tiempos Perdidos ---------- */
+  .kpi-card .kpi-sub-row{
+    align-items:flex-start !important;
+  }
+
+  /* ---------- texto porcentaje ---------- */
+  .kpi-value .kpi-pct{
+    font-size:.58em !important;
+    margin-left:6px !important;
+    white-space:nowrap !important;
+  }
+}
+
+/* móvil pequeño */
+@media (max-width: 520px){
+
+  .kpi-card{
+    padding:14px 12px !important;
+  }
+
+  .kpi-value{
+    font-size:1.8rem !important;
+  }
+
+  .kpi-sub-value,
+  .kpi-sub-value-big{
+    font-size:1.35rem !important;
+  }
+
+  .thb-download-callout{
+    font-size:15px !important;
+  }
+}
