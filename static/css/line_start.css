@@ -2479,3 +2479,92 @@ img{
 .ph-card.show-extra .ph-nom-box{
   display: block;
 }
+
+
+@media (max-width: 520px){
+  .machine-card,
+  .ph-card{
+    margin: 6px auto;
+    padding: 6px;
+  }
+
+  .machine-card img,
+  .ph-card img{
+    width: 100%;
+    height: auto;
+  }
+
+  .machine-description{
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 760px){
+
+  .machine-grid{
+    grid-template-columns: 1fr !important;
+    gap: 14px;
+  }
+
+  .machine-card{
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .machine-head{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 12px;
+  }
+
+  .machine-ico,
+  .machine-card img{
+    max-width: 100%;
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+  }
+
+  .machine-text{
+    width: 100%;
+    text-align: center;
+  }
+
+  .machine-name{
+    font-size: 32px;
+    line-height: 1.1;
+  }
+
+  .machine-desc{
+    font-size: 15px;
+    line-height: 1.3;
+    word-break: break-word;
+  }
+}
+
+.machine-grid{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.machine-card{
+  min-width: 0;
+  overflow: hidden;
+}
+
+.machine-head{
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.machine-ico,
+.machine-card img{
+  max-width: 100%;
+  height: auto;
+}
