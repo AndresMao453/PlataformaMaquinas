@@ -2454,3 +2454,28 @@ img{
     font-size:15px;
   }
 }
+/* =========================
+   Productividad por hora:
+   detalle oculto y desplegable
+   ========================= */
+
+.ph-foot{
+  display: none;
+  margin-top: 10px;
+}
+
+.ph-card.show-extra .ph-foot{
+  display: block;
+}
+
+.ph-card{
+  cursor: pointer;
+}
+
+.ph-nom-box{
+  display: none;
+}
+
+.ph-card.show-extra .ph-nom-box{
+  display: block;
+}

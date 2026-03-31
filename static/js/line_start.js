@@ -2033,6 +2033,14 @@ function renderProdHour(result){
       ${buildOtherPanelHtml()}
       ${mixHtml}
     `;
+
+    card.addEventListener("click", () => {
+      document.querySelectorAll("#prodHourGrid .ph-card").forEach(c => {
+        if(c !== card) c.classList.remove("show-extra");
+      });
+      card.classList.toggle("show-extra");
+    });
+
     grid.appendChild(card);
 
     const btnOtro = card.querySelector(".ph-otro-btn");
