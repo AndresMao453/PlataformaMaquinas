@@ -2118,10 +2118,9 @@ a.option-card.ciclo .pill{
   display: inline-block;
   margin-left: 6px;
   text-decoration: none;
-  font-weight: 950;
-  animation: thbColorShift 1.6s linear infinite, thbPulse 1.2s ease-in-out infinite;
+  font-weight: 700;
+  font-size: 18px;
 }
-
 .thb-download-callout-link:hover{
   transform: scale(1.06);
 }
@@ -3607,4 +3606,63 @@ img{
 #inlineKpis .kpi-grid[style*="display: none"],
 #inlineKpis .kpi-grid[style*="display:none"]{
   display: none !important;
+}
+/* Botón Descargar Excel THB */
+#inlineActions .thb-download-callout-link{
+  background: #eef2ff !important;
+  color: #2563eb !important; /* azul */
+  border: 1px solid #93c5fd !important;
+  box-shadow: 0 8px 20px rgba(37,99,235,.12) !important;
+  border-radius: 16px !important;
+  padding: 14px 22px !important;
+}
+
+/* =========================================================
+   THB TEXTO SUPERIOR
+   ========================================================= */
+#inlineResults .thb-download-callout{
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  line-height: 1.3 !important;
+}
+
+#inlineResults .thb-download-callout-strong{
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  color: #2563eb !important; /* azul */
+}
+
+/* =========================================================
+   BOTÓN DESCARGAR EXCEL THB
+   ========================================================= */
+#inlineActions a.thb-download-callout-link{
+  font-size: 18px !important;
+  font-weight: 900 !important;
+  padding: 14px 26px !important;
+  border-radius: 18px !important;
+
+  background: linear-gradient(135deg, #eff6ff, #dbeafe) !important;
+  color: #2563eb !important;
+  border: 1px solid #93c5fd !important;
+  box-shadow: 0 10px 25px rgba(37,99,235,.15) !important;
+
+  transition: all .25s ease !important;
+
+  animation:
+    thbBgShift 4s linear infinite,
+    thbColorShift 1.6s linear infinite,
+    thbPulse 1.2s ease-in-out infinite !important;
+}
+
+#inlineActions a.thb-download-callout-link:hover{
+  transform: scale(1.06);
+  box-shadow: 0 14px 30px rgba(37,99,235,.25) !important;
+}
+
+@keyframes thbBgShift{
+  0%   { background: linear-gradient(135deg,#eff6ff,#dbeafe); }
+  25%  { background: linear-gradient(135deg,#dbeafe,#bfdbfe); }
+  50%  { background: linear-gradient(135deg,#e0f2fe,#bae6fd); }
+  75%  { background: linear-gradient(135deg,#dbeafe,#93c5fd); }
+  100% { background: linear-gradient(135deg,#eff6ff,#dbeafe); }
 }
