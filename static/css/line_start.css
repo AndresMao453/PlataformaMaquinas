@@ -1913,9 +1913,9 @@ a.option-card.ciclo .pill{
   width: 100%;
 }
 
-/* ✅ panel derecho más ancho para 3 bloques */
 .kpi-split-right{
-  flex: 0 0 320px;  /* antes 180px */
+  flex: 0 0 320px;
+  min-width: 0;
 }
 
 /* ✅ asegurar que no se rompa */
@@ -3699,4 +3699,170 @@ img{
 
 @media (max-width: 760px){
   .kpi-row-8{ grid-column: span 12; }
+}
+
+/* =========================================================
+   FIX DEFINITIVO MOBILE THB
+   Pegar al FINAL de line_start.css
+   ========================================================= */
+@media (max-width: 760px){
+
+  /* ---------- Top bar descarga ---------- */
+  #inlineTopBar,
+  .inline-topbar{
+    display:flex !important;
+    flex-direction:column !important;
+    align-items:stretch !important;
+    gap:12px !important;
+  }
+
+  .inline-topbar-left,
+  .inline-topbar-right{
+    width:100% !important;
+    min-width:0 !important;
+  }
+
+  #inlineActions{
+    width:100% !important;
+    display:flex !important;
+    justify-content:center !important;
+  }
+
+  #inlineActions .btn,
+  #inlineActions a.btn,
+  #inlineActions .thb-download-callout-link{
+    width:100% !important;
+    max-width:100% !important;
+    text-align:center !important;
+    white-space:normal !important;
+  }
+
+  .thb-download-callout{
+    font-size:15px !important;
+    line-height:1.35 !important;
+    margin:0 !important;
+  }
+
+  /* ---------- Títulos ---------- */
+  .inline-title{
+    font-size:24px !important;
+    line-height:1.08 !important;
+    word-break:break-word !important;
+  }
+
+  /* ---------- Grid KPI ---------- */
+  #inlineKpis,
+  .kpi-grid{
+    display:grid !important;
+    grid-template-columns:1fr !important;
+    gap:12px !important;
+  }
+
+  #inlineKpis .kpi-card,
+  .kpi-card,
+  .kpi-row-1,
+  .kpi-row-2,
+  .kpi-row-3,
+  .kpi-row-4,
+  .kpi-row-4q,
+  .kpi-wide,
+  .kpi-narrow{
+    grid-column:span 1 !important;
+    width:100% !important;
+    max-width:100% !important;
+    min-width:0 !important;
+  }
+
+  .kpi-card{
+    padding:14px !important;
+    border-radius:16px !important;
+    overflow:hidden !important;
+  }
+
+  .kpi-title{
+    font-size:11px !important;
+    line-height:1.2 !important;
+    word-break:break-word !important;
+  }
+
+  .kpi-value{
+    font-size:18px !important;
+    line-height:1.05 !important;
+    word-break:break-word !important;
+  }
+
+  /* ---------- Split interno de KPIs ---------- */
+  .kpi-split{
+    display:flex !important;
+    flex-direction:column !important;
+    align-items:stretch !important;
+    gap:12px !important;
+  }
+
+  .kpi-split-left,
+  .kpi-split-right{
+    width:100% !important;
+    min-width:0 !important;
+    flex:1 1 auto !important;
+  }
+
+  .kpi-split-right{
+    border-left:none !important;
+    border-top:1px solid rgba(15,23,42,.12) !important;
+    padding-left:0 !important;
+    padding-top:10px !important;
+    margin-top:0 !important;
+  }
+
+  /* ---------- Subbloques internos ---------- */
+  .kpi-sub-row{
+    display:flex !important;
+    flex-wrap:wrap !important;
+    align-items:flex-start !important;
+    gap:10px !important;
+    white-space:normal !important;
+  }
+
+  .kpi-sub-block{
+    min-width:calc(50% - 8px) !important;
+    flex:1 1 calc(50% - 8px) !important;
+  }
+
+  .kpi-sub-label,
+  .kpi-sub-small,
+  .kpi-sub-nr-label{
+    font-size:10px !important;
+    line-height:1.2 !important;
+    white-space:normal !important;
+    word-break:break-word !important;
+  }
+
+  .kpi-sub-value,
+  .kpi-sub-big,
+  .kpi-sub-value-big,
+  .kpi-sub-105,
+  .kpi-sub-nr-val{
+    font-size:16px !important;
+    line-height:1.05 !important;
+    word-break:break-word !important;
+  }
+
+  .kpi-sub-divider{
+    display:none !important;
+  }
+
+  .kpi-pct-small,
+  .kpi-value .kpi-pct{
+    font-size:12px !important;
+  }
+
+  /* ---------- Productividad por hora ---------- */
+  .prod-hour-grid{
+    grid-template-columns:1fr !important;
+  }
+
+  /* ---------- Gráfico OEE ---------- */
+  .thb-oee-chart-canvas-wrap{
+    height:260px !important;
+  }
 }
