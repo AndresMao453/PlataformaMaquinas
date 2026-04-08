@@ -3702,44 +3702,130 @@ img{
 }
 
 /* =========================================================
-   FIX MOBILE THB
-   SOLO móvil
+   THB RESPONSIVE FINAL
+   SOLO este bloque al final
    ========================================================= */
+
+/* ---------- DESKTOP / TABLET GRANDE ---------- */
+@media (min-width: 761px){
+
+  .kpi-split{
+    display:flex !important;
+    flex-direction:row !important;
+    align-items:flex-end !important;
+    justify-content:space-between !important;
+    gap:18px !important;
+  }
+
+  .kpi-split-left{
+    flex:1 1 auto !important;
+    min-width:0 !important;
+  }
+
+  .kpi-split-right{
+    flex:1 1 420px !important;
+    min-width:420px !important;
+    max-width:none !important;
+    border-left:2px solid rgba(15,23,42,.12) !important;
+    border-top:none !important;
+    padding-left:18px !important;
+    padding-top:0 !important;
+    margin-top:0 !important;
+    width:auto !important;
+  }
+
+  .kpi-sub-row{
+    display:flex !important;
+    flex-wrap:nowrap !important;
+    align-items:flex-end !important;
+    justify-content:space-between !important;
+    gap:16px !important;
+    white-space:normal !important;
+  }
+
+  .kpi-sub-block{
+    flex:1 1 0 !important;
+    min-width:0 !important;
+  }
+
+  .kpi-sub-label,
+  .kpi-sub-small,
+  .kpi-sub-nr-label{
+    font-size:.72rem !important;
+    line-height:1.15 !important;
+    white-space:normal !important;
+    word-break:break-word !important;
+  }
+
+  .kpi-sub-value,
+  .kpi-sub-big,
+  .kpi-sub-value-big,
+  .kpi-sub-105,
+  .kpi-sub-nr-val{
+    font-size:1.05rem !important;
+    line-height:1.05 !important;
+  }
+
+  .kpi-sub-divider{
+    display:block !important;
+  }
+}
+
+/* ---------- MÓVIL ---------- */
 @media (max-width: 760px){
 
   #inlineTopBar,
   .inline-topbar{
-    display:flex !important;
-    flex-direction:column !important;
-    align-items:stretch !important;
-    gap:12px !important;
+    display:block !important;
+    width:100% !important;
+    margin:6px 0 14px 0 !important;
+    padding:0 !important;
   }
 
   .inline-topbar-left,
   .inline-topbar-right{
+    display:block !important;
     width:100% !important;
     min-width:0 !important;
+    max-width:100% !important;
+    flex:none !important;
+    margin:0 !important;
+    padding:0 !important;
+  }
+
+  .inline-topbar-right{
+    margin-top:12px !important;
+    text-align:left !important;
   }
 
   #inlineActions{
+    display:block !important;
     width:100% !important;
-    display:flex !important;
-    justify-content:center !important;
+    margin:0 !important;
+    padding:0 !important;
   }
 
   #inlineActions .btn,
   #inlineActions a.btn,
-  #inlineActions .thb-download-callout-link{
-    width:100% !important;
+  #inlineActions a.thb-download-callout-link{
+    display:inline-flex !important;
+    width:auto !important;
     max-width:100% !important;
-    text-align:center !important;
+    margin:0 !important;
     white-space:normal !important;
+    text-align:center !important;
   }
 
-  .thb-download-callout{
+  #inlineResults .thb-download-callout{
+    margin:0 !important;
+    max-width:100% !important;
     font-size:15px !important;
     line-height:1.35 !important;
-    margin:0 !important;
+  }
+
+  #inlineResults .thb-download-callout-strong{
+    display:inline !important;
+    margin-top:0 !important;
   }
 
   .inline-title{
@@ -3762,7 +3848,8 @@ img{
   .kpi-row-4,
   .kpi-row-4q,
   .kpi-wide,
-  .kpi-narrow{
+  .kpi-narrow,
+  .kpi-row-8{
     grid-column:span 12 !important;
     width:100% !important;
     max-width:100% !important;
@@ -3808,6 +3895,7 @@ img{
     padding-left:0 !important;
     padding-top:10px !important;
     margin-top:0 !important;
+    min-width:0 !important;
   }
 
   .kpi-sub-row{
@@ -3846,7 +3934,6 @@ img{
     display:none !important;
   }
 
-  .kpi-pct-small,
   .kpi-value .kpi-pct{
     font-size:12px !important;
   }
@@ -3857,72 +3944,5 @@ img{
 
   .thb-oee-chart-canvas-wrap{
     height:260px !important;
-  }
-}
-
-/* =========================================================
-   FIX DESKTOP THB KPI SPLIT
-   Recupera escritorio sin dañar móvil
-   ========================================================= */
-@media (min-width: 761px){
-
-  .kpi-split{
-    display:flex !important;
-    align-items:flex-end !important;
-    justify-content:space-between !important;
-    gap:18px !important;
-    flex-direction:row !important;
-  }
-
-  .kpi-split-left{
-    flex:1 1 auto !important;
-    min-width:0 !important;
-  }
-
-  .kpi-split-right{
-    flex:1 1 420px !important;
-    min-width:420px !important;
-    max-width:none !important;
-    border-left:2px solid rgba(15,23,42,.12) !important;
-    border-top:none !important;
-    padding-left:18px !important;
-    padding-top:0 !important;
-    margin-top:0 !important;
-  }
-
-  .kpi-sub-row{
-    display:flex !important;
-    flex-wrap:nowrap !important;
-    align-items:flex-end !important;
-    justify-content:space-between !important;
-    gap:16px !important;
-    white-space:normal !important;
-  }
-
-  .kpi-sub-block{
-    flex:1 1 0 !important;
-    min-width:0 !important;
-  }
-
-  .kpi-sub-label,
-  .kpi-sub-small,
-  .kpi-sub-nr-label{
-    white-space:normal !important;
-    word-break:break-word !important;
-    line-height:1.15 !important;
-    font-size:.72rem !important;
-  }
-
-  .kpi-sub-value,
-  .kpi-sub-big,
-  .kpi-sub-value-big,
-  .kpi-sub-105,
-  .kpi-sub-nr-val{
-    font-size:1.05rem !important;
-    line-height:1.05 !important;
-  }
-
-  .kpi-sub-divider{
-    display:block !important;
   }
 }
