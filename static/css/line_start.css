@@ -1915,7 +1915,7 @@ a.option-card.ciclo .pill{
 
 .kpi-split-right{
   flex: 0 0 320px;
-  min-width: 0;
+  min-width: 320px;
 }
 
 /* ✅ asegurar que no se rompa */
@@ -3702,12 +3702,11 @@ img{
 }
 
 /* =========================================================
-   FIX DEFINITIVO MOBILE THB
-   Pegar al FINAL de line_start.css
+   FIX MOBILE THB
+   SOLO móvil
    ========================================================= */
 @media (max-width: 760px){
 
-  /* ---------- Top bar descarga ---------- */
   #inlineTopBar,
   .inline-topbar{
     display:flex !important;
@@ -3743,17 +3742,14 @@ img{
     margin:0 !important;
   }
 
-  /* ---------- Títulos ---------- */
   .inline-title{
     font-size:24px !important;
     line-height:1.08 !important;
     word-break:break-word !important;
   }
 
-  /* ---------- Grid KPI ---------- */
   #inlineKpis,
   .kpi-grid{
-    display:grid !important;
     grid-template-columns:1fr !important;
     gap:12px !important;
   }
@@ -3767,7 +3763,7 @@ img{
   .kpi-row-4q,
   .kpi-wide,
   .kpi-narrow{
-    grid-column:span 1 !important;
+    grid-column:span 12 !important;
     width:100% !important;
     max-width:100% !important;
     min-width:0 !important;
@@ -3791,7 +3787,6 @@ img{
     word-break:break-word !important;
   }
 
-  /* ---------- Split interno de KPIs ---------- */
   .kpi-split{
     display:flex !important;
     flex-direction:column !important;
@@ -3803,6 +3798,7 @@ img{
   .kpi-split-right{
     width:100% !important;
     min-width:0 !important;
+    max-width:100% !important;
     flex:1 1 auto !important;
   }
 
@@ -3814,7 +3810,6 @@ img{
     margin-top:0 !important;
   }
 
-  /* ---------- Subbloques internos ---------- */
   .kpi-sub-row{
     display:flex !important;
     flex-wrap:wrap !important;
@@ -3856,13 +3851,78 @@ img{
     font-size:12px !important;
   }
 
-  /* ---------- Productividad por hora ---------- */
   .prod-hour-grid{
     grid-template-columns:1fr !important;
   }
 
-  /* ---------- Gráfico OEE ---------- */
   .thb-oee-chart-canvas-wrap{
     height:260px !important;
+  }
+}
+
+/* =========================================================
+   FIX DESKTOP THB KPI SPLIT
+   Recupera escritorio sin dañar móvil
+   ========================================================= */
+@media (min-width: 761px){
+
+  .kpi-split{
+    display:flex !important;
+    align-items:flex-end !important;
+    justify-content:space-between !important;
+    gap:18px !important;
+    flex-direction:row !important;
+  }
+
+  .kpi-split-left{
+    flex:1 1 auto !important;
+    min-width:0 !important;
+  }
+
+  .kpi-split-right{
+    flex:1 1 420px !important;
+    min-width:420px !important;
+    max-width:none !important;
+    border-left:2px solid rgba(15,23,42,.12) !important;
+    border-top:none !important;
+    padding-left:18px !important;
+    padding-top:0 !important;
+    margin-top:0 !important;
+  }
+
+  .kpi-sub-row{
+    display:flex !important;
+    flex-wrap:nowrap !important;
+    align-items:flex-end !important;
+    justify-content:space-between !important;
+    gap:16px !important;
+    white-space:normal !important;
+  }
+
+  .kpi-sub-block{
+    flex:1 1 0 !important;
+    min-width:0 !important;
+  }
+
+  .kpi-sub-label,
+  .kpi-sub-small,
+  .kpi-sub-nr-label{
+    white-space:normal !important;
+    word-break:break-word !important;
+    line-height:1.15 !important;
+    font-size:.72rem !important;
+  }
+
+  .kpi-sub-value,
+  .kpi-sub-big,
+  .kpi-sub-value-big,
+  .kpi-sub-105,
+  .kpi-sub-nr-val{
+    font-size:1.05rem !important;
+    line-height:1.05 !important;
+  }
+
+  .kpi-sub-divider{
+    display:block !important;
   }
 }
