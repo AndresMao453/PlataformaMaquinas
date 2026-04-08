@@ -1917,7 +1917,287 @@ def _top_arnes(df_verif: pd.DataFrame, cols: THBCols, top_n: int = 10) -> Dict[s
 
     return {"labels": g.index.tolist(), "values": [int(x) for x in g.tolist()]}
 
+def _thb_segment_counts_and_nominal(
+    df_seg: pd.DataFrame,
+    cols: THBCols,
+) -> Dict[str, float]:
+    out = {"cut": 0, "planned": 0, "tnom_sec": 0.0}
 
+    if df_seg is None or df_seg.empty:
+        return out
+
+    if cols.col_piezas_buenas and cols.col_piezas_buenas in df_seg.columns:
+        buenas = pd.to_numeric(df_seg[cols.col_piezas_buenas], errors="coerce").fillna(0.0).astype(float)
+        out["cut"] = int(buenas.sum())
+    else:
+        buenas = pd.Series([0.0] * len(df_seg), index=df_seg.index, dtype="float64")
+
+    if cols.col_total_piezas and cols.col_total_piezas in df_seg.columns:
+        tot = pd.to_numeric(df_seg[cols.col_total_piezas], errors="coerce").fillna(0.0).astype(float)
+        out["planned"] = int((tot.where(tot > 0, buenas)).sum())
+    else:
+        out["planned"] = int(out["cut"])
+
+    if cols.col_res_mm and cols.col_res_mm in df_seg.columns:
+        resmm = df_seg[cols.col_res_mm].apply(_num_es).astype(float)
+
+        if (
+            getattr(cols, "col_terminal1", None) and getattr(cols, "col_terminal2", None)
+            and (cols.col_terminal1 in df_seg.columns) and (cols.col_terminal2 in df_seg.columns)
+        ):
+            tipos = df_seg.apply(
+                lambda r: _thb_tipo_from_terminals(r.get(cols.col_terminal1), r.get(cols.col_terminal2)),
+                axis=1
+            )
+        else:
+            tipos = pd.Series([1] * len(df_seg), index=df_seg.index)
+
+        t_nom = [
+            _thb_nominal_sec(float(L), int(tp), model="calc")
+            for L, tp in zip(resmm.tolist(), tipos.tolist())
+        ]
+        t_nom = pd.Series(t_nom, index=df_seg.index, dtype="float64")
+
+        out["tnom_sec"] = float((buenas * t_nom).sum())
+
+    return out
+
+
+def _slice_paradas_intervals(
+    df_paradas_iv: Optional[pd.DataFrame],
+    seg0: pd.Timestamp,
+    seg1: pd.Timestamp,
+) -> pd.DataFrame:
+    if df_paradas_iv is None or df_paradas_iv.empty:
+        return pd.DataFrame(columns=["dt_start", "dt_end", "codigo", "desc", "dur_sec"])
+
+    p = df_paradas_iv.copy()
+    p["dt_start"] = pd.to_datetime(p["dt_start"], errors="coerce")
+    p["dt_end"] = pd.to_datetime(p["dt_end"], errors="coerce")
+    p = p.dropna(subset=["dt_start", "dt_end"])
+    if p.empty:
+        return p
+
+    p = p.loc[(p["dt_end"] >= seg0) & (p["dt_start"] < seg1)].copy()
+    if p.empty:
+        return p
+
+    return _clip_intervals_to_range(p, seg0, seg1)
+
+
+def _clip01(x: float) -> float:
+    try:
+        n = float(x)
+    except Exception:
+        return 0.0
+    if not np.isfinite(n):
+        return 0.0
+    return float(max(0.0, min(1.0, n)))
+
+
+def _build_thb_oee_chart(
+    *,
+    period: str,
+    r0: Optional[pd.Timestamp],
+    r1: Optional[pd.Timestamp],
+    df_verif: pd.DataFrame,
+    dt_verif: pd.Series,
+    cols: THBCols,
+    operator: str,
+    df_paradas_iv: Optional[pd.DataFrame],
+    df_verif_all_ops: Optional[pd.DataFrame] = None,
+    dt_verif_all_ops: Optional[pd.Series] = None,
+) -> Dict[str, Any]:
+    out = {
+        "labels": [],
+        "oee": [],
+        "operacional": [],
+        "disponibilidad": [],
+        "calidad": [],
+    }
+
+    if r0 is None or r1 is None or df_verif is None or dt_verif is None:
+        return out
+
+    dtv = pd.to_datetime(dt_verif, errors="coerce")
+    if dtv is None or dtv.empty:
+        return out
+
+    df_all_ops = df_verif_all_ops if isinstance(df_verif_all_ops, pd.DataFrame) else df_verif
+    dt_all_ops = pd.to_datetime(dt_verif_all_ops, errors="coerce") if dt_verif_all_ops is not None else dtv
+
+    def _push(label: str, cut: float, planned: float, tnom_sec: float, teff_sec: float, tpaid_sec: float):
+        calidad = _clip01((planned / cut) if cut > 0 else 0.0)
+        disponibilidad = _clip01((teff_sec / tpaid_sec) if tpaid_sec > 0 else 0.0)
+        operacional = _clip01((tnom_sec / teff_sec) if teff_sec > 0 else 0.0)
+        oee = _clip01(disponibilidad * operacional * calidad)
+
+        out["labels"].append(str(label))
+        out["oee"].append(round(oee * 100.0, 1))
+        out["operacional"].append(round(operacional * 100.0, 1))
+        out["disponibilidad"].append(round(disponibilidad * 100.0, 1))
+        out["calidad"].append(round(calidad * 100.0, 1))
+
+    if period == "day":
+        day = pd.Timestamp(r0).normalize()
+        p_day = _slice_paradas_intervals(df_paradas_iv, day, day + pd.Timedelta(days=1))
+
+        buckets = _compute_hourly_buckets(
+            df_verif=df_verif,
+            dt_verif=dtv,
+            cols_verif=cols,
+            selected_day=day,
+            df_paradas_iv=p_day,
+        )
+
+        for b in buckets:
+            htxt = str(b.get("hour") or "").strip()
+            if not htxt.isdigit():
+                continue
+
+            h = int(htxt)
+            seg0 = pd.Timestamp(f"{day.strftime('%Y-%m-%d')} {h:02d}:00:00")
+            seg1 = seg0 + pd.Timedelta(hours=1)
+
+            m_seg = dtv.notna() & (dtv >= seg0) & (dtv < seg1)
+            df_seg = df_verif.loc[m_seg].copy()
+
+            base = _thb_segment_counts_and_nominal(df_seg, cols)
+
+            cut = float(base["cut"])
+            planned = float(base["planned"])
+            tnom_sec = float(base["tnom_sec"])
+            teff_sec = float(b.get("prodSec", 0) or 0)
+            tpaid_sec = 3600.0
+
+            if cut <= 0 and planned <= 0 and tnom_sec <= 0 and teff_sec <= 0 and float(b.get("deadSec", 0) or 0) <= 0:
+                continue
+
+            _push(
+                label=f"{h:02d}",
+                cut=cut,
+                planned=planned,
+                tnom_sec=tnom_sec,
+                teff_sec=teff_sec,
+                tpaid_sec=tpaid_sec,
+            )
+
+        return out
+
+    DAY_ABBR = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+
+    if period == "week":
+        day = pd.Timestamp(r0).normalize()
+
+        while day < pd.Timestamp(r1):
+            seg0 = day
+            seg1 = min(day + pd.Timedelta(days=1), pd.Timestamp(r1))
+
+            m_seg = dtv.notna() & (dtv >= seg0) & (dtv < seg1)
+            df_seg = df_verif.loc[m_seg].copy()
+            dt_seg = dtv.loc[m_seg].copy()
+            p_seg = _slice_paradas_intervals(df_paradas_iv, seg0, seg1)
+
+            if df_seg.empty and p_seg.empty:
+                day = seg1
+                continue
+
+            k_seg = _compute_daily_kpis(
+                df_verif=df_seg,
+                dt_verif=dt_seg,
+                cols=cols,
+                selected_day=seg0,
+                df_paradas_iv=p_seg,
+                period="day",
+            )
+
+            m_all = dt_all_ops.notna() & (dt_all_ops >= seg0) & (dt_all_ops < seg1)
+            df_seg_all = df_all_ops.loc[m_all].copy() if isinstance(df_all_ops, pd.DataFrame) else df_seg
+            dt_seg_all = dt_all_ops.loc[m_all].copy() if dt_all_ops is not None else dt_seg
+
+            tpaid_sec = float(_compute_horas_hombre_thb(
+                period="day",
+                r0=seg0,
+                r1=seg1,
+                df_verif=df_seg,
+                dt_verif=dt_seg,
+                cols=cols,
+                operator=operator,
+                df_paradas_iv=p_seg,
+                df_verif_all_ops=df_seg_all,
+                dt_verif_all_ops=dt_seg_all,
+            ))
+
+            _push(
+                label=f"{DAY_ABBR[int(seg0.weekday())]} {seg0.strftime('%d')}",
+                cut=float(k_seg.get("circuitos_cortados", 0) or 0),
+                planned=float(k_seg.get("circuitos_planeados", 0) or 0),
+                tnom_sec=float(k_seg.get("tnom_total_sec", 0) or 0),
+                teff_sec=float(k_seg.get("tiempo_efectivo_sec", 0) or 0),
+                tpaid_sec=tpaid_sec,
+            )
+
+            day = seg1
+
+        return out
+
+    if period == "month":
+        seg0 = pd.Timestamp(r0).normalize()
+        week_idx = 1
+
+        while seg0 < pd.Timestamp(r1):
+            seg1 = min(seg0 + pd.Timedelta(days=7), pd.Timestamp(r1))
+
+            m_seg = dtv.notna() & (dtv >= seg0) & (dtv < seg1)
+            df_seg = df_verif.loc[m_seg].copy()
+            dt_seg = dtv.loc[m_seg].copy()
+            p_seg = _slice_paradas_intervals(df_paradas_iv, seg0, seg1)
+
+            if df_seg.empty and p_seg.empty:
+                seg0 = seg1
+                continue
+
+            k_seg = _compute_daily_kpis(
+                df_verif=df_seg,
+                dt_verif=dt_seg,
+                cols=cols,
+                selected_day=None,
+                df_paradas_iv=p_seg,
+                period="week",
+            )
+
+            m_all = dt_all_ops.notna() & (dt_all_ops >= seg0) & (dt_all_ops < seg1)
+            df_seg_all = df_all_ops.loc[m_all].copy() if isinstance(df_all_ops, pd.DataFrame) else df_seg
+            dt_seg_all = dt_all_ops.loc[m_all].copy() if dt_all_ops is not None else dt_seg
+
+            tpaid_sec = float(_compute_horas_hombre_thb(
+                period="week",
+                r0=seg0,
+                r1=seg1,
+                df_verif=df_seg,
+                dt_verif=dt_seg,
+                cols=cols,
+                operator=operator,
+                df_paradas_iv=p_seg,
+                df_verif_all_ops=df_seg_all,
+                dt_verif_all_ops=dt_seg_all,
+            ))
+
+            _push(
+                label=f"Sem {week_idx}",
+                cut=float(k_seg.get("circuitos_cortados", 0) or 0),
+                planned=float(k_seg.get("circuitos_planeados", 0) or 0),
+                tnom_sec=float(k_seg.get("tnom_total_sec", 0) or 0),
+                teff_sec=float(k_seg.get("tiempo_efectivo_sec", 0) or 0),
+                tpaid_sec=tpaid_sec,
+            )
+
+            week_idx += 1
+            seg0 = seg1
+
+        return out
+
+    return out
 # ============================================================
 # ✅ analyze_thb (COMPLETA)
 #  - todo lo demás respeta time_start/time_end
@@ -2345,6 +2625,23 @@ period=period,
 
     }
 
+    chart_df_verif = df_f if period == "day" else df_no_hour
+    chart_dt_verif = dt_f if period == "day" else dt_no_hour
+    chart_df_paradas = df_paradas_iv_eff if period == "day" else df_paradas_iv_all
+
+    oee_chart = _build_thb_oee_chart(
+        period=period,
+        r0=r0,
+        r1=r1,
+        df_verif=chart_df_verif,
+        dt_verif=chart_dt_verif,
+        cols=cols,
+        operator=operator,
+        df_paradas_iv=chart_df_paradas,
+        df_verif_all_ops=df_period_all,
+        dt_verif_all_ops=dt_period_all,
+    )
+
     return {
         "status": "ok",
         "analysis": ANALYSIS_KEY,
@@ -2369,6 +2666,7 @@ period=period,
         "pareto": pareto,
         "top_arnes": top_arnes,
         "lotes_acumulados": lotes_acumulados,
+        "oee_chart": oee_chart,
     }
 
 

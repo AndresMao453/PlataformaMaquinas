@@ -246,6 +246,7 @@ function hideInlineResults(){
   destroyTerminalUsage();
   hideProdHour();
   hideThbLotes();
+  destroyThbOeeChart();
 
   const hpLine = document.getElementById("hpTimesLine");
   if(hpLine){
@@ -262,6 +263,164 @@ function renderHpTimesLine(_data){
   if(!el) return;
   el.textContent = "";
   el.style.display = "none";
+}
+
+let _thbOeeChart = null;
+
+function destroyThbOeeChart(){
+  if(_thbOeeChart){
+    try{ _thbOeeChart.destroy(); }catch(e){}
+    _thbOeeChart = null;
+  }
+
+  const wrap = document.getElementById("thbOeeChartWrap");
+  const ttl = document.getElementById("thbOeeChartTitle");
+
+  if(wrap) wrap.style.display = "none";
+  if(ttl){
+    ttl.style.display = "none";
+    ttl.textContent = "Gráfico OEE";
+  }
+}
+
+function _thbOeeChartTitle(period){
+  if(period === "day") return "Gráfico OEE por hora";
+  if(period === "week") return "Gráfico OEE por día";
+  if(period === "month") return "Gráfico OEE por semana";
+  return "Gráfico OEE";
+}
+
+function renderThbOeeChart(result){
+  const machine = String(result?.machine || "").toUpperCase();
+  const chart = result?.oee_chart || {};
+  const wrap = document.getElementById("thbOeeChartWrap");
+  const ttl = document.getElementById("thbOeeChartTitle");
+  const canvas = document.getElementById("thbOeeChart");
+
+  if(!wrap || !ttl || !canvas) return;
+
+  const labels = Array.isArray(chart?.labels) ? chart.labels : [];
+  const oee = Array.isArray(chart?.oee) ? chart.oee : [];
+  const operacional = Array.isArray(chart?.operacional) ? chart.operacional : [];
+  const disponibilidad = Array.isArray(chart?.disponibilidad) ? chart.disponibilidad : [];
+  const calidad = Array.isArray(chart?.calidad) ? chart.calidad : [];
+
+  if(machine !== "THB" || !labels.length){
+    destroyThbOeeChart();
+    return;
+  }
+
+  if(typeof Chart === "undefined"){
+    wrap.style.display = "none";
+    ttl.style.display = "none";
+    return;
+  }
+
+  destroyThbOeeChart();
+
+  ttl.textContent = _thbOeeChartTitle(String(result?.period || ""));
+  ttl.style.display = "block";
+  wrap.style.display = "block";
+
+  _thbOeeChart = new Chart(canvas.getContext("2d"), {
+    data: {
+      labels,
+      datasets: [
+        {
+          type: "bar",
+          label: "OEE",
+          data: oee,
+          backgroundColor: "rgba(196, 181, 253, 0.85)",
+          borderColor: "rgba(167, 139, 250, 1)",
+          borderWidth: 1,
+          borderRadius: 8,
+          barPercentage: 0.68,
+          categoryPercentage: 0.72,
+          order: 2,
+        },
+        {
+          type: "line",
+          label: "Índice de Eficiencia Operacional",
+          data: operacional,
+          borderColor: "rgba(20, 184, 166, 1)",
+          backgroundColor: "rgba(20, 184, 166, 0.15)",
+          borderWidth: 3,
+          pointRadius: 3,
+          pointHoverRadius: 4,
+          tension: 0.35,
+          fill: false,
+          order: 1,
+        },
+        {
+          type: "line",
+          label: "Índice de Disponibilidad",
+          data: disponibilidad,
+          borderColor: "rgba(245, 158, 11, 1)",
+          backgroundColor: "rgba(245, 158, 11, 0.15)",
+          borderWidth: 3,
+          pointRadius: 3,
+          pointHoverRadius: 4,
+          tension: 0.35,
+          fill: false,
+          order: 1,
+        },
+        {
+          type: "line",
+          label: "Índice de Calidad",
+          data: calidad,
+          borderColor: "rgba(100, 116, 139, 1)",
+          backgroundColor: "rgba(100, 116, 139, 0.15)",
+          borderWidth: 3,
+          pointRadius: 3,
+          pointHoverRadius: 4,
+          tension: 0.35,
+          fill: false,
+          order: 1,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      interaction: {
+        mode: "index",
+        intersect: false,
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: "top",
+        },
+        tooltip: {
+          callbacks: {
+            label: function(ctx){
+              const v = Number(ctx.parsed?.y ?? ctx.raw ?? 0);
+              return `${ctx.dataset.label}: ${v.toFixed(1)}%`;
+            }
+          }
+        }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          min: 0,
+          max: 100,
+          ticks: {
+            callback: (v) => `${v}%`
+          },
+          title: {
+            display: true,
+            text: "Porcentaje"
+          }
+        },
+        x: {
+          grid: {
+            display: false
+          }
+        }
+      }
+    }
+  });
 }
 
 async function reloadOptions(){
@@ -799,7 +958,7 @@ function makeCard(title, value, cls, spanClass){
   const parts = raw.split("||");
 
   const mainRaw = (parts[0] ?? "").trim();       // ✅ ahora sí existe
-  const mainDec = _replaceTimesToHourDec(mainRaw);
+  const mainDec = _trimDecimalsForKpi(title, _replaceTimesToHourDec(mainRaw));
   const sub  = parts.slice(1).join("||").trim();
 
   if(sub){
@@ -896,13 +1055,14 @@ function makeCard(title, value, cls, spanClass){
   }
 
   // Simple: puede venir "3.30 (50.8%)"
-  let mainHtmlSimple = escHtml(_replaceTimesToHourDec(mainRaw));
+// Simple: puede venir "3.30 (50.8%)"
+  let mainHtmlSimple = escHtml(_trimDecimalsForKpi(title, _replaceTimesToHourDec(mainRaw)));
 
   const mPct = String(mainRaw || "").match(/^(.*?)(\s*\(\s*\d+(?:\.\d+)?\s*%\s*\)\s*)$/);
   if(mPct){
     const left = (mPct[1] || "").trim();
     const pct  = (mPct[2] || "").trim();
-    mainHtmlSimple = `${escHtml(_replaceTimesToHourDec(left))} <span class="kpi-pct">${escHtml(pct)}</span>`;
+    mainHtmlSimple = `${escHtml(_trimDecimalsForKpi(title, _replaceTimesToHourDec(left)))} <span class="kpi-pct">${escHtml(pct)}</span>`;
   }
 
   card.innerHTML = `
@@ -1009,10 +1169,10 @@ const OTHER_INTERVAL_DESC = {
 let _paretoChart = null;
 
 function paretoTitle(period){
-  if(period === "day") return "Análisis de Pareto de Causas de Parada por Día";
-  if(period === "week") return "Análisis de Pareto de Causas de Parada por Semana";
-  if(period === "month") return "Análisis de Pareto de Causas de Parada por Mes";
-  return "Análisis de Pareto de Causas de Parada";
+  if(period === "day") return "Pareto de Tiempos Perdidos TX por Día";
+  if(period === "week") return "Pareto de Tiempos Perdidos TX por Semana";
+  if(period === "month") return "Pareto de Tiempos Perdidos TX por Mes";
+  return "Pareto de Tiempos Perdidos TX";
 }
 
 function secToHHMM(sec){
@@ -1161,7 +1321,6 @@ function _fmtHourDecFromHHMM(str){
 // ✅ convierte cualquier texto que contenga HH:MM o HH:MM:SS a horas decimales
 function _replaceTimesToHourDec(text){
   const s = String(text ?? "");
-
   // HH:MM:SS primero
   let out = s.replace(/\b(\d{1,2}):(\d{2}):(\d{2})\b/g, (_,h,m,ss)=>{
     const dec = (Number(h)||0) + (Number(m)||0)/60 + (Number(ss)||0)/3600;
@@ -1177,6 +1336,21 @@ function _replaceTimesToHourDec(text){
   return out;
 }
 
+function _trimDecimalsForKpi(title, text){
+  const t = String(title || "").trim().toLowerCase();
+  let s = String(text ?? "");
+
+  // ✅ Solo para este KPI
+  if(t !== "metros cortados") return s;
+
+  // Formato tipo 2.582,8 m  ->  2.582 m
+  s = s.replace(/(\d{1,3}(?:\.\d{3})*),\d+(\s*[a-zA-Z]+)?/g, "$1$2");
+
+  // Fallback por si llega como 2582,8 m
+  s = s.replace(/(\d+),\d+(\s*[a-zA-Z]+)?/g, "$1$2");
+
+  return s;
+}
 
 function _destroyParetoChartOnly(){
   if(_paretoChart){
@@ -1463,7 +1637,7 @@ function renderParetoAplicacion(result){
       return;
     }
 
-    titleEl.textContent = "Análisis de Pareto de Causas de Parada";
+    titleEl.textContent = "Pareto de Tiempos Perdidos TX";
     titleEl.style.display = "block";
     wrap.style.display = "block";
 
@@ -2166,6 +2340,7 @@ function renderInlineKPIs(result){
 
   destroyPareto();
   hideProdHour();
+  destroyThbOeeChart();
 
   hdr.innerHTML = ``;
   hdr.style.display = "none";
@@ -2197,10 +2372,8 @@ function renderInlineKPIs(result){
 
   if(m === "THB"){
     order = [
-      { key: "OEE",              cls: "kpi-blue",   span: "kpi-row-1" },
-      { key: "Metros Planeados", cls: "kpi-purple", span: "kpi-row-3" },
-      { key: "Metros Extras",    cls: "kpi-blue2",  span: "kpi-row-3" },
-      { key: "Metros Cortados",  cls: "kpi-cyan2",  span: "kpi-row-3" },
+      { key: "OEE",             cls: "kpi-blue",                  span: "kpi-row-8" },
+      { key: "Metros Cortados", cls: "kpi-cyan2 kpi-thb-metros", span: "kpi-row-3" },
     ];
   }
 
@@ -2234,7 +2407,17 @@ function renderInlineKPIs(result){
     }
   });
 
-  const hiddenKpis = Object.entries(ui).filter(([kk]) => !order.some(o => o.key === kk));
+  const hiddenKpis = Object.entries(ui).filter(([kk]) => {
+    const isOrdered = order.some(o => o.key === kk);
+    if(isOrdered) return false;
+
+    // ✅ THB: ocultar completamente estos dos KPIs
+    if(m === "THB" && (kk === "Metros Planeados" || kk === "Metros Extras")){
+      return false;
+    }
+
+    return true;
+  });
 
   if(hiddenKpis.length){
     const detailsWrap = document.createElement("div");
@@ -2301,6 +2484,7 @@ function renderInlineKPIs(result){
   }
 
   updateThbExportAction(result);
+  renderThbOeeChart(result);
   renderHpTimesLine(result);
 
   const mu = String(result.machine || "").toUpperCase();

@@ -882,10 +882,10 @@ app.secret_key = config.SECRET_KEY
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
 LINE_UI = {
-    "corte": {"title": "📊 Análisis de Productividad de Corte", "desc": "KPIs, productividad, tiempos y validaciones."},
-    "aplicacion": {"title": "📊 Análisis de Productividad de Aplicación", "desc": "Crimpados, paradas y comportamiento operativo."},
-    "continuidad": {"title": "📊 Análisis de Productividad de Continuidad", "desc": "Resultados de prueba, tasas de OK/NO OK y tiempos."},
-    "ciclo_aplicadores": { "title": "📊 Ciclo / Aplicadores","desc": "Ciclos de máquina, cambios de aplicador y métricas operativas.",
+    "corte": {"title": "Modulo OEE FASECOL (Corte)", "desc": "KPIs, productividad, tiempos y validaciones."},
+    "aplicacion": {"title": "Modulo OEE FASECOL (Aplicación)", "desc": "Crimpados, paradas y comportamiento operativo."},
+    "continuidad": {"title": "Modulo OEE FASECOL (Continuidad)", "desc": "Resultados de prueba, tasas de OK/NO OK y tiempos."},
+    "ciclo_aplicadores": { "title": "Ciclo / Aplicadores","desc": "Ciclos de máquina, cambios de aplicador y métricas operativas.",
 },
 
 }

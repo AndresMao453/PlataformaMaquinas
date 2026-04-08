@@ -3666,3 +3666,37 @@ img{
   75%  { background: linear-gradient(135deg,#dbeafe,#93c5fd); }
   100% { background: linear-gradient(135deg,#eff6ff,#dbeafe); }
 }
+
+/* =========================
+   THB - Gráfico OEE
+   ========================= */
+#thbOeeChartWrap{
+  overflow: hidden;
+}
+
+#thbOeeChart{
+  width: 100% !important;
+  max-width: 100%;
+  display: block;
+}
+
+@media (max-width: 760px){
+  #thbOeeChartWrap{
+    padding: 12px !important;
+  }
+}
+
+.kpi-row-8{ grid-column: span 8; }
+
+/* THB: card de Metros Cortados más compacta */
+#inlineKpis .kpi-card.kpi-thb-metros .kpi-value{
+  font-size: 2rem !important;
+}
+
+@media (max-width: 1100px){
+  .kpi-row-8{ grid-column: span 6; }
+}
+
+@media (max-width: 760px){
+  .kpi-row-8{ grid-column: span 12; }
+}
