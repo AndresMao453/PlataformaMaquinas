@@ -291,136 +291,289 @@ function _thbOeeChartTitle(period){
 }
 
 function renderThbOeeChart(result){
-  const machine = String(result?.machine || "").toUpperCase();
-  const chart = result?.oee_chart || {};
-  const wrap = document.getElementById("thbOeeChartWrap");
-  const ttl = document.getElementById("thbOeeChartTitle");
-  const canvas = document.getElementById("thbOeeChart");
+  try{
+    const machine = String(result?.machine || "").toUpperCase();
+    const chart = result?.oee_chart || {};
+    const wrap = document.getElementById("thbOeeChartWrap");
+    const ttl = document.getElementById("thbOeeChartTitle");
+    const canvas = document.getElementById("thbOeeChart");
 
-  if(!wrap || !ttl || !canvas) return;
+    if(!wrap || !ttl || !canvas) return;
 
-  const labels = Array.isArray(chart?.labels) ? chart.labels : [];
-  const oee = Array.isArray(chart?.oee) ? chart.oee : [];
-  const operacional = Array.isArray(chart?.operacional) ? chart.operacional : [];
-  const disponibilidad = Array.isArray(chart?.disponibilidad) ? chart.disponibilidad : [];
-  const calidad = Array.isArray(chart?.calidad) ? chart.calidad : [];
+    const labels = Array.isArray(chart?.labels) ? chart.labels : [];
+    const oee = Array.isArray(chart?.oee) ? chart.oee.map(x => Number(x) || 0) : [];
+    const operacional = Array.isArray(chart?.operacional) ? chart.operacional.map(x => Number(x) || 0) : [];
+    const disponibilidad = Array.isArray(chart?.disponibilidad) ? chart.disponibilidad.map(x => Number(x) || 0) : [];
+    const calidad = Array.isArray(chart?.calidad) ? chart.calidad.map(x => Number(x) || 0) : [];
 
-  if(machine !== "THB" || !labels.length){
+    if(machine !== "THB" || !labels.length){
+      destroyThbOeeChart();
+      return;
+    }
+
+    if(typeof Chart === "undefined"){
+      wrap.style.display = "none";
+      ttl.style.display = "none";
+      return;
+    }
+
     destroyThbOeeChart();
-    return;
-  }
 
-  if(typeof Chart === "undefined"){
-    wrap.style.display = "none";
-    ttl.style.display = "none";
-    return;
-  }
+    ttl.textContent = _thbOeeChartTitle(String(result?.period || ""));
+    ttl.style.display = "block";
+    wrap.style.display = "block";
 
-  destroyThbOeeChart();
+    const maxBar = Math.max(0, ...oee);
+    let wrapH = 520;
+    let canvasH = 430;
+    let minBarPx = 70;
 
-  ttl.textContent = _thbOeeChartTitle(String(result?.period || ""));
-  ttl.style.display = "block";
-  wrap.style.display = "block";
+    if(maxBar <= 8){
+      wrapH = 620;
+      canvasH = 520;
+      minBarPx = 110;
+    }else if(maxBar <= 15){
+      wrapH = 590;
+      canvasH = 490;
+      minBarPx = 95;
+    }else if(maxBar <= 25){
+      wrapH = 560;
+      canvasH = 460;
+      minBarPx = 82;
+    }else if(maxBar <= 40){
+      wrapH = 540;
+      canvasH = 445;
+      minBarPx = 72;
+    }else{
+      wrapH = 500;
+      canvasH = 410;
+      minBarPx = 58;
+    }
 
-  _thbOeeChart = new Chart(canvas.getContext("2d"), {
-    data: {
-      labels,
-      datasets: [
-        {
-          type: "bar",
-          label: "OEE",
-          data: oee,
-          backgroundColor: "rgba(196, 181, 253, 0.85)",
-          borderColor: "rgba(167, 139, 250, 1)",
-          borderWidth: 1,
-          borderRadius: 8,
-          barPercentage: 0.68,
-          categoryPercentage: 0.72,
-          order: 2,
-        },
-        {
-          type: "line",
-          label: "Índice de Eficiencia Operacional",
-          data: operacional,
-          borderColor: "rgba(20, 184, 166, 1)",
-          backgroundColor: "rgba(20, 184, 166, 0.15)",
-          borderWidth: 3,
-          pointRadius: 3,
-          pointHoverRadius: 4,
-          tension: 0.35,
-          fill: false,
-          order: 1,
-        },
-        {
-          type: "line",
-          label: "Índice de Disponibilidad",
-          data: disponibilidad,
-          borderColor: "rgba(245, 158, 11, 1)",
-          backgroundColor: "rgba(245, 158, 11, 0.15)",
-          borderWidth: 3,
-          pointRadius: 3,
-          pointHoverRadius: 4,
-          tension: 0.35,
-          fill: false,
-          order: 1,
-        },
-        {
-          type: "line",
-          label: "Índice de Calidad",
-          data: calidad,
-          borderColor: "rgba(100, 116, 139, 1)",
-          backgroundColor: "rgba(100, 116, 139, 0.15)",
-          borderWidth: 3,
-          pointRadius: 3,
-          pointHoverRadius: 4,
-          tension: 0.35,
-          fill: false,
-          order: 1,
-        }
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: true,
-      interaction: {
-        mode: "index",
-        intersect: false,
+    wrap.style.height = `${wrapH}px`;
+    wrap.style.minHeight = `${wrapH}px`;
+    wrap.style.maxHeight = `${wrapH}px`;
+
+    canvas.style.width = "100%";
+    canvas.style.height = `${canvasH}px`;
+    canvas.style.maxHeight = `${canvasH}px`;
+
+    function pct(v, compact){
+      const n = Number(v) || 0;
+      return compact ? `${Math.round(n)}%` : `${n.toFixed(1)}%`;
+    }
+
+    _thbOeeChart = new Chart(canvas.getContext("2d"), {
+      data: {
+        labels,
+        datasets: [
+          {
+            type: "bar",
+            label: "OEE",
+            data: oee,
+            backgroundColor: "rgba(196, 181, 253, 0.85)",
+            borderColor: "rgba(167, 139, 250, 1)",
+            borderWidth: 1,
+            borderRadius: 8,
+            barPercentage: 0.68,
+            categoryPercentage: 0.72,
+            minBarLength: minBarPx,
+            order: 2,
+          },
+          {
+            type: "line",
+            label: "Índice de Eficiencia Operacional",
+            data: operacional,
+            borderColor: "rgba(20, 184, 166, 1)",
+            backgroundColor: "rgba(20, 184, 166, 0.15)",
+            borderWidth: 3,
+            pointRadius: 4,
+            pointHoverRadius: 5,
+            tension: 0.35,
+            fill: false,
+            order: 1,
+          },
+          {
+            type: "line",
+            label: "Índice de Disponibilidad",
+            data: disponibilidad,
+            borderColor: "rgba(245, 158, 11, 1)",
+            backgroundColor: "rgba(245, 158, 11, 0.15)",
+            borderWidth: 3,
+            pointRadius: 4,
+            pointHoverRadius: 5,
+            tension: 0.35,
+            fill: false,
+            order: 1,
+          },
+          {
+            type: "line",
+            label: "Índice de Calidad",
+            data: calidad,
+            borderColor: "rgba(100, 116, 139, 1)",
+            backgroundColor: "rgba(100, 116, 139, 0.15)",
+            borderWidth: 3,
+            pointRadius: 4,
+            pointHoverRadius: 5,
+            tension: 0.35,
+            fill: false,
+            order: 1,
+          }
+        ]
       },
-      plugins: {
-        legend: {
-          display: true,
-          position: "top",
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: {
+          padding: {
+            top: 28
+          }
         },
-        tooltip: {
-          callbacks: {
-            label: function(ctx){
-              const v = Number(ctx.parsed?.y ?? ctx.raw ?? 0);
-              return `${ctx.dataset.label}: ${v.toFixed(1)}%`;
+        interaction: {
+          mode: "index",
+          intersect: false,
+        },
+        animation: {
+          onComplete: function(){
+            try{
+              const chartObj = this.chart || this;
+              const ctx = chartObj.ctx;
+              const metaBar = chartObj.getDatasetMeta(0);
+              const yScale = chartObj.scales?.y;
+
+              if(!ctx || !metaBar || !metaBar.data || !yScale) return;
+
+              const baseY = yScale.getPixelForValue(0);
+
+              metaBar.data.forEach((bar, i) => {
+                const x = bar.x;
+                const topY = bar.y;
+                const bottomY = baseY;
+                const h = Math.max(0, bottomY - topY);
+
+                const compact = h < 70 || labels.length > 10;
+
+                const oeeTxt  = pct(oee[i], compact);
+                const opTxt   = pct(operacional[i], compact);
+                const dispTxt = pct(disponibilidad[i], compact);
+                const calTxt  = pct(calidad[i], compact);
+
+                // OEE morado: arriba por fuera
+                let oeeFont = 12;
+                if(h < 60) oeeFont = 10;
+                if(h < 42) oeeFont = 9;
+
+                ctx.save();
+                ctx.font = `bold ${oeeFont}px Arial`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = "rgba(255,255,255,0.92)";
+                ctx.strokeText(oeeTxt, x, topY - 14);
+                ctx.fillStyle = "rgba(124, 105, 244, 1)";
+                ctx.fillText(oeeTxt, x, topY - 14);
+                ctx.restore();
+
+                // Los otros 3: dentro de la barra
+                let fontSize = 11;
+                let step = 15;
+
+                if(h < 90){
+                  fontSize = 10;
+                  step = 13;
+                }
+                if(h < 68){
+                  fontSize = 9;
+                  step = 11;
+                }
+                if(h < 50){
+                  fontSize = 8;
+                  step = 9;
+                }
+
+                const rows = [
+                  { txt: opTxt,   color: "rgba(20, 184, 166, 1)" },
+                  { txt: dispTxt, color: "rgba(245, 158, 11, 1)" },
+                  { txt: calTxt,  color: "rgba(100, 116, 139, 1)" },
+                ];
+
+                const innerTop = topY + 12;
+                const innerBottom = bottomY - 8;
+                const blockH = step * (rows.length - 1);
+
+                let startY = innerTop + fontSize / 2;
+                const maxStart = innerBottom - blockH;
+
+                if(startY > maxStart) startY = maxStart;
+                if(startY < innerTop) startY = innerTop;
+
+                ctx.save();
+                ctx.font = `bold ${fontSize}px Arial`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = "rgba(255,255,255,0.92)";
+
+                rows.forEach((row, idx) => {
+                  const yy = startY + (idx * step);
+                  if(yy >= innerTop && yy <= innerBottom){
+                    ctx.strokeText(row.txt, x, yy);
+                    ctx.fillStyle = row.color;
+                    ctx.fillText(row.txt, x, yy);
+                  }
+                });
+
+                ctx.restore();
+              });
+            }catch(err){
+              console.error("labels OEE error:", err);
+            }
+          }
+        },
+        plugins: {
+          legend: {
+            display: true,
+            position: "top",
+          },
+          tooltip: {
+            callbacks: {
+              label: function(ctx){
+                const v = Number(ctx.parsed?.y ?? ctx.raw ?? 0);
+                return `${ctx.dataset.label}: ${v.toFixed(1)}%`;
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            min: 0,
+            max: 100,
+            ticks: {
+              stepSize: 10,
+              callback: (v) => `${v}%`
+            },
+            title: {
+              display: true,
+              text: "Porcentaje"
+            }
+          },
+          x: {
+            grid: {
+              display: false
+            },
+            title: {
+              display: true,
+              text: "Hora"
             }
           }
         }
-      },
-      scales: {
-        y: {
-          beginAtZero: true,
-          min: 0,
-          max: 100,
-          ticks: {
-            callback: (v) => `${v}%`
-          },
-          title: {
-            display: true,
-            text: "Porcentaje"
-          }
-        },
-        x: {
-          grid: {
-            display: false
-          }
-        }
       }
-    }
-  });
+    });
+
+  }catch(e){
+    console.error("renderThbOeeChart error:", e);
+  }
 }
 
 async function reloadOptions(){
@@ -1446,14 +1599,13 @@ function renderParetoParadas(result){
     labels = filt.map(x => x.code);
     durSec = filt.map(x => x.sec);
 
-    // ✅ recalcular cumPct (ya NO usamos el del backend porque cambió el total)
+    // ✅ recalcular cumPct
     const totalSec = durSec.reduce((a,b)=>a+(Number(b)||0),0);
     let run = 0;
     cumPct = durSec.map(s=>{
       run += (Number(s)||0);
       return totalSec > 0 ? Math.round((run/totalSec)*100) : 0;
     });
-
 
     if(!Array.isArray(labels) || !labels.length || !Array.isArray(durSec) || !durSec.length){
       destroyPareto();
@@ -1463,11 +1615,6 @@ function renderParetoParadas(result){
     titleEl.textContent = paretoTitle(String(result?.period || ""));
     titleEl.style.display = "block";
 
-    // normalizar acumulado: si viene 0..1 => 0..100
-    const maxCum = Math.max(...cumPct.map(x => Number(x)||0), 0);
-    if(maxCum <= 1.01) cumPct = cumPct.map(x => Math.round((Number(x)||0) * 100));
-    else cumPct = cumPct.map(x => Math.round(Number(x)||0));
-
     renderParetoLegend(labels, durSec, cumPct);
 
     if(typeof Chart === "undefined"){
@@ -1476,6 +1623,14 @@ function renderParetoParadas(result){
     }
 
     wrap.style.display = "block";
+    wrap.style.height = "390px";
+    wrap.style.minHeight = "390px";
+    wrap.style.maxHeight = "390px";
+
+    canvas.style.width = "100%";
+    canvas.style.height = "320px";
+    canvas.style.maxHeight = "320px";
+
     _destroyParetoChartOnly();
 
     const durMin = durSec.map(x => (Number(x) || 0) / 60.0);
@@ -1491,6 +1646,7 @@ function renderParetoParadas(result){
       },
       options: {
         responsive: true,
+        maintainAspectRatio: false,
         plugins: {
           legend: { display: true },
           tooltip: {
@@ -1506,10 +1662,35 @@ function renderParetoParadas(result){
           }
         },
         scales: {
-          y:  { beginAtZero: true, title: { display: true, text: "Duración (min)" } },
-          y1: { beginAtZero: true, min: 0, max: 100, position: "right",
-                grid: { drawOnChartArea: false },
-                title: { display: true, text: "Acumulado (%)" } }
+          y: {
+            beginAtZero: true,
+            title: {
+              display: true,
+              text: "Duración (min)"
+            }
+          },
+          y1: {
+            beginAtZero: true,
+            min: 0,
+            max: 100,
+            position: "right",
+            grid: {
+              drawOnChartArea: false
+            },
+            title: {
+              display: true,
+              text: "Acumulado (%)"
+            }
+          },
+          x: {
+            grid: {
+              display: false
+            },
+            title: {
+              display: true,
+              text: "Causa de parada"
+            }
+          }
         }
       }
     });
@@ -1866,6 +2047,22 @@ function renderProdHour(result){
   const showLenMix = (!isAplic) && (machineU !== "HP") && (machineU !== "THB");
   const showMeters = (!isAplic) && (machineU !== "HP");
 
+  const OEE_ESPERADO_HORA = 0.70;
+
+  function _normHourKey(s){
+    const m = String(s || "").match(/(\d{1,2})/);
+    return m ? String(parseInt(m[1], 10)).padStart(2, "0") : "";
+  }
+
+  const oeeChart = result?.oee_chart || {};
+  const oeeLabels = Array.isArray(oeeChart.labels) ? oeeChart.labels : [];
+  const oeeVals = Array.isArray(oeeChart.oee) ? oeeChart.oee : [];
+
+  const oeeByHour = new Map();
+  oeeLabels.forEach((lb, i) => {
+    oeeByHour.set(_normHourKey(lb), Number(oeeVals[i] ?? 0) || 0);
+  });
+
   grid.innerHTML = "";
 
   buckets.forEach(b=>{
@@ -2181,6 +2378,34 @@ function renderProdHour(result){
       ? `<div class="ph-tnom">T. Corte: ${escHtml(secToHHMMSS(Math.round(tnomSec)))}</div>`
       : ``;
 
+    const bucketHourKey = _normHourKey(hourStart);
+    const oeeHoraPct = Number(oeeByHour.get(bucketHourKey) ?? 0) || 0;
+
+    // VN por hora
+    const vnHoraUph = (tcnpSec > 0) ? (3600 / tcnpSec) : 0;
+
+    // TP por hora
+    const tpHoraH = (Number(b.capacitySec) || 0) / 3600;
+
+    // Producción planeada por hora
+    const planHoraUnits = OEE_ESPERADO_HORA * vnHoraUph * tpHoraH;
+
+    // Cumplimiento del plan por hora
+    const cumplimientoHoraPct = (planHoraUnits > 0)
+      ? ((circuits / planHoraUnits) * 100)
+      : 0;
+
+    const hourlyMiniKpisHtml = (machineU === "THB") ? `
+      <div class="ph-mini-kpis">
+        <div class="ph-mini-kpi ph-mini-kpi-oee">
+          OEE: ${escHtml(oeeHoraPct.toFixed(1))}%
+        </div>
+        <div class="ph-mini-kpi ph-mini-kpi-plan">
+          Cumpl. plan: ${escHtml(cumplimientoHoraPct.toFixed(1))}%
+        </div>
+      </div>
+    ` : ``;
+
 
 
     const card = document.createElement("div");
@@ -2192,6 +2417,7 @@ function renderProdHour(result){
       </div>
       <div class="ph-unit">${(machineU === "APLICACION" || machineU === "UNION") ? "Crimpados" : "Circuitos"}</div>
       ${metersHtml}
+      ${hourlyMiniKpisHtml}
       ${(machineU === "THB") ? `
         <div class="ph-nom-box">
           ${tcnpHtml}
@@ -2372,8 +2598,9 @@ function renderInlineKPIs(result){
 
   if(m === "THB"){
     order = [
-      { key: "OEE",             cls: "kpi-blue",                  span: "kpi-row-8" },
-      { key: "Metros Cortados", cls: "kpi-cyan2 kpi-thb-metros", span: "kpi-row-3" },
+      { key: "OEE",             cls: "kpi-blue",                  span: "kpi-row-2" },
+      { key: "Cumplimiento del plan", cls: "kpi-green",  span: "kpi-row-4" },
+      { key: "Metros Cortados", cls: "kpi-cyan2 kpi-thb-metros", span: "kpi-row-4" },
     ];
   }
 
@@ -2436,21 +2663,21 @@ function renderInlineKPIs(result){
 
     const detailOrder = [
       // fila 1
-      { key: "Producción Buena",        cls: "kpi-green",  span: "kpi-row-3" },
-      { key: "Producción Total",        cls: "kpi-cyan",   span: "kpi-row-3" },
-      { key: "Producción con Defectos", cls: "kpi-red",    span: "kpi-row-3" },
-
+      { key: "Producción Buena",        cls: "kpi-green",  span: "kpi-row-4" },
+      { key: "Producción Total",        cls: "kpi-cyan",   span: "kpi-row-4" },
+      { key: "Producción con Defectos", cls: "kpi-red",    span: "kpi-row-4" },
+      { key: "Tiempo Pagado",           cls: "kpi-blue",   span: "kpi-row-4" },
       // fila 2
-      { key: "Tiempo Pagado",           cls: "kpi-blue",   span: "kpi-row-2" },
       { key: "Tiempo Perdido",          cls: "kpi-purple", span: "kpi-row-2" },
-      { key: "Tiempos Perdidos",        cls: "kpi-purple", span: "kpi-row-2" },
-
-      // fila 3
+      { key: "Tiempos Perdidos",        cls: "kpi-purple", span: "kpi-row-4" },
       { key: "Tiempo Trabajado",        cls: "kpi-green2", span: "kpi-row-4" },
       { key: "Tiempo De Corte",         cls: "kpi-cyan2",  span: "kpi-row-4" },
+
       { key: "Tiempo de Corte",         cls: "kpi-cyan2",  span: "kpi-row-4" },
-      { key: "Tiempo de Ciclo",         cls: "",           span: "kpi-row-4" },
+      { key: "Tiempo de Ciclo",         cls: "kpi-cyan2",  span: "kpi-row-4" },
       { key: "Velocidad Nominal",       cls: "kpi-blue2",  span: "kpi-row-4" },
+      { key: "Metros Extras",           cls: "kpi-blue2",  span: "kpi-row-4" },
+      { key: "Metros Planeados",        cls: "kpi-purple", span: "kpi-row-4" },
     ];
 
     const used = new Set();

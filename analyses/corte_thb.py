@@ -842,7 +842,23 @@ def _quantize_hour_parts_to_60min(prod_sec: float, meal_sec: float, other_sec: f
 
     return pm * 60, mm * 60, om * 60
 
+def _thb_paid_seconds_for_hour(hour_int: int) -> int:
+    """
+    Tiempo pagado por franja horaria THB.
+    Reglas solicitadas:
+      - 08:00–09:00 => 45 min pagados
+      - 12:00–13:00 => 30 min pagados
+      - resto => 60 min pagados
+    """
+    h = int(hour_int)
 
+    if h == 8:
+        return 45 * 60   # 0.75 h
+
+    if h == 13:
+        return 30 * 60  # 13:00–14:00 = 0.50 h
+
+    return 60 * 60
 
 # ============================================================
 #  Overlap helpers
@@ -1091,7 +1107,6 @@ def _compute_hourly_buckets(
     day_start = pd.Timestamp(f"{day_iso} 00:00:00")
     day_end = pd.Timestamp(f"{day_iso} 23:59:59.999")
 
-    # ✅ actividad del día (para cap): usar verif + dt_start y dt_end de paradas
     times: List[pd.Timestamp] = []
     if dt_verif is not None and not dt_verif.dropna().empty:
         vts = pd.to_datetime(dt_verif.dropna(), errors="coerce")
@@ -1131,14 +1146,13 @@ def _compute_hourly_buckets(
 
     for h in range(24):
         h0 = pd.Timestamp(f"{day_iso} {h:02d}:00:00")
-        h1 = h0 + pd.Timedelta(hours=1)  # ✅ hora exacta (60 min)
+        h1 = h0 + pd.Timedelta(hours=1)
+        paid_sec = int(_thb_paid_seconds_for_hour(h))
 
-        # cap_raw define si esta hora está dentro del rango de actividad del día
         cap_raw = _overlap_seconds(h0, h1, activity_min, activity_max)
         if cap_raw <= 0:
             continue
 
-        # --- Verificación dentro de la hora ---
         if dt_verif is not None:
             dtc = pd.to_datetime(dt_verif, errors="coerce")
             in_hour = dtc.notna() & (dtc >= h0) & (dtc < h1)
@@ -1150,8 +1164,6 @@ def _compute_hourly_buckets(
         cut = 0
         meters = 0.0
 
-        # ✅ TC Nominal Ponderado por hora (seg/pieza) usando:
-        #    piezas buenas (q) y resultado verificación (mm)
         tcnp_sec = 0.0
         tcnp_len_mm = 0.0
         tcnp_total_sec = 0.0
@@ -1166,18 +1178,14 @@ def _compute_hourly_buckets(
                 buenas = pd.to_numeric(sub[c_buenas], errors="coerce").fillna(0).astype(float)
                 resmm = sub[c_resmm].apply(_num_es).astype(float)
 
-                # meters (lo de siempre)
                 meters = float(((buenas * resmm) / 1000.0).sum())
 
-                # ✅ TCNP por tipo (usa Terminal1/Terminal2 + modelo a+bL)
                 q_total = float(buenas.sum())
                 sum_q_mm = float((buenas * resmm).sum())
 
-                # Longitud promedio ponderada
                 if q_total > 0 and sum_q_mm > 0:
                     tcnp_len_mm = sum_q_mm / q_total
 
-                # Si hay columnas de terminales, calcula tipo por fila.
                 c_t1 = getattr(cols_verif, "col_terminal1", None)
                 c_t2 = getattr(cols_verif, "col_terminal2", None)
 
@@ -1185,11 +1193,8 @@ def _compute_hourly_buckets(
                     if c_t1 and c_t2 and (c_t1 in sub.columns) and (c_t2 in sub.columns):
                         tipos = sub.apply(lambda r: _thb_tipo_from_terminals(r.get(c_t1), r.get(c_t2)), axis=1)
                     else:
-                        # fallback: si no hay terminales, asume tipo 1
                         tipos = pd.Series([1] * len(sub), index=sub.index)
 
-                    # Tiempo nominal por fila: t = a + b*L según tipo
-                    # (modelo "calc"; si quieres comparar v=8, cambia model="v8")
                     t_nom = [
                         _thb_nominal_sec(float(L), int(tp), model="calc")
                         for L, tp in zip(resmm.tolist(), tipos.tolist())
@@ -1201,7 +1206,6 @@ def _compute_hourly_buckets(
 
             had_corte = (cut > 0) or (meters > 0)
 
-            # (len_mix no lo quito para no romper nada si lo usas)
             if c_longmm and (c_longmm in sub.columns):
                 longmm = sub[c_longmm].apply(_num_es)
                 if c_total and (c_total in sub.columns):
@@ -1243,7 +1247,6 @@ def _compute_hourly_buckets(
         else:
             sub_len_mix = None
 
-        # --- Paradas dentro de la hora ---
         dead_stop = 0.0
         meal_stop = 0.0
         had_parada = False
@@ -1256,39 +1259,76 @@ def _compute_hourly_buckets(
                 if str(code).strip() == MEAL_CODE:
                     meal_stop += olap
 
-        # cap_raw = cuánto de esta hora está dentro del rango real de actividad del día
-        # (activity_min/activity_max vienen de verif/paradas)
         cap_raw = float(cap_raw)
         if cap_raw < 0:
             cap_raw = 0.0
         if cap_raw > 3600.0:
             cap_raw = 3600.0
 
-        # ✅ gap fuera de actividad dentro de la hora (la “peculiaridad” de la última tarjeta)
-        #    esto debe ir a "Otro" como DESCONOCIDO
-        unknown_raw = max(0.0, 3600.0 - cap_raw)
+        unknown_raw = max(0.0, float(paid_sec) - cap_raw)
+
+        fixed_unpaid_sec = 0.0
+        if h == 8:
+            fixed_unpaid_sec = 15 * 60
+        elif h == 13:
+            fixed_unpaid_sec = 30 * 60
+
+        meal_stop_adj = max(0.0, float(meal_stop) - fixed_unpaid_sec)
 
         dead_other_raw = max(0.0, float(dead_stop) - float(meal_stop))
         other_raw = dead_other_raw + unknown_raw
 
-        prod_raw = max(0.0, cap_raw - float(dead_stop))
+        prod_raw = max(0.0, cap_raw - float(dead_stop) + fixed_unpaid_sec)
 
-        # ✅ regla: si NO hubo cortes en esa hora, NO puede haber prod (mantiene suma 60 min)
+        if prod_raw > float(paid_sec):
+            prod_raw = float(paid_sec)
+
+        if meal_stop_adj > float(paid_sec):
+            meal_stop_adj = float(paid_sec)
+
         if cut <= 0:
             prod_raw = 0.0
-            # todo lo que no sea comida se va a "Otro"
-            other_raw = 3600.0 - float(meal_stop)
+            other_raw = max(0.0, float(paid_sec) - float(meal_stop_adj))
 
-        # ✅ cuantiza a minutos y fuerza prod+meal+other = 3600 exacto
-        prod_q, meal_q, other_q = _quantize_hour_parts_to_60min(prod_raw, meal_stop, other_raw)
+        paid_min = max(0, int(round(float(paid_sec) / 60.0)))
 
-        # ✅ unknown cuantizado: lo que quedó fuera del cap_raw + ajustes de redondeo
-        #    (lo metemos dentro de Other como "Desconocido")
+        pm = int(round(max(0.0, float(prod_raw)) / 60.0))
+        mm = int(round(max(0.0, float(meal_stop_adj)) / 60.0))
+        om = int(round(max(0.0, float(other_raw)) / 60.0))
+
+        pm = max(0, min(paid_min, pm))
+        mm = max(0, min(paid_min, mm))
+        om = max(0, min(paid_min, om))
+
+        om = paid_min - pm - mm
+
+        if om < 0:
+            deficit = -om
+            take = min(deficit, pm)
+            pm -= take
+            deficit -= take
+
+            if deficit > 0:
+                take2 = min(deficit, mm)
+                mm -= take2
+                deficit -= take2
+
+            om = paid_min - pm - mm
+
+        pm = max(0, min(paid_min, pm))
+        mm = max(0, min(paid_min, mm))
+        om = max(0, min(paid_min, om))
+
+        prod_q = pm * 60
+        meal_q = mm * 60
+        other_q = om * 60
+
         dead_other_q = int(round(dead_other_raw / 60.0)) * 60
         if dead_other_q < 0:
             dead_other_q = 0
         if dead_other_q > other_q:
             dead_other_q = other_q
+
         unknown_q = int(other_q - dead_other_q)
 
         had_activity = bool(had_corte or had_parada)
@@ -1296,21 +1336,17 @@ def _compute_hourly_buckets(
         bucket = {
             "hourLabel": f"{h:02d}:00",
             "hour": f"{h:02d}",
-            "capacitySec": 3600,            # SIEMPRE 60 min
+            "capacitySec": int(paid_sec),
             "prodSec": int(prod_q),
             "mealSec": int(meal_q),
             "otherDeadSec": int(other_q),
             "deadSec": int(meal_q + other_q),
-            "unknownSec": int(unknown_q),   # <- para mostrar como "Desconocido"
-
+            "unknownSec": int(unknown_q),
             "cut": int(cut),
             "meters": float(meters),
-
-            # ✅ NUEVO (solo THB): TC nominal ponderado por hora
-            "tcnpSec": float(tcnp_sec),           # seg/pieza
-            "tcnpLenMm": float(tcnp_len_mm),      # mm/pieza (promedio ponderado)
-            "tcnpTotalSec": float(tcnp_total_sec),# seg (total nominal hora)
-
+            "tcnpSec": float(tcnp_sec),
+            "tcnpLenMm": float(tcnp_len_mm),
+            "tcnpTotalSec": float(tcnp_total_sec),
             "hadActivity": bool(had_activity),
         }
         if sub_len_mix is not None:
@@ -2068,7 +2104,7 @@ def _build_thb_oee_chart(
             planned = float(base["planned"])
             tnom_sec = float(base["tnom_sec"])
             teff_sec = float(b.get("prodSec", 0) or 0)
-            tpaid_sec = 3600.0
+            tpaid_sec = float(b.get("capacitySec", 3600) or 3600)
 
             if cut <= 0 and planned <= 0 and tnom_sec <= 0 and teff_sec <= 0 and float(b.get("deadSec", 0) or 0) <= 0:
                 continue
@@ -2591,6 +2627,23 @@ period=period,
     kpis["oee_disponibilidad"] = float(disponibilidad)
     kpis["oee_rendimiento"] = float(rendimiento)
 
+    # =========================
+    # ✅ Cumplimiento del plan
+    # Misma idea del Excel:
+    # PP = OEE esperado * VN * TP
+    # Cumplimiento = Producción Total / PP
+    # =========================
+    OEE_ESPERADO = 0.70  # si luego cambias ese 70% en el Excel, cambia también aquí
+
+    tp_h = float(kpis.get("horas_hombre_sec", 0) or 0) / 3600.0
+    vn_uph = float(kpis.get("velocidad_nominal_uph", 0.0) or 0.0)
+
+    produccion_planeada_calc = OEE_ESPERADO * vn_uph * tp_h
+    cumplimiento_plan = (good / produccion_planeada_calc) if produccion_planeada_calc > 0 else 0.0
+
+    kpis["produccion_planeada_calc"] = float(produccion_planeada_calc)
+    kpis["cumplimiento_plan"] = float(cumplimiento_plan)
+
     ui = {
         "Producción Total": f"{kpis['circuitos_cortados']:,}".replace(",", "."),
         "Producción Buena": f"{kpis['circuitos_planeados']:,}".replace(",", "."),
@@ -2606,6 +2659,9 @@ period=period,
 
         "Tiempo Trabajado": f"{kpis['tiempo_efectivo_hhmm']} ({kpis.get('pct_efectivo', 0.0):.1f}%)",
         "Tiempo Pagado": kpis["horas_hombre_hhmm"],
+
+        "Cumplimiento del plan": f"{(kpis.get('cumplimiento_plan', 0.0) * 100):.1f}%",
+
         "Metros Cortados":  f"{kpis['metros_cortados']:,.1f} m".replace(",", "X").replace(".", ",").replace("X", "."),
         "Metros Planeados": f"{kpis['metros_planeados']:,.1f} m".replace(",", "X").replace(".", ",").replace("X", "."),
         "Metros Extras":    f"{kpis['metros_extras']:,.1f} m".replace(",", "X").replace(".", ",").replace("X", "."),

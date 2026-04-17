@@ -2223,8 +2223,7 @@ def _clear_thb_template_body(ws, body_start: int, body_end: int):
 def _write_thb_template_totals(ws, body_start: int, body_end: int, total_row: int):
     ws.cell(total_row, 2).value = "TOTAL"
 
-    # ✅ Producción Planeada queda vacía también en total
-    ws.cell(total_row, 7).value = None
+    ws.cell(total_row, 7).value = f'=SUM(G{body_start}:G{body_end})'
 
     ws.cell(total_row, 8).value = f'=SUM(H{body_start}:H{body_end})'
     ws.cell(total_row, 9).value = f'=SUM(I{body_start}:I{body_end})'
@@ -2314,8 +2313,8 @@ def _build_thb_export_workbook(day_exports: list[dict], period: str) -> io.Bytes
             ws.cell(idx, 5).value = row["inicio"]
             ws.cell(idx, 6).value = row["fin"]
 
-            # Producción Planeada vacía
-            ws.cell(idx, 7).value = None
+            # Producción Planeada = OEE esperado * VN * TP
+            ws.cell(idx, 7).value = f'=IFERROR($G$2*O{idx}*K{idx},"")'
 
             ws.cell(idx, 8).value = row["pn"]
             ws.cell(idx, 9).value = row["rx"]
@@ -2369,7 +2368,7 @@ def _build_thb_export_workbook(day_exports: list[dict], period: str) -> io.Bytes
 
         # línea del total
         thin_black = Side(style="thin", color="000000")
-        for c in range(8, 23):
+        for c in range(7, 23):
             ws.cell(total_row, c).border = Border(top=thin_black, bottom=thin_black)
 
     # borrar hoja maestra original
