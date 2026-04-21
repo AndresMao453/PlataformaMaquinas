@@ -909,15 +909,20 @@ def _attach_other_causes_to_buckets_thb(
     top_n: int = 10,
 ) -> None:
     """
-    Agrega a cada bucket:
+    Agrega a cada bucket el detalle de causas de paro con SEGUNDOS REALES
+    por solape dentro de la hora, sin redistribuir ni reescalar minutos.
+
+    Cada item queda así:
       bucket["other_causes"] = [
         {"code": "203", "seconds": 420, "hhmm": "00:07", "desc": "..."},
-        {"code": "203", "seconds": 180, "hhmm": "00:03", "desc": "..."},
         ...
       ]
 
-    ✅ Cambio: NO acumula por código. Si hay 2+ paradas del mismo código en la hora,
-              se muestran como entradas separadas (una por evento).
+    Reglas:
+      - Excluye código 105 (comida) del detalle de "Causas de Paro".
+      - Conserva los segundos reales por evento/código en esa hora.
+      - Solo ordena y opcionalmente limita a top_n; no altera los tiempos.
+      - Si existe unknownSec, lo agrega como código "000" = "Desconocido".
     """
     if not buckets_in:
         return
@@ -955,13 +960,12 @@ def _attach_other_causes_to_buckets_thb(
     if p.empty:
         return
 
-    # códigos normalizados
     p["codigo"] = p.get("codigo", "").apply(_code_to_str).astype(str).str.strip()
     p = p[p["codigo"].ne("")].copy()
     if p.empty:
         return
 
-    # mapa desc por código (prefiere columna desc si existe)
+    # mapa de descripción por código
     desc_map: Dict[str, str] = {}
     if "desc" in p.columns:
         tmp = p[["codigo", "desc"]].copy()
@@ -982,7 +986,6 @@ def _attach_other_causes_to_buckets_thb(
             return desc_map[code]
         return _desc_from_dict(code) or ""
 
-    # arrays ns para overlap rápido
     start_ns = p["dt_start"].astype("datetime64[ns]").astype("int64").to_numpy()
     end_ns = p["dt_end"].astype("datetime64[ns]").astype("int64").to_numpy()
     codes_np = p["codigo"].astype(str).to_numpy()
@@ -1002,91 +1005,87 @@ def _attach_other_causes_to_buckets_thb(
         h0_ns = int(h0.value)
         h1_ns = int(h1.value)
 
-        # overlap por fila (evento)
         ol_ns = np.minimum(end_ns, h1_ns) - np.maximum(start_ns, h0_ns)
         ol_ns = np.maximum(0, ol_ns)
 
-        if ol_ns.sum() <= 0:
+        if ol_ns.sum() <= 0 and not int(b.get("unknownSec") or 0):
             b["other_causes"] = []
             continue
 
-        # ✅ en vez de acumular por código, creamos un item por evento
-        events_min: List[Tuple[str, int]] = []  # (codigo, minutos)
+        events: List[Dict[str, Any]] = []
+
         for code, ns in zip(codes_np, ol_ns):
             cc = str(code).strip()
             if (not cc) or (cc == MEAL_CODE):
                 continue
+
             sec = int(ns / 1e9)
             if sec <= 0:
                 continue
 
-            # cuantiza cada evento a minutos
-            m = int(round(sec / 60.0))
-            if m <= 0:
-                m = 1  # si hubo solape, al menos 1 min para que se vea
-            events_min.append((cc, m))
+            events.append({
+                "code": cc,
+                "seconds": int(sec),
+                "desc": _get_desc(cc),
+            })
 
-        # unknown (del bucket) también entra como evento "000"
         unk = int(b.get("unknownSec") or 0)
         if unk > 0:
-            m_unk = int(round(unk / 60.0))
-            if m_unk > 0:
-                events_min.append(("000", m_unk))
+            events.append({
+                "code": "000",
+                "seconds": int(unk),
+                "desc": _get_desc("000"),
+            })
 
-        if not events_min:
+        if not events:
             b["other_causes"] = []
             continue
 
-        # ✅ ajustar para que sume EXACTO lo que dice otherDeadSec del bucket
-        target_sec = int(b.get("otherDeadSec") or 0)
-        target_min = max(0, target_sec // 60)
+        events.sort(key=lambda x: int(x.get("seconds") or 0), reverse=True)
 
-        sum_min = sum(m for _, m in events_min)
-        delta = target_min - sum_min
-
-        if delta != 0:
-            # preferimos ajustar el "000" (Desconocido). Si no existe, ajusta el último evento.
-            idx = None
-            for i in range(len(events_min) - 1, -1, -1):
-                if events_min[i][0] == "000":
-                    idx = i
-                    break
-            if idx is None:
-                idx = len(events_min) - 1
-
-            c0, m0 = events_min[idx]
-            m1 = max(0, m0 + delta)
-            events_min[idx] = (c0, m1)
-
-            # si quedó en 0, lo eliminamos
-            events_min = [(c, m) for (c, m) in events_min if m > 0]
-
-        # ordenar por duración desc
-        events_min.sort(key=lambda x: x[1], reverse=True)
-
-        # top_n opcional (si quieres ver TODO, pon top_n=0 o un número muy grande)
-        if top_n and len(events_min) > top_n:
+        if top_n and len(events) > top_n:
             keep_n = max(1, top_n - 1)
-            keep = events_min[:keep_n]
-            rest_min = sum(m for _, m in events_min[keep_n:])
-            keep.append(("999", rest_min))
-            events_min = keep
+            keep = events[:keep_n]
+            rest_sec = sum(int(x.get("seconds") or 0) for x in events[keep_n:])
+            keep.append({
+                "code": "999",
+                "seconds": int(rest_sec),
+                "desc": "Otros",
+            })
+            events = keep
 
-        # salida final (min -> sec)
         b["other_causes"] = [
             {
-                "code": c,
-                "seconds": int(m * 60),
-                "hhmm": _seconds_to_hhmm(float(m * 60)),
-                "desc": ("Otros" if c == "999" else _get_desc(c)),
+                "code": str(ev["code"]),
+                "seconds": int(ev["seconds"]),
+                "hhmm": _seconds_to_hhmm(float(ev["seconds"])),
+                "desc": str(ev["desc"]),
             }
-            for c, m in events_min
+            for ev in events
+            if int(ev.get("seconds") or 0) > 0
         ]
-
 
 # ============================================================
 #  Productividad por hora
 # ============================================================
+def _thb_default_unpaid_break_seconds_for_hour(hour_int: int) -> int:
+    """
+    Tiempo NO pago base por hora:
+      - 08:00–09:00 => 15 min desayuno
+      - 13:00–14:00 => 30 min almuerzo
+      - resto => 0
+    """
+    h = int(hour_int)
+
+    if h == 8:
+        return 15 * 60
+
+    if h == 13:
+        return 30 * 60
+
+    return 0
+
+
 def _compute_hourly_buckets(
     df_verif: pd.DataFrame,
     dt_verif: pd.Series,
@@ -1095,9 +1094,17 @@ def _compute_hourly_buckets(
     df_paradas_iv: Optional[pd.DataFrame] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Retorna lista de buckets por hora:
-      - prodSec, deadSec, mealSec, otherDeadSec, cut, meters, hadActivity, capacitySec
-      + ✅ THB: TC Nominal Ponderado por hora (tcnpSec), longitud ponderada (tcnpLenMm), total nominal (tcnpTotalSec)
+    Buckets por hora THB con CORTE REAL POR HORA.
+
+    Nueva lógica:
+      - Cada parada se reparte por solape real dentro de la hora.
+      - TX = suma real por hora de paradas distintas de 105.
+      - Comida = tiempo NO pago por la hora:
+          * 08:00–09:00 => max(15 min, solape real código 105)
+          * 13:00–14:00 => max(30 min, solape real código 105)
+          * resto => 0
+      - TW = lo que queda de la hora después de TX y Comida.
+      - La suma por card queda: TW + TX + Comida = 60 min.
     """
     LEN_SMALL_MAX = 300.0
     LEN_MED_MAX = 800.0
@@ -1107,12 +1114,9 @@ def _compute_hourly_buckets(
     day_start = pd.Timestamp(f"{day_iso} 00:00:00")
     day_end = pd.Timestamp(f"{day_iso} 23:59:59.999")
 
-    times: List[pd.Timestamp] = []
-    if dt_verif is not None and not dt_verif.dropna().empty:
-        vts = pd.to_datetime(dt_verif.dropna(), errors="coerce")
-        vts = vts[(vts >= day_start) & (vts <= day_end)]
-        times += vts.tolist()
-
+    # ------------------------------------------------------------
+    # Paradas como intervalos reales recortados al día
+    # ------------------------------------------------------------
     stop_intervals: List[Tuple[pd.Timestamp, pd.Timestamp, str]] = []
     if df_paradas_iv is not None and not df_paradas_iv.empty:
         for _, r in df_paradas_iv.iterrows():
@@ -1120,42 +1124,38 @@ def _compute_hourly_buckets(
             e = pd.to_datetime(r.get("dt_end"), errors="coerce")
             if pd.isna(s) or pd.isna(e):
                 continue
-            if e < day_start or s > day_end:
+            if e <= day_start or s >= day_end:
                 continue
+
             if s < day_start:
                 s = day_start
             if e > day_end:
                 e = day_end
+
+            if e <= s:
+                continue
+
             code = str(r.get("codigo", "")).strip()
             stop_intervals.append((s, e, code))
-            times.append(s)
-            times.append(e)
-
-    if not times:
-        return []
-
-    activity_min = min(times)
-    activity_max = max(times)
 
     c_buenas = cols_verif.col_piezas_buenas
     c_total = cols_verif.col_total_piezas
     c_resmm = cols_verif.col_res_mm
     c_longmm = cols_verif.col_long_mm
 
+    dtc_all = pd.to_datetime(dt_verif, errors="coerce") if dt_verif is not None else pd.Series([], dtype="datetime64[ns]")
+
     buckets: List[Dict[str, Any]] = []
 
     for h in range(24):
         h0 = pd.Timestamp(f"{day_iso} {h:02d}:00:00")
         h1 = h0 + pd.Timedelta(hours=1)
-        paid_sec = int(_thb_paid_seconds_for_hour(h))
 
-        cap_raw = _overlap_seconds(h0, h1, activity_min, activity_max)
-        if cap_raw <= 0:
-            continue
-
-        if dt_verif is not None:
-            dtc = pd.to_datetime(dt_verif, errors="coerce")
-            in_hour = dtc.notna() & (dtc >= h0) & (dtc < h1)
+        # --------------------------------------------------------
+        # Producción registrada en esa hora
+        # --------------------------------------------------------
+        if dt_verif is not None and len(dtc_all):
+            in_hour = dtc_all.notna() & (dtc_all >= h0) & (dtc_all < h1)
         else:
             in_hour = pd.Series([], dtype=bool)
 
@@ -1169,6 +1169,7 @@ def _compute_hourly_buckets(
         tcnp_total_sec = 0.0
 
         had_corte = False
+        sub_len_mix = None
 
         if not sub.empty:
             if c_buenas and c_buenas in sub.columns:
@@ -1191,7 +1192,10 @@ def _compute_hourly_buckets(
 
                 if q_total > 0:
                     if c_t1 and c_t2 and (c_t1 in sub.columns) and (c_t2 in sub.columns):
-                        tipos = sub.apply(lambda r: _thb_tipo_from_terminals(r.get(c_t1), r.get(c_t2)), axis=1)
+                        tipos = sub.apply(
+                            lambda r: _thb_tipo_from_terminals(r.get(c_t1), r.get(c_t2)),
+                            axis=1,
+                        )
                     else:
                         tipos = pd.Series([1] * len(sub), index=sub.index)
 
@@ -1208,6 +1212,7 @@ def _compute_hourly_buckets(
 
             if c_longmm and (c_longmm in sub.columns):
                 longmm = sub[c_longmm].apply(_num_es)
+
                 if c_total and (c_total in sub.columns):
                     tot = pd.to_numeric(sub[c_total], errors="coerce").fillna(0).astype(float)
                 else:
@@ -1240,124 +1245,88 @@ def _compute_hourly_buckets(
                         "mid_pct": round((w_med / tot_w) * 100.0),
                         "long_pct": round((w_long / tot_w) * 100.0),
                     }
-                else:
-                    sub_len_mix = None
-            else:
-                sub_len_mix = None
-        else:
-            sub_len_mix = None
 
-        dead_stop = 0.0
-        meal_stop = 0.0
+        # --------------------------------------------------------
+        # Paradas reales por solape horario
+        # --------------------------------------------------------
+        stop_total_raw = 0.0
+        stop_105_raw = 0.0
         had_parada = False
 
         for (s, e, code) in stop_intervals:
             olap = _overlap_seconds(h0, h1, s, e)
-            if olap > 0:
-                dead_stop += olap
-                had_parada = True
-                if str(code).strip() == MEAL_CODE:
-                    meal_stop += olap
+            if olap <= 0:
+                continue
 
-        cap_raw = float(cap_raw)
-        if cap_raw < 0:
-            cap_raw = 0.0
-        if cap_raw > 3600.0:
-            cap_raw = 3600.0
+            had_parada = True
+            stop_total_raw += olap
 
-        unknown_raw = max(0.0, float(paid_sec) - cap_raw)
+            if str(code).strip() == MEAL_CODE:
+                stop_105_raw += olap
 
-        fixed_unpaid_sec = 0.0
-        if h == 8:
-            fixed_unpaid_sec = 15 * 60
-        elif h == 13:
-            fixed_unpaid_sec = 30 * 60
+        # Si no hubo ni producción ni paradas en esa hora, no crear card
+        if sub.empty and stop_total_raw <= 0:
+            continue
 
-        meal_stop_adj = max(0.0, float(meal_stop) - fixed_unpaid_sec)
+        # --------------------------------------------------------
+        # NUEVA LÓGICA THB
+        # --------------------------------------------------------
+        default_unpaid_sec = float(_thb_default_unpaid_break_seconds_for_hour(h))
 
-        dead_other_raw = max(0.0, float(dead_stop) - float(meal_stop))
-        other_raw = dead_other_raw + unknown_raw
+        # Comida NO paga por esa hora
+        meal_raw = max(default_unpaid_sec, float(stop_105_raw))
+        meal_raw = max(0.0, min(3600.0, meal_raw))
 
-        prod_raw = max(0.0, cap_raw - float(dead_stop) + fixed_unpaid_sec)
+        # TX = SOLO paradas distintas de 105, con corte real por hora
+        tx_raw = max(0.0, float(stop_total_raw) - float(stop_105_raw))
 
-        if prod_raw > float(paid_sec):
-            prod_raw = float(paid_sec)
+        # No puede exceder el tiempo pagable de la hora
+        paid_raw = max(0.0, 3600.0 - meal_raw)
+        tx_raw = min(tx_raw, paid_raw)
 
-        if meal_stop_adj > float(paid_sec):
-            meal_stop_adj = float(paid_sec)
+        # TW = lo que queda de la hora después de TX y Comida
+        tw_raw = max(0.0, 3600.0 - meal_raw - tx_raw)
 
-        if cut <= 0:
-            prod_raw = 0.0
-            other_raw = max(0.0, float(paid_sec) - float(meal_stop_adj))
+        # --------------------------------------------------------
+        # Cuantización a minutos para visualización estable
+        # --------------------------------------------------------
+        mm = int(round(meal_raw / 60.0))
+        mm = max(0, min(60, mm))
 
-        paid_min = max(0, int(round(float(paid_sec) / 60.0)))
+        om = int(round(tx_raw / 60.0))
+        om = max(0, min(60 - mm, om))
 
-        pm = int(round(max(0.0, float(prod_raw)) / 60.0))
-        mm = int(round(max(0.0, float(meal_stop_adj)) / 60.0))
-        om = int(round(max(0.0, float(other_raw)) / 60.0))
+        pm = max(0, 60 - mm - om)
 
-        pm = max(0, min(paid_min, pm))
-        mm = max(0, min(paid_min, mm))
-        om = max(0, min(paid_min, om))
-
-        om = paid_min - pm - mm
-
-        if om < 0:
-            deficit = -om
-            take = min(deficit, pm)
-            pm -= take
-            deficit -= take
-
-            if deficit > 0:
-                take2 = min(deficit, mm)
-                mm -= take2
-                deficit -= take2
-
-            om = paid_min - pm - mm
-
-        pm = max(0, min(paid_min, pm))
-        mm = max(0, min(paid_min, mm))
-        om = max(0, min(paid_min, om))
-
-        prod_q = pm * 60
         meal_q = mm * 60
         other_q = om * 60
+        prod_q = pm * 60
 
-        dead_other_q = int(round(dead_other_raw / 60.0)) * 60
-        if dead_other_q < 0:
-            dead_other_q = 0
-        if dead_other_q > other_q:
-            dead_other_q = other_q
-
-        unknown_q = int(other_q - dead_other_q)
-
-        had_activity = bool(had_corte or had_parada)
+        capacity_q = max(0, 3600 - meal_q)
 
         bucket = {
             "hourLabel": f"{h:02d}:00",
             "hour": f"{h:02d}",
-            "capacitySec": int(paid_sec),
+            "capacitySec": int(capacity_q),
             "prodSec": int(prod_q),
             "mealSec": int(meal_q),
             "otherDeadSec": int(other_q),
             "deadSec": int(meal_q + other_q),
-            "unknownSec": int(unknown_q),
+            "unknownSec": 0,
             "cut": int(cut),
             "meters": float(meters),
             "tcnpSec": float(tcnp_sec),
             "tcnpLenMm": float(tcnp_len_mm),
             "tcnpTotalSec": float(tcnp_total_sec),
-            "hadActivity": bool(had_activity),
+            "hadActivity": bool(had_corte or had_parada),
         }
+
         if sub_len_mix is not None:
             bucket["len_mix"] = sub_len_mix
 
         buckets.append(bucket)
 
     return buckets
-
-
-
 
 
 def _compute_prod_seconds_for_range(
@@ -2030,6 +1999,65 @@ def _clip01(x: float) -> float:
         return 0.0
     return float(max(0.0, min(1.0, n)))
 
+def _compute_thb_excel_summary_metrics(
+    *,
+    total_units: float,
+    good_units: float,
+    tpaid_sec: float,
+    teff_sec: float,
+    tc_unit_sec: float,
+    oee_expected: float = 0.70,
+) -> Dict[str, float]:
+    """
+    Replica la lógica del Excel para los indicadores principales:
+
+      Disponibilidad = TW / TP
+      Indice de Eficiencia Operacional = T. Corte / TW
+      Indice de Calidad = T. Corte Bueno / T. Corte
+      OEE = T. Corte Bueno / TP
+      Cumplimiento del plan = Producción Total / (OEE esperado * VN * TP)
+
+    Donde:
+      - Producción Total = total_units
+      - Producción Buena = good_units
+      - TP = tpaid_sec
+      - TW = teff_sec
+      - TC unitario = tc_unit_sec
+    """
+    total_units = max(0.0, float(total_units or 0.0))
+    good_units = max(0.0, min(float(good_units or 0.0), total_units))
+    tpaid_sec = max(0.0, float(tpaid_sec or 0.0))
+    teff_sec = max(0.0, float(teff_sec or 0.0))
+    tc_unit_sec = max(0.0, float(tc_unit_sec or 0.0))
+    oee_expected = max(0.0, float(oee_expected or 0.0))
+
+    # Excel:
+    # P = Tiempo de Corte total     = Producción Total * TC unitario
+    # Q = Tiempo de Corte bueno     = Producción Buena * TC unitario
+    p_time_sec = total_units * tc_unit_sec
+    q_time_sec = good_units * tc_unit_sec
+
+    disponibilidad = _clip01((teff_sec / tpaid_sec) if tpaid_sec > 0 else 0.0)
+    operacional = _clip01((p_time_sec / teff_sec) if teff_sec > 0 else 0.0)
+    calidad = _clip01((q_time_sec / p_time_sec) if p_time_sec > 0 else 0.0)
+    oee = _clip01((q_time_sec / tpaid_sec) if tpaid_sec > 0 else 0.0)
+
+    vn_uph = (3600.0 / tc_unit_sec) if tc_unit_sec > 0 else 0.0
+    tp_h = tpaid_sec / 3600.0
+    produccion_planeada_calc = oee_expected * vn_uph * tp_h
+    cumplimiento_plan = (total_units / produccion_planeada_calc) if produccion_planeada_calc > 0 else 0.0
+
+    return {
+        "oee": float(oee),
+        "disponibilidad": float(disponibilidad),
+        "operacional": float(operacional),
+        "calidad": float(calidad),
+        "produccion_planeada_calc": float(produccion_planeada_calc),
+        "cumplimiento_plan": float(cumplimiento_plan),
+        "vn_uph": float(vn_uph),
+        "p_time_sec": float(p_time_sec),
+        "q_time_sec": float(q_time_sec),
+    }
 
 def _build_thb_oee_chart(
     *,
@@ -2062,17 +2090,21 @@ def _build_thb_oee_chart(
     df_all_ops = df_verif_all_ops if isinstance(df_verif_all_ops, pd.DataFrame) else df_verif
     dt_all_ops = pd.to_datetime(dt_verif_all_ops, errors="coerce") if dt_verif_all_ops is not None else dtv
 
-    def _push(label: str, cut: float, planned: float, tnom_sec: float, teff_sec: float, tpaid_sec: float):
-        calidad = _clip01((planned / cut) if cut > 0 else 0.0)
-        disponibilidad = _clip01((teff_sec / tpaid_sec) if tpaid_sec > 0 else 0.0)
-        operacional = _clip01((tnom_sec / teff_sec) if teff_sec > 0 else 0.0)
-        oee = _clip01(disponibilidad * operacional * calidad)
+    def _push(label: str, total_units: float, good_units: float, teff_sec: float, tpaid_sec: float, tc_unit_sec: float):
+        met = _compute_thb_excel_summary_metrics(
+            total_units=total_units,
+            good_units=good_units,
+            tpaid_sec=tpaid_sec,
+            teff_sec=teff_sec,
+            tc_unit_sec=tc_unit_sec,
+            oee_expected=0.70,
+        )
 
         out["labels"].append(str(label))
-        out["oee"].append(round(oee * 100.0, 1))
-        out["operacional"].append(round(operacional * 100.0, 1))
-        out["disponibilidad"].append(round(disponibilidad * 100.0, 1))
-        out["calidad"].append(round(calidad * 100.0, 1))
+        out["oee"].append(round(met["oee"] * 100.0, 1))
+        out["operacional"].append(round(met["operacional"] * 100.0, 1))
+        out["disponibilidad"].append(round(met["disponibilidad"] * 100.0, 1))
+        out["calidad"].append(round(met["calidad"] * 100.0, 1))
 
     if period == "day":
         day = pd.Timestamp(r0).normalize()
@@ -2100,22 +2132,25 @@ def _build_thb_oee_chart(
 
             base = _thb_segment_counts_and_nominal(df_seg, cols)
 
-            cut = float(base["cut"])
-            planned = float(base["planned"])
-            tnom_sec = float(base["tnom_sec"])
+            total_units = float(base.get("cut", 0) or 0)
+            good_units = float(min(total_units, float(base.get("planned", 0) or 0)))
             teff_sec = float(b.get("prodSec", 0) or 0)
-            tpaid_sec = float(b.get("capacitySec", 3600) or 3600)
+            tpaid_sec = float(b.get("capacitySec", 0) or 0)
 
-            if cut <= 0 and planned <= 0 and tnom_sec <= 0 and teff_sec <= 0 and float(b.get("deadSec", 0) or 0) <= 0:
+            tc_unit_sec = 0.0
+            if total_units > 0:
+                tc_unit_sec = float(base.get("tnom_sec", 0) or 0) / total_units
+
+            if total_units <= 0 and good_units <= 0 and teff_sec <= 0 and float(b.get("deadSec", 0) or 0) <= 0:
                 continue
 
             _push(
                 label=f"{h:02d}",
-                cut=cut,
-                planned=planned,
-                tnom_sec=tnom_sec,
+                total_units=total_units,
+                good_units=good_units,
                 teff_sec=teff_sec,
                 tpaid_sec=tpaid_sec,
+                tc_unit_sec=tc_unit_sec,
             )
 
         return out
@@ -2164,13 +2199,25 @@ def _build_thb_oee_chart(
                 dt_verif_all_ops=dt_seg_all,
             ))
 
+            total_units = float(k_seg.get("circuitos_cortados", 0) or 0)
+            good_units = float(min(total_units, float(k_seg.get("circuitos_planeados", 0) or 0)))
+            teff_sec = float(k_seg.get("tiempo_efectivo_sec", 0) or 0)
+
+            tc_unit_sec = 0.0
+            if total_units > 0:
+                tcnp_seg = float(k_seg.get("tcnp_sec", 0) or 0)
+                if tcnp_seg > 0:
+                    tc_unit_sec = tcnp_seg
+                else:
+                    tc_unit_sec = float(k_seg.get("tnom_total_sec", 0) or 0) / total_units
+
             _push(
                 label=f"{DAY_ABBR[int(seg0.weekday())]} {seg0.strftime('%d')}",
-                cut=float(k_seg.get("circuitos_cortados", 0) or 0),
-                planned=float(k_seg.get("circuitos_planeados", 0) or 0),
-                tnom_sec=float(k_seg.get("tnom_total_sec", 0) or 0),
-                teff_sec=float(k_seg.get("tiempo_efectivo_sec", 0) or 0),
+                total_units=total_units,
+                good_units=good_units,
+                teff_sec=teff_sec,
                 tpaid_sec=tpaid_sec,
+                tc_unit_sec=tc_unit_sec,
             )
 
             day = seg1
@@ -2219,13 +2266,25 @@ def _build_thb_oee_chart(
                 dt_verif_all_ops=dt_seg_all,
             ))
 
+            total_units = float(k_seg.get("circuitos_cortados", 0) or 0)
+            good_units = float(min(total_units, float(k_seg.get("circuitos_planeados", 0) or 0)))
+            teff_sec = float(k_seg.get("tiempo_efectivo_sec", 0) or 0)
+
+            tc_unit_sec = 0.0
+            if total_units > 0:
+                tcnp_seg = float(k_seg.get("tcnp_sec", 0) or 0)
+                if tcnp_seg > 0:
+                    tc_unit_sec = tcnp_seg
+                else:
+                    tc_unit_sec = float(k_seg.get("tnom_total_sec", 0) or 0) / total_units
+
             _push(
                 label=f"Sem {week_idx}",
-                cut=float(k_seg.get("circuitos_cortados", 0) or 0),
-                planned=float(k_seg.get("circuitos_planeados", 0) or 0),
-                tnom_sec=float(k_seg.get("tnom_total_sec", 0) or 0),
-                teff_sec=float(k_seg.get("tiempo_efectivo_sec", 0) or 0),
+                total_units=total_units,
+                good_units=good_units,
+                teff_sec=teff_sec,
                 tpaid_sec=tpaid_sec,
+                tc_unit_sec=tc_unit_sec,
             )
 
             week_idx += 1
@@ -2234,6 +2293,8 @@ def _build_thb_oee_chart(
         return out
 
     return out
+
+
 # ============================================================
 # ✅ analyze_thb (COMPLETA)
 #  - todo lo demás respeta time_start/time_end
@@ -2601,48 +2662,42 @@ period=period,
     io = (tnom_sec / teff_sec) if teff_sec > 0 else 0.0
     kpis["indice_operacional"] = float(io)
 
-    # ✅ KPI: Velocidad Nominal (VN) = 3600 / TCNP
+    # =========================================================
+    # KPI: Velocidad Nominal (VN) = 3600 / TCNP
+    # =========================================================
     tcnp_sec_period = float(kpis.get("tcnp_sec", 0.0) or 0.0)
     vn_uph = (3600.0 / tcnp_sec_period) if tcnp_sec_period > 0 else 0.0
     kpis["velocidad_nominal_uph"] = float(vn_uph)
 
-    # =========================
-    # ✅ OEE breakdown (Rendimiento / Disponibilidad / Calidad)
-    # =========================
-    good = float(kpis.get("circuitos_cortados", 0) or 0)
-    total = float(kpis.get("circuitos_planeados", 0) or 0)
+    # =========================================================
+    # OEE / Disponibilidad / Eficiencia Operacional / Calidad
+    # con la misma lógica del Excel
+    # =========================================================
+    total_units = float(kpis.get("circuitos_cortados", 0) or 0)
+    good_units = float(min(total_units, float(kpis.get("circuitos_planeados", 0) or 0)))
 
-    teff = float(kpis.get("tiempo_efectivo_sec", 0) or 0)          # seg
-    tpaid = float(kpis.get("horas_hombre_sec", 0) or 0)            # seg
-    tnom = float(kpis.get("tnom_total_sec", 0) or 0)               # seg
+    teff_sec = float(kpis.get("tiempo_efectivo_sec", 0) or 0)
+    tpaid_sec = float(kpis.get("horas_hombre_sec", 0) or 0)
 
-    calidad = (total / good) if good > 0 else 0.0                 # Q
-    disponibilidad = (teff / tpaid) if tpaid > 0 else 0.0          # A
-    rendimiento = (tnom / teff) if teff > 0 else 0.0               # P  (tu IO)
+    tc_unit_sec = tcnp_sec_period
+    if tc_unit_sec <= 0 and total_units > 0:
+        tc_unit_sec = float(kpis.get("tnom_total_sec", 0) or 0) / total_units
 
-    oee = disponibilidad * rendimiento * calidad
+    excel_met = _compute_thb_excel_summary_metrics(
+        total_units=total_units,
+        good_units=good_units,
+        tpaid_sec=tpaid_sec,
+        teff_sec=teff_sec,
+        tc_unit_sec=tc_unit_sec,
+        oee_expected=0.70,
+    )
 
-    kpis["oee"] = float(oee)
-    kpis["oee_calidad"] = float(calidad)
-    kpis["oee_disponibilidad"] = float(disponibilidad)
-    kpis["oee_rendimiento"] = float(rendimiento)
-
-    # =========================
-    # ✅ Cumplimiento del plan
-    # Misma idea del Excel:
-    # PP = OEE esperado * VN * TP
-    # Cumplimiento = Producción Total / PP
-    # =========================
-    OEE_ESPERADO = 0.70  # si luego cambias ese 70% en el Excel, cambia también aquí
-
-    tp_h = float(kpis.get("horas_hombre_sec", 0) or 0) / 3600.0
-    vn_uph = float(kpis.get("velocidad_nominal_uph", 0.0) or 0.0)
-
-    produccion_planeada_calc = OEE_ESPERADO * vn_uph * tp_h
-    cumplimiento_plan = (good / produccion_planeada_calc) if produccion_planeada_calc > 0 else 0.0
-
-    kpis["produccion_planeada_calc"] = float(produccion_planeada_calc)
-    kpis["cumplimiento_plan"] = float(cumplimiento_plan)
+    kpis["oee"] = float(excel_met["oee"])
+    kpis["oee_calidad"] = float(excel_met["calidad"])
+    kpis["oee_disponibilidad"] = float(excel_met["disponibilidad"])
+    kpis["oee_rendimiento"] = float(excel_met["operacional"])
+    kpis["produccion_planeada_calc"] = float(excel_met["produccion_planeada_calc"])
+    kpis["cumplimiento_plan"] = float(excel_met["cumplimiento_plan"])
 
     ui = {
         "Producción Total": f"{kpis['circuitos_cortados']:,}".replace(",", "."),
@@ -2668,7 +2723,6 @@ period=period,
         "Velocidad Nominal": f"{int(round(kpis.get('velocidad_nominal_uph', 0.0))):,} unid/h".replace(",", "."),
 
         "Tiempo De Corte": kpis.get("tnom_total_hhmm", "00:00"),
-        #"Índice Operacional (IO)": f"{kpis.get('indice_operacional', 0.0):.3f}",
         "Tiempo de Ciclo": f"{kpis.get('tcnp_sec', 0.0):.4f} s/pz",
 
         "OEE": (
@@ -2677,8 +2731,6 @@ period=period,
             f"Indice de Disponibilidad: {(kpis.get('oee_disponibilidad', 0.0) * 100):.1f}% | "
             f"Indice de Calidad: {(kpis.get('oee_calidad', 0.0) * 100):.1f}%"
         ),
-
-
     }
 
     chart_df_verif = df_f if period == "day" else df_no_hour

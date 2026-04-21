@@ -290,6 +290,13 @@ function _thbOeeChartTitle(period){
   return "Gráfico OEE";
 }
 
+function _thbOeeChartXAxisTitle(period){
+  if(period === "day") return "Hora";
+  if(period === "week") return "Día";
+  if(period === "month") return "Semana";
+  return "Periodo";
+}
+
 function renderThbOeeChart(result){
   try{
     const machine = String(result?.machine || "").toUpperCase();
@@ -434,102 +441,37 @@ function renderThbOeeChart(result){
           intersect: false,
         },
         animation: {
-          onComplete: function(){
-            try{
-              const chartObj = this.chart || this;
-              const ctx = chartObj.ctx;
-              const metaBar = chartObj.getDatasetMeta(0);
-              const yScale = chartObj.scales?.y;
+  onComplete: function(){
+    try{
+      const chartObj = this.chart || this;
+      const ctx = chartObj.ctx;
+      const metaBar = chartObj.getDatasetMeta(0);
 
-              if(!ctx || !metaBar || !metaBar.data || !yScale) return;
+      if(!ctx || !metaBar || !metaBar.data) return;
 
-              const baseY = yScale.getPixelForValue(0);
+      metaBar.data.forEach((bar, i) => {
+        const x = bar.x;
+        const topY = bar.y;
 
-              metaBar.data.forEach((bar, i) => {
-                const x = bar.x;
-                const topY = bar.y;
-                const bottomY = baseY;
-                const h = Math.max(0, bottomY - topY);
+        const oeeTxt = `${Number(oee[i] ?? 0).toFixed(1)}%`;
 
-                const compact = h < 70 || labels.length > 10;
+        ctx.save();
+        ctx.font = "bold 12px Arial";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "rgba(255,255,255,0.92)";
+        ctx.strokeText(oeeTxt, x, topY - 12);
+        ctx.fillStyle = "rgba(124, 105, 244, 1)";
+        ctx.fillText(oeeTxt, x, topY - 12);
+        ctx.restore();
+      });
 
-                const oeeTxt  = pct(oee[i], compact);
-                const opTxt   = pct(operacional[i], compact);
-                const dispTxt = pct(disponibilidad[i], compact);
-                const calTxt  = pct(calidad[i], compact);
-
-                // OEE morado: arriba por fuera
-                let oeeFont = 12;
-                if(h < 60) oeeFont = 10;
-                if(h < 42) oeeFont = 9;
-
-                ctx.save();
-                ctx.font = `bold ${oeeFont}px Arial`;
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.lineWidth = 3;
-                ctx.strokeStyle = "rgba(255,255,255,0.92)";
-                ctx.strokeText(oeeTxt, x, topY - 14);
-                ctx.fillStyle = "rgba(124, 105, 244, 1)";
-                ctx.fillText(oeeTxt, x, topY - 14);
-                ctx.restore();
-
-                // Los otros 3: dentro de la barra
-                let fontSize = 11;
-                let step = 15;
-
-                if(h < 90){
-                  fontSize = 10;
-                  step = 13;
-                }
-                if(h < 68){
-                  fontSize = 9;
-                  step = 11;
-                }
-                if(h < 50){
-                  fontSize = 8;
-                  step = 9;
-                }
-
-                const rows = [
-                  { txt: opTxt,   color: "rgba(20, 184, 166, 1)" },
-                  { txt: dispTxt, color: "rgba(245, 158, 11, 1)" },
-                  { txt: calTxt,  color: "rgba(100, 116, 139, 1)" },
-                ];
-
-                const innerTop = topY + 12;
-                const innerBottom = bottomY - 8;
-                const blockH = step * (rows.length - 1);
-
-                let startY = innerTop + fontSize / 2;
-                const maxStart = innerBottom - blockH;
-
-                if(startY > maxStart) startY = maxStart;
-                if(startY < innerTop) startY = innerTop;
-
-                ctx.save();
-                ctx.font = `bold ${fontSize}px Arial`;
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.lineWidth = 3;
-                ctx.strokeStyle = "rgba(255,255,255,0.92)";
-
-                rows.forEach((row, idx) => {
-                  const yy = startY + (idx * step);
-                  if(yy >= innerTop && yy <= innerBottom){
-                    ctx.strokeText(row.txt, x, yy);
-                    ctx.fillStyle = row.color;
-                    ctx.fillText(row.txt, x, yy);
-                  }
-                });
-
-                ctx.restore();
-              });
-            }catch(err){
-              console.error("labels OEE error:", err);
-            }
-          }
-        },
+    }catch(err){
+      console.error("labels OEE error:", err);
+    }
+  }
+},
         plugins: {
           legend: {
             display: true,
@@ -564,7 +506,7 @@ function renderThbOeeChart(result){
             },
             title: {
               display: true,
-              text: "Hora"
+              text: _thbOeeChartXAxisTitle(String(result?.period || ""))
             }
           }
         }
@@ -1063,25 +1005,26 @@ function adjustHpNoRegistradoUI(){
 
 
 function _oeeFormulaFor(label){
-  const k = String(label||"").trim().toLowerCase();
+  const k = String(label || "").trim().toLowerCase();
 
-  if(k === "rendimiento"){
-    // Ajusta si tu rendimiento usa otra ecuación
-    return "Rendimiento = Tiempo Nominal (Tnom) / Tiempo Trabajado (Teff)";
+  if(k === "indice de eficiencia operacional" || k === "rendimiento"){
+    return "Índice de Eficiencia Operacional = Tiempo de Corte / Tiempo Trabajado";
   }
-  if(k === "disponibilidad"){
-    return "Disponibilidad = Tiempo Trabajado / Tiempo Pagado";
+
+  if(k === "indice de disponibilidad" || k === "disponibilidad"){
+    return "Índice de Disponibilidad = Tiempo Trabajado / Tiempo Pagado";
   }
-  if(k === "calidad"){
-    return "Calidad = Circuitos Planeados / Circuitos Cortados";
+
+  if(k === "indice de calidad" || k === "calidad"){
+    return "Índice de Calidad = Tiempo de Corte Bueno / Tiempo de Corte";
   }
+
   return "";
 }
 
 function _bindOeeFormulaClicks(cardEl){
   if(!cardEl) return;
 
-  // Solo dentro de la tarjeta OEE
   const title = (cardEl.querySelector(".kpi-title")?.textContent || "").trim().toUpperCase();
   if(title !== "OEE") return;
 
@@ -1093,10 +1036,10 @@ function _bindOeeFormulaClicks(cardEl){
     lbl.style.cursor = "pointer";
     lbl.title = "Click para ver fórmula";
 
-    lbl.addEventListener("click", (ev)=>{
+    lbl.onclick = (ev)=>{
       ev.stopPropagation();
-      alert(f); // ✅ simple y funciona ya
-    });
+      alert(f);
+    };
   });
 }
 
@@ -1110,7 +1053,7 @@ function makeCard(title, value, cls, spanClass){
   const raw = String(value ?? "");
   const parts = raw.split("||");
 
-  const mainRaw = (parts[0] ?? "").trim();       // ✅ ahora sí existe
+  const mainRaw = (parts[0] ?? "").trim();
   const mainDec = _trimDecimalsForKpi(title, _replaceTimesToHourDec(mainRaw));
   const sub  = parts.slice(1).join("||").trim();
 
@@ -1123,64 +1066,45 @@ function makeCard(title, value, cls, spanClass){
     let pctVal = "";
     const pctRe = /^\(?\s*\d+(\.\d+)?\s*%\s*\)?$/i;
 
-    // pares label:value (sirve para OEE y también para Tiempos Perdidos)
     const items = [];
     for(const seg of pipeParts){
       const s = seg.trim();
 
-      // % (14.2%)
       if(pctRe.test(s)){
         pctVal = s.replace(/[()]/g, "").trim();
         continue;
       }
 
-      // label: valor
-      // label: valor
-        const m = s.match(/^(.+?)\s*:\s*(.+)$/);
-        if(m){
-          const rawLabel = m[1].trim();
-          const low = rawLabel.toLowerCase();
+      const m = s.match(/^(.+?)\s*:\s*(.+)$/);
+      if(m){
+        const rawLabel = m[1].trim();
+        const low = rawLabel.toLowerCase();
 
-          // ✅ forzar "Parada 105/104" como antes
-          let pretty = rawLabel;
-          if(low === "105" || low === "parada 105") pretty = "Parada 105";
-          else if(low === "104" || low === "parada 104") pretty = "Parada 104";
-          else if(low.includes("no registrado")) pretty = "No registrado";
+        let pretty = rawLabel;
+        if(low === "105" || low === "parada 105") pretty = "Parada 105";
+        else if(low === "104" || low === "parada 104") pretty = "Parada 104";
+        else if(low.includes("no registrado")) pretty = "No registrado";
 
-          items.push({
-            label: pretty,
-            val: _replaceTimesToHourDec(m[2].trim())
-          });
-        }
+        items.push({
+          label: pretty,
+          val: _replaceTimesToHourDec(m[2].trim())
+        });
+      }
     }
 
     const mainHtml = pctVal
       ? `${escHtml(mainDec)} <span class="kpi-pct">(${escHtml(pctVal)})</span>`
       : `${escHtml(mainDec)}`;
 
-    // si no hay desglose (caso raro), deja simple
     if(!items.length){
       card.innerHTML = `
         <div class="kpi-title">${escHtml(title)}</div>
-        <div class="kpi-split">
-          <div class="kpi-split-left">
-            <div class="kpi-value">${mainHtml}</div>
-          </div>
-          <div class="kpi-split-right">
-            <div class="kpi-sub-row">
-              ${blocksHtml}
-            </div>
-          </div>
-        </div>
+        <div class="kpi-value">${mainHtml}</div>
       `;
-
-        // ✅ AQUÍ
       _bindOeeFormulaClicks(card);
-
       return card;
     }
 
-    // render dinámico (3 bloques típicos)
     const blocksHtml = items.map((it, idx) => `
       ${idx ? `<div class="kpi-sub-divider"></div>` : ``}
       <div class="kpi-sub-block">
@@ -1204,11 +1128,11 @@ function makeCard(title, value, cls, spanClass){
         </div>
       </div>
     `;
+
+    _bindOeeFormulaClicks(card);
     return card;
   }
 
-  // Simple: puede venir "3.30 (50.8%)"
-// Simple: puede venir "3.30 (50.8%)"
   let mainHtmlSimple = escHtml(_trimDecimalsForKpi(title, _replaceTimesToHourDec(mainRaw)));
 
   const mPct = String(mainRaw || "").match(/^(.*?)(\s*\(\s*\d+(?:\.\d+)?\s*%\s*\)\s*)$/);
@@ -1222,6 +1146,8 @@ function makeCard(title, value, cls, spanClass){
     <div class="kpi-title">${escHtml(title)}</div>
     <div class="kpi-value">${mainHtmlSimple}</div>
   `;
+
+  _bindOeeFormulaClicks(card);
   return card;
 }
 
@@ -1718,8 +1644,8 @@ function fmtIntEs(n){
   return (Number(n)||0).toLocaleString("es-CO");
 }
 function fmtMetersEs(m){
-  const v = Number(m)||0;
-  return v.toLocaleString("es-CO", {minimumFractionDigits:1, maximumFractionDigits:1}) + " m";
+  const v = Number(m) || 0;
+  return Math.round(v).toLocaleString("es-CO") + " m";
 }
 
 function renderTerminalUsage(result){
@@ -2069,7 +1995,6 @@ function renderProdHour(result){
     const hourStart = String(b.hourLabel || b.hour || "").trim() || "";
     const hour = hourRangeLabel(hourStart);
 
-    // ✅ THB: calcular inicio/fin hora para consulta de tarjetas
     const hsClean = (hourStart.includes("-") ? hourStart.split("-")[0].trim() : hourStart);
     const heClean = (hourStart.includes("-") ? (hourStart.split("-")[1] || "").trim() : "");
 
@@ -2088,19 +2013,16 @@ function renderProdHour(result){
           title="Ver tarjetas (Consecutivo / Código del arnés)"`
       : ``;
 
-    const circuits = Number(b.cut)||0;
-    const meters = Number(b.meters)||0;
+    const circuits = Number(b.cut) || 0;
+    const meters = Number(b.meters) || 0;
 
-    // ======= ✅ NORMALIZACIÓN DE UNIDADES (HORAS DECIMALES -> SEGUNDOS) =======
-    let prodSec = Number(b.prodSec)||0;
-    let deadSec = Number(b.deadSec)||0;
-    let mealSec = Number(b.mealSec)||0;
+    let prodSec = Number(b.prodSec) || 0;
+    let deadSec = Number(b.deadSec) || 0;
+    let mealSec = Number(b.mealSec) || 0;
 
-    // si vienen como horas decimales (ej 0.36, 0.63, 0.26), convierto a segundos
     const looksLikeHours =
       (prodSec > 0 && prodSec < 24) || (deadSec > 0 && deadSec < 24) || (mealSec > 0 && mealSec < 24);
 
-    // más estricto: si hay decimales y valores pequeños, casi seguro son horas
     const hasDecimals = (x)=> Math.abs(x - Math.trunc(x)) > 1e-9;
     const probablyDecimalHours =
       (hasDecimals(prodSec) && prodSec < 10) ||
@@ -2114,38 +2036,17 @@ function renderProdHour(result){
       deadSec = toSeconds(deadSec);
       mealSec = toSeconds(mealSec);
     }
-    // ======================================================================
 
-    // ✅ “Otro” = SOLO lo real del backend. NO completar a 3600.
     let otherDeadSecFinal = (b.otherDeadSec != null)
-      ? (Number(b.otherDeadSec)||0)
+      ? (Number(b.otherDeadSec) || 0)
       : Math.max(0, deadSec - mealSec);
 
-    // si otherDeadSec también viene como horas decimales, convierto igual
     if(looksLikeHours && probablyDecimalHours && b.otherDeadSec != null){
-      otherDeadSecFinal = toSeconds(Number(b.otherDeadSec)||0);
+      otherDeadSecFinal = toSeconds(Number(b.otherDeadSec) || 0);
     }
 
-    if(machineU !== "HP"){
-      const sumHour = Math.max(0, prodSec) + Math.max(0, otherDeadSecFinal) + Math.max(0, mealSec);
-      const delta = 3600 - sumHour;
-      if(delta === 60){
-        prodSec += 60;
-      }
-    }
-
-
-
-
-    // ✅ % sobre el MISMO total que muestran los decimales (prod + other + comida)
-    // ✅ Porcentajes: cerrados a 100% usando (prod + other + comida)
     const pct = _fmtPctPartsTo100(prodSec, otherDeadSecFinal, mealSec);
-    // ✅ pct.prodPct viene como "52%" -> número 52
     const pctEffN = parseInt(String(pct.prodPct || "0").replace("%",""), 10) || 0;
-
-
-
-
 
     const isZero = circuits <= 0;
     const good = (!isZero) && (pctEffN >= 50);
@@ -2203,18 +2104,23 @@ function renderProdHour(result){
       function prettifyFallback(s){
         return String(s || "")
           .replace(/\s+/g, " ")
-          .replace(/_+/g, " ")
           .replace(/\s*-\s*>\s*/g, " → ")
           .trim();
       }
 
+      const mealSecSafe = Math.max(0, Number(mealSec) || 0);
+      const mealItemHtml = mealSecSafe > 0
+        ? `<li><b>Comida</b> — Tiempo no pago <span class="ph-otro-muted">(${escHtml(secToHHMMSS(mealSecSafe))})</span></li>`
+        : ``;
+
       if(!otherCauses.length){
         return `<div class="ph-otro-panel"><div class="ph-otro-title">Causas de Paro</div>
-                <div class="ph-otro-muted">Sin detalle de causas para esta hora.</div></div>`;
+                ${mealItemHtml ? `<ol class="ph-otro-list">${mealItemHtml}</ol>` : `<div class="ph-otro-muted">Sin detalle de causas para esta hora.</div>`}
+                </div>`;
       }
 
       const agg = new Map();
-      let _seq203 = 0; // ✅ contador para NO agrupar 203
+      let _seq203 = 0;
 
       for(const it of otherCauses){
         const sec = Number(it?.seconds ?? it?.sec ?? it?.downtime_s ?? it?.value ?? 0) || 0;
@@ -2242,14 +2148,12 @@ function renderProdHour(result){
           kind = "stopcode";
           desc = STOP_CODE_DESC[code] || desc || "—";
 
-            // ✅ 203 NO se agrupa: cada ocurrencia queda como item separado
           if(String(code) === "203"){
             _seq203 += 1;
-            key = `code:203#${_seq203}`;   // clave única => no suma
+            key = `code:203#${_seq203}`;
           }else{
-            key = `code:${code}`;         // otros códigos sí se agrupan normal
+            key = `code:${code}`;
           }
-
         }else{
           const norm = normOtherKey(rawLabel || code || desc);
           key = `other:${norm || "unknown"}`;
@@ -2263,46 +2167,13 @@ function renderProdHour(result){
         else agg.set(key, { kind, code, desc, seconds: sec });
       }
 
-
       const arr = Array.from(agg.values()).sort((a,b)=> (b.seconds||0)-(a.seconds||0));
       if(!arr.length){
         return `<div class="ph-otro-panel"><div class="ph-otro-title">Causas de Paro</div>
                 <div class="ph-otro-muted">Sin detalle de causas para esta hora.</div></div>`;
       }
 
-            // ====== ✅ TOP 12 + FALTANTE A 000 (para cuadrar con el BADGE "Otro") ======
-      // ✅ HP: NO cuadrar con 000. THB: sí puede cuadrar como antes.
       const top = arr.slice(0, 12);
-
-      if(machineU !== "HP"){
-      // Lo que muestra el badge "Otro" (ya viene redondeado a 2 decimales por fmtParts)
-        const badgeOtherDec = Number(fmtParts?.otherStr || "0") || 0;
-
-      // Sumar lo que se verá en la lista (mismo truncado que usas en secToHHMMSS)
-        const decFromSec = (sec)=> Number(_fmtHourDecFromSec(sec)) || 0;
-
-        let sumShownDec = 0;
-        for(const it of top){
-          sumShownDec += decFromSec(it.seconds || 0);
-        }
-
-        const missingDec = _trunc2(Math.max(0, badgeOtherDec - sumShownDec));
-
-        if(missingDec > 0){
-          const missingSec = Math.round(missingDec * 3600);
-
-        // Busca 000 en el top para sumarle; si no está, lo crea
-          let idx000 = top.findIndex(x => String(x.code || "").trim() === "000");
-          if(idx000 >= 0){
-            top[idx000].seconds = (Number(top[idx000].seconds)||0) + missingSec;
-            top[idx000].kind = "stopcode";
-            top[idx000].desc = STOP_CODE_DESC["000"] || top[idx000].desc || "Desconocido";
-          }else{
-            top.push({ kind:"stopcode", code:"000", desc:(STOP_CODE_DESC["000"] || "Desconocido"), seconds: missingSec });
-          }
-        }
-      }
-
 
       const items = top.map(it=>{
         const hhmm = secToHHMMSS(it.seconds || 0);
@@ -2311,63 +2182,31 @@ function renderProdHour(result){
         }
         return `<li>${escHtml(it.desc)} <span class="ph-otro-muted">(${escHtml(hhmm)})</span></li>`;
       }).join("");
-      // ======================================================================
 
+      const finalItems = [mealItemHtml, items].filter(Boolean).join("");
 
       return `<div class="ph-otro-panel">
                 <div class="ph-otro-title">Causas de Paro</div>
-                <ol class="ph-otro-list">${items}</ol>
+                <ol class="ph-otro-list">${finalItems}</ol>
               </div>`;
     }
-    // ✅ Cerrar decimales para que la SUMA sea igual al total real (prod + other + comida)
+
     const fmtParts = (machineU === "HP")
-      ? _fmtHourDecPartsRaw(prodSec, otherDeadSecFinal, mealSec)   // ✅ HP: sin ajustar
-      : _fmtHourDecPartsToTotal(prodSec, otherDeadSecFinal, mealSec); // ✅ THB/otros: igual como estaba
-
-
-    const timeBadges = (mealSec > 0) ? `
-      <div class="ph-badge good">
-        <span>T. Trab: ${escHtml(fmtParts.prodStr)}</span>
-        <span class="ph-badge-pct">${pct.prodPct}</span>
-      </div>
-
-      <button type="button" class="ph-badge bad ph-otro-btn">
-        <span>T. Perdido: ${escHtml(fmtParts.otherStr)}</span>
-        <span class="ph-badge-pct">${pct.otherPct}</span>
-      </button>
-
-      <div class="ph-badge meal">
-        <span>Comida: ${escHtml(fmtParts.mealStr)}</span>
-        <span class="ph-badge-pct">${pct.mealPct}</span>
-      </div>
-    ` : `
-      <div class="ph-badge good">
-        <span>T. Trab: ${escHtml(fmtParts.prodStr)}</span>
-        <span class="ph-badge-pct">${pct.prodPct}</span>
-      </div>
-
-      <button type="button" class="ph-badge bad ph-otro-btn">
-        <span>T. Perdido: ${escHtml(fmtParts.otherStr)}</span>
-        <span class="ph-badge-pct">${pct.otherPct}</span>
-      </button>
-    `;
+      ? _fmtHourDecPartsRaw(prodSec, otherDeadSecFinal, mealSec)
+      : _fmtHourDecPartsToTotal(prodSec, otherDeadSecFinal, mealSec);
 
     const metersHtml = showMeters
       ? `<div class="ph-meters">${escHtml(fmtMetersEs(meters))}</div>`
       : ``;
 
-    // ✅ THB: mostrar TCNP + Longitud promedio + Tiempo nominal total
-    const tcnpSec = Number(b.tcnpSec)||0;
-    const tcnpLen = Number(b.tcnpLenMm)||0;
-    const tnomSec = Number(b.tcnpTotalSec)||0;
+    const tcnpSec = Number(b.tcnpSec) || 0;
+    const tnomSec = Number(b.tcnpTotalSec) || 0;
 
     const tcnpHtml = (machineU === "THB" && tcnpSec > 0)
       ? `<div class="ph-tcnp">T. Ciclo: ${escHtml(tcnpSec.toFixed(4))} s/pz</div>`
       : ``;
 
-      // ✅ VN según el doc: VN = 3600 / TCNP  (unid/h)
     const vnUph = (tcnpSec > 0) ? (3600 / tcnpSec) : 0;
-    // mismo formato que venías usando (miles es-CO) o cámbialo si quieres entero sin puntos
     const vnTxt = escHtml(fmtIntEs(Math.round(vnUph)));
 
     const vnHtml = (machineU === "THB" && tcnpSec > 0)
@@ -2381,32 +2220,41 @@ function renderProdHour(result){
     const bucketHourKey = _normHourKey(hourStart);
     const oeeHoraPct = Number(oeeByHour.get(bucketHourKey) ?? 0) || 0;
 
-    // VN por hora
     const vnHoraUph = (tcnpSec > 0) ? (3600 / tcnpSec) : 0;
-
-    // TP por hora
     const tpHoraH = (Number(b.capacitySec) || 0) / 3600;
-
-    // Producción planeada por hora
     const planHoraUnits = OEE_ESPERADO_HORA * vnHoraUph * tpHoraH;
 
-    // Cumplimiento del plan por hora
     const cumplimientoHoraPct = (planHoraUnits > 0)
       ? ((circuits / planHoraUnits) * 100)
       : 0;
+
+    const hasMeal = (Number(mealSec) || 0) > 0;
 
     const hourlyMiniKpisHtml = (machineU === "THB") ? `
       <div class="ph-mini-kpis">
         <div class="ph-mini-kpi ph-mini-kpi-oee">
           OEE: ${escHtml(oeeHoraPct.toFixed(1))}%
         </div>
+
         <div class="ph-mini-kpi ph-mini-kpi-plan">
-          Cumpl. plan: ${escHtml(cumplimientoHoraPct.toFixed(1))}%
+          PA: ${escHtml(cumplimientoHoraPct.toFixed(1))}%
         </div>
+
+        <div class="ph-mini-kpi ph-mini-kpi-work">
+          TW: ${escHtml(fmtParts.prodStr)} &nbsp; ${escHtml(pct.prodPct)}
+        </div>
+
+        <div class="ph-mini-kpi ph-mini-kpi-loss ph-otro-btn" role="button" tabindex="0" title="Ver causas de paro">
+          TX: ${escHtml(fmtParts.otherStr)} &nbsp; ${escHtml(pct.otherPct)}
+        </div>
+
+        ${hasMeal ? `
+          <div class="ph-mini-kpi ph-mini-kpi-meal">
+            Comida: ${escHtml(fmtParts.mealStr)}
+          </div>
+        ` : ``}
       </div>
     ` : ``;
-
-
 
     const card = document.createElement("div");
     card.className = "ph-card " + (isZero ? "ph-zero" : (good ? "ph-good" : "ph-bad"));
@@ -2418,6 +2266,7 @@ function renderProdHour(result){
       <div class="ph-unit">${(machineU === "APLICACION" || machineU === "UNION") ? "Crimpados" : "Circuitos"}</div>
       ${metersHtml}
       ${hourlyMiniKpisHtml}
+
       ${(machineU === "THB") ? `
         <div class="ph-nom-box">
           ${tcnpHtml}
@@ -2425,10 +2274,6 @@ function renderProdHour(result){
           ${tnomHtml}
         </div>
       ` : ""}
-
-      <div class="ph-badges">
-        ${timeBadges}
-      </div>
 
       ${buildOtherPanelHtml()}
       ${mixHtml}
@@ -2452,6 +2297,13 @@ function renderProdHour(result){
           if(p !== panel) p.classList.remove("open");
         });
         panel.classList.toggle("open");
+      });
+
+      btnOtro.addEventListener("keydown", (ev)=>{
+        if(ev.key === "Enter" || ev.key === " "){
+          ev.preventDefault();
+          btnOtro.click();
+        }
       });
     }
 
@@ -3010,29 +2862,30 @@ document.addEventListener("DOMContentLoaded", ()=>{
   let __openKey = ""; // para toggle
 
   function _oeeFormulaFor(label){
-    const k = String(label||"").trim().toLowerCase();
+    const k = String(label || "").trim().toLowerCase();
 
-    if(k.includes("rendimiento")){
+    if(k.includes("indice de eficiencia operacional") || k.includes("rendimiento")){
       return {
-        title: "Rendimiento",
-        formula: "Rendimiento = Tiempo de Corte / Tiempo Trabajado",
-        note: "Mide qué tan cerca estás del desempeño nominal."
+        title: "Índice de Eficiencia Operacional",
+        formula: "Tiempo de Corte / Tiempo Trabajado",
+        note: "Relación entre la velocidad real del equipo en el tiempo trabajado con la velocidad nominal o capacidad teórica del equipo"
       };
     }
-    if(k.includes("disponibilidad")){
+    if(k.includes("indice de disponibilidad") || k.includes("disponibilidad")){
       return {
-        title: "Disponibilidad",
-        formula: "Disponibilidad = Tiempo Trabajado / Tiempo Pagado",
-        note: "Mide cuánto tiempo realmente estuvo disponible para producir."
+        title: "Índice de Disponibilidad",
+        formula: "Tiempo Trabajado / Tiempo Pagado",
+        note: "Tiempo usado en la producción . El tiempo trabajado con relación al tiempo pagado."
       };
     }
-    if(k.includes("calidad")){
+    if(k.includes("indice de calidad") || k.includes("calidad")){
       return {
-        title: "Calidad",
-        formula: "Calidad = Circuitos Planeados / Circuitos Cortados",
-        note: "Mide el cumplimiento de lo planeado vs lo ejecutado."
+        title: "Índice de Calidad",
+        formula: "Tiempo de Corte Bueno / Tiempo de Corte",
+        note: "Relación del producto bueno y la producción total"
       };
     }
+
     return null;
   }
 

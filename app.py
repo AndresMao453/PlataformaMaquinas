@@ -2109,7 +2109,7 @@ def _thb_export_rows_for_day(
         elif not tot.empty:
             cut = int(tot.sum())
 
-        # ✅ pedido del usuario: No conformes = cortados - planeados
+        # No conformes = cortados - planeados
         reject = max(0, int(cut) - int(planned_calc))
 
         if c_nombre and not hour_df.empty and not op_fixed:
@@ -2123,8 +2123,40 @@ def _thb_export_rows_for_day(
 
         b = bucket_by_hour.get(int(hh), {})
 
-        # ✅ pedido del usuario: tiempos perdidos NO deben sumar comida.
-        lost_sec = int(b.get("otherDeadSec", 0) or 0)
+        # =========================
+        # EXCEL THB
+        # =========================
+        # TX real del bucket (SIN comida)
+        tx_sec = int(b.get("otherDeadSec", 0) or 0)
+
+        # comida no paga del bucket
+        meal_sec = int(b.get("mealSec", 0) or 0)
+
+        # comida fija por hora
+        meal_fixed_sec = 0
+        if int(hh) == 8:
+            meal_fixed_sec = 15 * 60
+        elif int(hh) == 13:
+            meal_fixed_sec = 30 * 60
+
+        # si hay 105 mayor al fijo, se descuenta la real;
+        # si es menor, se conserva el fijo
+        meal_applied_sec = max(meal_fixed_sec, meal_sec) if meal_fixed_sec > 0 else 0
+        meal_applied_sec = max(0, min(3600, meal_applied_sec))
+
+        # TP del Excel:
+        # - horas normales: 1.00
+        # - desayuno/almuerzo: 1h menos comida aplicada
+        tp_h_excel = round((3600 - meal_applied_sec) / 3600.0, 3)
+
+        # si no hay producción buena pero sí hay tiempo perdido,
+        # TP sigue siendo la hora pagada de esa franja
+        # (1.00 normal, 0.75 desayuno, 0.50 almuerzo, o menos si 105 > fijo)
+        if int(cut) <= 0 and int(tx_sec) > 0:
+            tp_h_excel = round((3600 - meal_applied_sec) / 3600.0, 3)
+
+        # TX del Excel NO suma comida
+        lost_sec = int(tx_sec)
 
         # Tiempo de ciclo nominal ponderado (h/uni)
         tcnp_sec = float(b.get("tcnpSec", 0.0) or 0.0)
@@ -2161,11 +2193,10 @@ def _thb_export_rows_for_day(
             "operario": (op_fixed if (op_fixed and op_fixed.lower() != "general") else last_operator) or "General",
             "inicio": h0.to_pydatetime(),
             "fin": h1.to_pydatetime(),
-            # ✅ pedido del usuario: Producción Planeada vacía
-            "pp": None,
-            "pn": int(cut),
+            "pp": None,  # Producción planeada vacía
+            "pn": int(cut),  # si no hubo producción buena, queda 0
             "rx": int(reject),
-            "tp_h": float(_thb_paid_hours_for_export_row(int(hh))),
+            "tp_h": float(tp_h_excel),
             "tx_h": round(lost_sec / 3600.0, 3),
             "tc_h_uni": (tcnp_sec / 3600.0) if tcnp_sec > 0 else None,
         })

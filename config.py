@@ -54,7 +54,7 @@ HP_GID_CORTE = 738815404    # "Corte"
 # =========================
 # Google Sheets - Corte THB
 # =========================
-THB_SHEET_ID = "108fKNRgQgVqPHcg63SYSYxnmUZ2mg4EY8WuY3yyboYg"
+THB_SHEET_ID = "1LWP9Z4AfBQFPOX3mydgTNPUmAEhsiWc9PSVp78-bLvA"
 
 THB_GID_VERIF = 145813485      # "Verificación de Medidas"
 THB_GID_PARADAS = 1720625606   # "Paradas"
