@@ -65,7 +65,7 @@
   .kpi-row-3{ grid-column: span 6; }
   .kpi-row-4{ grid-column: span 6; }  /* ✅ */
 }
-@media (max-width: 760px){
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
   .kpi-card{ grid-column: span 12; }
   .kpi-row-2{ grid-column: span 12; }
   .kpi-row-3{ grid-column: span 12; }
@@ -728,7 +728,7 @@
 }
 
 /* ✅ responsive del título de máquina */
-@media (max-width: 760px){
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
   .app-machine-center .select-box{
     width: min(680px, 94%);
   }
@@ -1579,7 +1579,7 @@ a.option-card.ciclo .pill{
 }
 
 /* En móvil: cards apiladas limpias */
-@media (max-width: 760px){
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
   .machine-grid > *,
   .subcat-grid > *,
   .appmach-grid > *,
@@ -1636,7 +1636,7 @@ a.option-card.ciclo .pill{
 }
 
 /* 5) Responsive: una por fila en pantallas pequeñas */
-@media (max-width: 760px){
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
   .machine-card,
   .subcat-card,
   .period-card,
@@ -1732,7 +1732,7 @@ a.option-card.ciclo .pill{
   min-width: 0;
 }
 
-@media (max-width: 760px){
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
   .home-logo{ height: 80px; }
   .home-header{ gap: 30px; }
 }
@@ -2335,7 +2335,7 @@ img{
 /* =========================
    CELULAR
    ========================= */
-@media (max-width: 760px){
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
 
   .top-header .card{
     padding:14px !important;
@@ -2498,7 +2498,7 @@ img{
   }
 }
 
-@media (max-width: 760px){
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
 
   .machine-grid{
     grid-template-columns: 1fr !important;
@@ -2985,7 +2985,7 @@ img{
 /* =========================================================
    CELULAR
    ========================================================= */
-@media (max-width: 760px){
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
 
   .top-header .card,
   .card,
@@ -3278,7 +3278,7 @@ img{
 }
 
 /* Celular */
-@media (max-width: 760px){
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
   .time-grid{
     grid-template-columns: 1fr !important;
   }
@@ -3423,7 +3423,7 @@ img{
    FIX FINAL MOBILE: OEE, Tiempos Perdidos y Descargar Excel THB
    ========================================================= */
 
-@media (max-width: 760px){
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
 
   /* ---------- Top bar descarga THB ---------- */
   .inline-topbar{
@@ -3680,7 +3680,7 @@ img{
   display: block;
 }
 
-@media (max-width: 760px){
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
   #thbOeeChartWrap{
     padding: 12px !important;
   }
@@ -3697,255 +3697,11 @@ img{
   .kpi-row-8{ grid-column: span 6; }
 }
 
-@media (max-width: 760px){
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
   .kpi-row-8{ grid-column: span 12; }
 }
 
-/* =========================================================
-   THB RESPONSIVE FINAL
-   SOLO este bloque al final
-   ========================================================= */
 
-/* ---------- DESKTOP / TABLET GRANDE ---------- */
-@media (min-width: 761px){
-
-  .kpi-split{
-    display:flex !important;
-    flex-direction:row !important;
-    align-items:flex-end !important;
-    justify-content:space-between !important;
-    gap:18px !important;
-  }
-
-  .kpi-split-left{
-    flex:1 1 auto !important;
-    min-width:0 !important;
-  }
-
-  .kpi-split-right{
-    flex:1 1 420px !important;
-    min-width:420px !important;
-    max-width:none !important;
-    border-left:2px solid rgba(15,23,42,.12) !important;
-    border-top:none !important;
-    padding-left:18px !important;
-    padding-top:0 !important;
-    margin-top:0 !important;
-    width:auto !important;
-  }
-
-  .kpi-sub-row{
-    display:flex !important;
-    flex-wrap:nowrap !important;
-    align-items:flex-end !important;
-    justify-content:space-between !important;
-    gap:16px !important;
-    white-space:normal !important;
-  }
-
-  .kpi-sub-block{
-    flex:1 1 0 !important;
-    min-width:0 !important;
-  }
-
-  .kpi-sub-label,
-  .kpi-sub-small,
-  .kpi-sub-nr-label{
-    font-size:.72rem !important;
-    line-height:1.15 !important;
-    white-space:normal !important;
-    word-break:break-word !important;
-  }
-
-  .kpi-sub-value,
-  .kpi-sub-big,
-  .kpi-sub-value-big,
-  .kpi-sub-105,
-  .kpi-sub-nr-val{
-    font-size:1.05rem !important;
-    line-height:1.05 !important;
-  }
-
-  .kpi-sub-divider{
-    display:block !important;
-  }
-}
-
-/* ---------- MÓVIL ---------- */
-@media (max-width: 760px){
-
-  #inlineTopBar,
-  .inline-topbar{
-    display:block !important;
-    width:100% !important;
-    margin:6px 0 14px 0 !important;
-    padding:0 !important;
-  }
-
-  .inline-topbar-left,
-  .inline-topbar-right{
-    display:block !important;
-    width:100% !important;
-    min-width:0 !important;
-    max-width:100% !important;
-    flex:none !important;
-    margin:0 !important;
-    padding:0 !important;
-  }
-
-  .inline-topbar-right{
-    margin-top:12px !important;
-    text-align:left !important;
-  }
-
-  #inlineActions{
-    display:block !important;
-    width:100% !important;
-    margin:0 !important;
-    padding:0 !important;
-  }
-
-  #inlineActions .btn,
-  #inlineActions a.btn,
-  #inlineActions a.thb-download-callout-link{
-    display:inline-flex !important;
-    width:auto !important;
-    max-width:100% !important;
-    margin:0 !important;
-    white-space:normal !important;
-    text-align:center !important;
-  }
-
-  #inlineResults .thb-download-callout{
-    margin:0 !important;
-    max-width:100% !important;
-    font-size:15px !important;
-    line-height:1.35 !important;
-  }
-
-  #inlineResults .thb-download-callout-strong{
-    display:inline !important;
-    margin-top:0 !important;
-  }
-
-  .inline-title{
-    font-size:24px !important;
-    line-height:1.08 !important;
-    word-break:break-word !important;
-  }
-
-  #inlineKpis,
-  .kpi-grid{
-    grid-template-columns:1fr !important;
-    gap:12px !important;
-  }
-
-  #inlineKpis .kpi-card,
-  .kpi-card,
-  .kpi-row-1,
-  .kpi-row-2,
-  .kpi-row-3,
-  .kpi-row-4,
-  .kpi-row-4q,
-  .kpi-wide,
-  .kpi-narrow,
-  .kpi-row-8{
-    grid-column:span 12 !important;
-    width:100% !important;
-    max-width:100% !important;
-    min-width:0 !important;
-  }
-
-  .kpi-card{
-    padding:14px !important;
-    border-radius:16px !important;
-    overflow:hidden !important;
-  }
-
-  .kpi-title{
-    font-size:11px !important;
-    line-height:1.2 !important;
-    word-break:break-word !important;
-  }
-
-  .kpi-value{
-    font-size:18px !important;
-    line-height:1.05 !important;
-    word-break:break-word !important;
-  }
-
-  .kpi-split{
-    display:flex !important;
-    flex-direction:column !important;
-    align-items:stretch !important;
-    gap:12px !important;
-  }
-
-  .kpi-split-left,
-  .kpi-split-right{
-    width:100% !important;
-    min-width:0 !important;
-    max-width:100% !important;
-    flex:1 1 auto !important;
-  }
-
-  .kpi-split-right{
-    border-left:none !important;
-    border-top:1px solid rgba(15,23,42,.12) !important;
-    padding-left:0 !important;
-    padding-top:10px !important;
-    margin-top:0 !important;
-    min-width:0 !important;
-  }
-
-  .kpi-sub-row{
-    display:flex !important;
-    flex-wrap:wrap !important;
-    align-items:flex-start !important;
-    gap:10px !important;
-    white-space:normal !important;
-  }
-
-  .kpi-sub-block{
-    min-width:calc(50% - 8px) !important;
-    flex:1 1 calc(50% - 8px) !important;
-  }
-
-  .kpi-sub-label,
-  .kpi-sub-small,
-  .kpi-sub-nr-label{
-    font-size:10px !important;
-    line-height:1.2 !important;
-    white-space:normal !important;
-    word-break:break-word !important;
-  }
-
-  .kpi-sub-value,
-  .kpi-sub-big,
-  .kpi-sub-value-big,
-  .kpi-sub-105,
-  .kpi-sub-nr-val{
-    font-size:16px !important;
-    line-height:1.05 !important;
-    word-break:break-word !important;
-  }
-
-  .kpi-sub-divider{
-    display:none !important;
-  }
-
-  .kpi-value .kpi-pct{
-    font-size:12px !important;
-  }
-
-  .prod-hour-grid{
-    grid-template-columns:1fr !important;
-  }
-
-  .thb-oee-chart-canvas-wrap{
-    height:260px !important;
-  }
-}
 
 .ph-mini-kpis{
   margin-top: 10px;
@@ -3972,4 +3728,323 @@ img{
 }
 .ph-mini-kpi-loss{
   color: #b91c1c !important;
+}
+
+/* =========================================================
+   OEE + TIEMPO PERDIDO
+   Ajuste final limpio
+   ========================================================= */
+
+@media (min-width: 761px){
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-split-right{
+    flex: 0 0 340px !important;
+    width: 340px !important;
+    min-width: 340px !important;
+    max-width: 340px !important;
+    border-left: 1px solid rgba(15,23,42,.14) !important;
+    border-top: none !important;
+    padding-left: 16px !important;
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+    overflow: hidden !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-row{
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    column-gap: 14px !important;
+    align-items: start !important;
+    width: 100% !important;
+    white-space: normal !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-block{
+    min-width: 0 !important;
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-start !important;
+    align-items: flex-start !important;
+    gap: 6px !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-divider{
+    display: block !important;
+    width: 1px !important;
+    align-self: stretch !important;
+    background: rgba(15,23,42,.16) !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-label,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-small,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-nr-label{
+    font-size: .70rem !important;
+    line-height: 1.12 !important;
+    letter-spacing: .02em !important;
+    margin: 0 !important;
+    white-space: normal !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+    hyphens: none !important;
+    text-align: left !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-value,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-big,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-value-big,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-105,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-nr-val{
+    font-size: 1rem !important;
+    line-height: 1.05 !important;
+    margin: 0 !important;
+    text-align: left !important;
+  }
+}
+
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-split{
+    display:flex !important;
+    flex-direction:column !important;
+    align-items:stretch !important;
+    gap:12px !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-split-right{
+    width:100% !important;
+    min-width:0 !important;
+    max-width:100% !important;
+    border-left:none !important;
+    border-top:1px solid rgba(15,23,42,.12) !important;
+    padding-left:0 !important;
+    padding-top:10px !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-row{
+    display:grid !important;
+    grid-template-columns:repeat(2, minmax(0, 1fr)) !important;
+    gap:10px !important;
+    white-space:normal !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-divider{
+    display:none !important;
+  }
+}
+
+@media (max-width: 480px){
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-row{
+    grid-template-columns:1fr !important;
+  }
+}
+
+/* =========================================================
+   FIX LIMPIO OEE / TIEMPO PERDIDO
+   ========================================================= */
+
+@media (min-width: 761px){
+  #inlineKpis .kpi-card.kpi-row-2{
+    overflow: hidden !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-split{
+    display:flex !important;
+    align-items:flex-end !important;
+    justify-content:space-between !important;
+    gap:16px !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-split-left{
+    flex:1 1 auto !important;
+    min-width:0 !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-split-right{
+    flex:0 0 360px !important;
+    width:360px !important;
+    min-width:360px !important;
+    max-width:360px !important;
+    border-left:1px solid rgba(15,23,42,.14) !important;
+    padding-left:16px !important;
+    overflow:hidden !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-row{
+    display:grid !important;
+    grid-template-columns:repeat(3, minmax(0, 1fr)) !important;
+    gap:0 !important;
+    align-items:start !important;
+    width:100% !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-divider{
+    display:none !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-block{
+    min-width:0 !important;
+    padding:0 12px !important;
+    display:flex !important;
+    flex-direction:column !important;
+    justify-content:flex-start !important;
+    align-items:flex-start !important;
+    gap:6px !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-block + .kpi-sub-block{
+    border-left:1px solid rgba(15,23,42,.14) !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-label,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-small,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-nr-label{
+    font-size:.68rem !important;
+    line-height:1.1 !important;
+    letter-spacing:.02em !important;
+    margin:0 !important;
+    text-align:left !important;
+    white-space:normal !important;
+    word-break:normal !important;
+    overflow-wrap:break-word !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-value,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-big,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-value-big,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-105,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-nr-val{
+    font-size:1rem !important;
+    line-height:1.05 !important;
+    margin:0 !important;
+    text-align:left !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-value{
+    font-size:2.35rem !important;
+    line-height:1 !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-value .kpi-pct{
+    font-size:.65em !important;
+    margin-left:0 !important;
+    margin-top:6px !important;
+    display:block !important;
+  }
+}
+
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-split{
+    display:flex !important;
+    flex-direction:column !important;
+    gap:12px !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-split-right{
+    width:100% !important;
+    min-width:0 !important;
+    max-width:100% !important;
+    border-left:none !important;
+    border-top:1px solid rgba(15,23,42,.14) !important;
+    padding-left:0 !important;
+    padding-top:10px !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-row{
+    display:grid !important;
+    grid-template-columns:1fr !important;
+    gap:10px !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-divider{
+    display:none !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-block{
+    padding:0 !important;
+    border-left:none !important;
+  }
+}
+
+/* =========================================================
+   FIX KPIs EN CELULAR AUNQUE ESTÉ "SITIO DE COMPUTADORA"
+   ========================================================= */
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
+
+  #inlineKpis .kpi-card.kpi-row-2{
+    grid-column: span 12 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-split{
+    display:flex !important;
+    flex-direction:column !important;
+    align-items:stretch !important;
+    gap:12px !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-split-left,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-split-right{
+    width:100% !important;
+    min-width:0 !important;
+    max-width:100% !important;
+    flex:1 1 auto !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-split-right{
+    border-left:none !important;
+    border-top:1px solid rgba(15,23,42,.12) !important;
+    padding-left:0 !important;
+    padding-top:10px !important;
+    margin-top:0 !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-row{
+    display:grid !important;
+    grid-template-columns:repeat(2, minmax(0, 1fr)) !important;
+    gap:10px !important;
+    white-space:normal !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-block{
+    min-width:0 !important;
+    width:100% !important;
+    padding:0 !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-divider{
+    display:none !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-label,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-small,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-nr-label{
+    font-size:.68rem !important;
+    line-height:1.15 !important;
+    white-space:normal !important;
+    word-break:break-word !important;
+    overflow-wrap:anywhere !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-value,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-big,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-value-big,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-105,
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-nr-val{
+    font-size:1.1rem !important;
+    line-height:1.05 !important;
+    word-break:break-word !important;
+  }
+
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-value{
+    font-size:2rem !important;
+    line-height:1.05 !important;
+  }
+}
+
+@media (max-width: 480px), (hover: none) and (pointer: coarse){
+  #inlineKpis .kpi-card.kpi-row-2 .kpi-sub-row{
+    grid-template-columns:1fr !important;
+  }
 }

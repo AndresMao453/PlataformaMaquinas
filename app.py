@@ -1068,7 +1068,16 @@ def line_start(line_key: str):
     flash("Línea no soportada.", "error")
     return redirect(url_for("home"))
 
+def _week_label_with_range(y: int, w: int) -> str:
+    try:
+        start = pd.to_datetime(f"{int(y)}-W{int(w):02d}-1", format="%G-W%V-%u", errors="coerce")
+        if pd.isna(start):
+            return f"{int(y)} - Semana {int(w):02d}"
 
+        end = start + pd.Timedelta(days=6)
+        return f"{int(y)} - Semana {int(w):02d} [{start.strftime('%d/%m')} - {end.strftime('%d/%m')}]"
+    except Exception:
+        return f"{int(y)} - Semana {int(w):02d}"
 
 @app.get("/period_options")
 def period_options():
@@ -1121,7 +1130,13 @@ def period_options():
             if period == "week":
                 iso = dt.dt.isocalendar()
                 uniq = sorted(set(zip(iso["year"].astype(int), iso["week"].astype(int))), reverse=True)
-                options = [{"value": f"{y}-W{w:02d}", "label": f"{y} - Semana {w:02d}"} for (y, w) in uniq]
+                options = [
+                    {
+                        "value": f"{y}-W{w:02d}",
+                        "label": _week_label_with_range(int(y), int(w))
+                    }
+                    for (y, w) in uniq
+                ]
                 return jsonify({"options": options})
 
             if period == "month":
@@ -1207,7 +1222,13 @@ def period_options():
     if period == "week":
         iso = dt.dt.isocalendar()
         uniq = sorted(set(zip(iso["year"].astype(int), iso["week"].astype(int))), reverse=True)
-        options = [{"value": f"{y}-W{w:02d}", "label": f"{y} - Semana {w:02d}"} for (y, w) in uniq]
+        options = [
+            {
+                "value": f"{y}-W{w:02d}",
+                "label": _week_label_with_range(int(y), int(w))
+            }
+            for (y, w) in uniq
+        ]
         return jsonify({"options": options})
 
     if period == "month":

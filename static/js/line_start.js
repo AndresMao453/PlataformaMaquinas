@@ -290,6 +290,8 @@ function _thbOeeChartTitle(period){
   return "Gráfico OEE";
 }
 
+
+
 function _thbOeeChartXAxisTitle(period){
   if(period === "day") return "Hora";
   if(period === "week") return "Día";
