@@ -275,11 +275,18 @@ function destroyThbOeeChart(){
 
   const wrap = document.getElementById("thbOeeChartWrap");
   const ttl = document.getElementById("thbOeeChartTitle");
+  const sub = document.getElementById("thbOeeChartSub");
 
   if(wrap) wrap.style.display = "none";
+
   if(ttl){
     ttl.style.display = "none";
     ttl.textContent = "Gráfico OEE";
+  }
+
+  if(sub){
+    sub.style.display = "none";
+    sub.textContent = "";
   }
 }
 
@@ -290,7 +297,101 @@ function _thbOeeChartTitle(period){
   return "Gráfico OEE";
 }
 
+function _chartMonthNameEs(m){
+  const arr = [
+    "Enero","Febrero","Marzo","Abril","Mayo","Junio",
+    "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"
+  ];
+  const n = Number(m) || 0;
+  return arr[n - 1] || "";
+}
 
+function _chartFmtDDMMYYYY(d){
+  const dt = new Date(d);
+  if(Number.isNaN(dt.getTime())) return "";
+  const dd = String(dt.getDate()).padStart(2, "0");
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const yy = dt.getFullYear();
+  return `${dd}/${mm}/${yy}`;
+}
+
+function _chartPrettyPeriod(result){
+  const sel = document.getElementById("periodValueSelect");
+
+  // ✅ usar EXACTAMENTE el texto que el usuario seleccionó
+  const selectedTxt = sel?.selectedOptions?.[0]?.textContent?.trim() || "";
+  if(selectedTxt && selectedTxt.toLowerCase() !== "selecciona..." && selectedTxt.toLowerCase() !== "cargando..."){
+    return selectedTxt;
+  }
+
+  // fallback si por alguna razón no existe el option seleccionado
+  const period = String(result?.period || "").trim().toLowerCase();
+  const raw = String(result?.period_value || sel?.value || "").trim();
+
+  if(!raw) return "";
+
+  if(period === "day"){
+    if(/^\d{4}-\d{2}-\d{2}$/.test(raw)){
+      const [y, m, d] = raw.split("-");
+      return `${d}/${m}/${y}`;
+    }
+    return raw;
+  }
+
+  if(period === "week"){
+    return raw;
+  }
+
+  if(period === "month"){
+    const m = raw.match(/^(\d{4})-(\d{2})$/);
+    if(m){
+      const meses = [
+        "Enero","Febrero","Marzo","Abril","Mayo","Junio",
+        "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"
+      ];
+      return `${meses[Number(m[2]) - 1] || raw} ${m[1]}`;
+    }
+    return raw;
+  }
+
+  return raw;
+}
+
+function _setChartSubtitleEdgeToEdge(el, txt){
+  if(!el) return;
+
+  const clean = String(txt || "").trim();
+  if(!clean){
+    el.style.display = "none";
+    el.innerHTML = "";
+    return;
+  }
+
+  const item = `<span class="chart-period-item">${escHtml(clean)}</span>`;
+  const repeated = new Array(12)
+    .fill(item)
+    .join(`<span class="chart-period-sep">•</span>`);
+
+  el.innerHTML = `
+    <div class="chart-period-track">
+      ${repeated}
+    </div>
+  `;
+  el.style.display = "block";
+}
+
+function _ensureChartSubtitle(afterEl, id){
+  if(!afterEl || !afterEl.parentNode) return null;
+
+  let el = document.getElementById(id);
+  if(!el){
+    el = document.createElement("div");
+    el.id = id;
+    el.className = "chart-period-subtitle";
+    afterEl.insertAdjacentElement("afterend", el);
+  }
+  return el;
+}
 
 function _thbOeeChartXAxisTitle(period){
   if(period === "day") return "Hora";
@@ -298,6 +399,8 @@ function _thbOeeChartXAxisTitle(period){
   if(period === "month") return "Semana";
   return "Periodo";
 }
+
+
 
 function renderThbOeeChart(result){
   try{
@@ -331,6 +434,12 @@ function renderThbOeeChart(result){
     ttl.textContent = _thbOeeChartTitle(String(result?.period || ""));
     ttl.style.display = "block";
     wrap.style.display = "block";
+
+    const oeeSub = _ensureChartSubtitle(ttl, "thbOeeChartSub");
+    if(oeeSub){
+      const txt = _chartPrettyPeriod(result);
+      _setChartSubtitleEdgeToEdge(oeeSub, txt);
+    }
 
     const maxBar = Math.max(0, ...oee);
     let wrapH = 520;
@@ -1453,6 +1562,12 @@ function destroyPareto(){
 
   const titleEl = document.getElementById("inlineParetoTitle");
   if(titleEl) titleEl.style.display = "none";
+
+  const paretoSub = document.getElementById("paretoChartSub");
+  if(paretoSub){
+    paretoSub.style.display = "none";
+    paretoSub.innerHTML = "";
+  }
 }
 
 // ✅ ARREGLADO: ahora llena también % Acum. (4ta columna)
@@ -1542,6 +1657,12 @@ function renderParetoParadas(result){
 
     titleEl.textContent = paretoTitle(String(result?.period || ""));
     titleEl.style.display = "block";
+
+    const paretoSub = _ensureChartSubtitle(titleEl, "paretoChartSub");
+    if(paretoSub){
+      const txt = _chartPrettyPeriod(result);
+      _setChartSubtitleEdgeToEdge(paretoSub, txt);
+    }
 
     renderParetoLegend(labels, durSec, cumPct);
 
@@ -1850,6 +1971,7 @@ function hideProdHour(){
   if(row) row.style.display = "none";
 
   const t = document.getElementById("prodHourTitle");
+  const sub = document.getElementById("prodHourTitleSub");
   const w = document.getElementById("prodHourWrap");
   const g = document.getElementById("prodHourGrid");
   const info = document.getElementById("lenRangesInfo");
@@ -1857,6 +1979,10 @@ function hideProdHour(){
 
   if(g) g.innerHTML = "";
   if(t) t.style.display = "none";
+  if(sub){
+    sub.style.display = "none";
+    sub.innerHTML = "";
+  }
   if(w) w.style.display = "none";
   if(info) info.style.display = "none";
   if(leg) leg.style.display = "none";
@@ -1958,6 +2084,12 @@ function renderProdHour(result){
   const grid  = document.getElementById("prodHourGrid");
   const info  = document.getElementById("lenRangesInfo");
   if(!title || !wrap || !grid) return;
+
+  const titleSub = _ensureChartSubtitle(title, "prodHourTitleSub");
+  if(titleSub){
+    const txt = _chartPrettyPeriod(result);
+    _setChartSubtitleEdgeToEdge(titleSub, txt);
+  }
 
   if(period !== "day"){
     hideProdHour();
@@ -2249,12 +2381,6 @@ function renderProdHour(result){
         <div class="ph-mini-kpi ph-mini-kpi-loss ph-otro-btn" role="button" tabindex="0" title="Ver causas de paro">
           TX: ${escHtml(fmtParts.otherStr)} &nbsp; ${escHtml(pct.otherPct)}
         </div>
-
-        ${hasMeal ? `
-          <div class="ph-mini-kpi ph-mini-kpi-meal">
-            Comida: ${escHtml(fmtParts.mealStr)}
-          </div>
-        ` : ``}
       </div>
     ` : ``;
 
