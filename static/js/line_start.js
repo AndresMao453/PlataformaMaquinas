@@ -217,11 +217,18 @@ function selectPeriod(value, el){
   const periodInput = document.getElementById("periodInput");
   if(periodInput) periodInput.value = value;
 
+
+  const inlineResults = document.getElementById("inlineResults");
+  if(inlineResults){
+    inlineResults.classList.toggle("oee-year-mode", value === "year");
+  }
+
   const lbl = document.getElementById("periodLabel");
   if(lbl){
     if(value === "day") lbl.textContent = "Días disponibles";
     if(value === "week") lbl.textContent = "Semanas disponibles";
     if(value === "month") lbl.textContent = "Meses disponibles";
+    if(value === "year") lbl.textContent = "Años disponibles";
   }
 
   const sel = document.getElementById("periodValueSelect");
@@ -294,6 +301,7 @@ function _thbOeeChartTitle(period){
   if(period === "day") return "Gráfico OEE por hora";
   if(period === "week") return "Gráfico OEE por día";
   if(period === "month") return "Gráfico OEE por semana";
+  if(period === "year") return "Gráfico OEE por Año";
   return "Gráfico OEE";
 }
 
@@ -354,6 +362,10 @@ function _chartPrettyPeriod(result){
     return raw;
   }
 
+  if(period === "year"){
+    return `Año ${raw}`;
+  }
+
   return raw;
 }
 
@@ -397,6 +409,7 @@ function _thbOeeChartXAxisTitle(period){
   if(period === "day") return "Hora";
   if(period === "week") return "Día";
   if(period === "month") return "Semana";
+  if(period === "year") return "Mes";
   return "Periodo";
 }
 
@@ -857,6 +870,21 @@ async function onPeriodValueChange(){
     return;
   }
 
+  // ✅ OEE por Año: no usa operaria, no usa horas y se ejecuta directo.
+  if(period === "year"){
+    const opSel = document.getElementById("operatorSelect");
+    if(opSel){
+      opSel.innerHTML = `<option value="General">General</option>`;
+      opSel.value = "General";
+    }
+
+    setTimeInputsVisible(false);
+    setTimeApply(false);
+    hideThbFilters();
+    scheduleAutoRun();
+    return;
+  }
+
   try{
     if(!URLS.thb_filter_options){
       hideThbFilters();
@@ -1277,6 +1305,7 @@ function periodTitle(period){
   if(period === "day") return "Indicadores diarios";
   if(period === "week") return "Indicadores semanales";
   if(period === "month") return "Indicadores mensuales";
+  if(period === "year") return "OEE por año";
   return "Indicadores";
 }
 
@@ -2384,14 +2413,26 @@ function renderProdHour(result){
       </div>
     ` : ``;
 
+    const planExcelUnits = Math.round(Number(planHoraUnits) || 0);
+
+    const circuitsHtml = (machineU === "THB" && planExcelUnits > 0)
+      ? `
+        <span class="ph-circuits-real">${escHtml(fmtIntEs(circuits))}</span>
+        <span class="ph-circuits-slash">/</span>
+        <span class="ph-circuits-plan">${escHtml(fmtIntEs(planExcelUnits))}</span>
+      `
+      : `${escHtml(fmtIntEs(circuits))}`;
+
     const card = document.createElement("div");
     card.className = "ph-card " + (isZero ? "ph-zero" : (good ? "ph-good" : "ph-bad"));
     card.innerHTML = `
       <div class="ph-hour">${escHtml(hour)}</div>
       <div class="ph-circuits ${(machineU === "THB") ? "ph-circuits-link" : ""}"${circuitsAttrs}>
-        ${escHtml(fmtIntEs(circuits))}
+        ${circuitsHtml}
       </div>
       <div class="ph-unit">${(machineU === "APLICACION" || machineU === "UNION") ? "Crimpados" : "Circuitos"}</div>
+
+
       ${metersHtml}
       ${hourlyMiniKpisHtml}
 
@@ -2501,7 +2542,8 @@ function updateThbExportAction(result){
   if(!box) return;
 
   const isThb = String(result?.machine || "").toUpperCase() === "THB";
-  if(!isThb || !URLS.export_thb_excel){
+  const isYearOee = String(result?.period || "").toLowerCase() === "year";
+  if(!isThb || isYearOee || !URLS.export_thb_excel){
     box.style.display = "none";
     box.innerHTML = "";
     if(callout) callout.style.display = "none";
@@ -2562,6 +2604,22 @@ function renderInlineKPIs(result){
   }
 
   const m = String(result.machine || "").toUpperCase();
+  const isYearOeeOnly = (m === "THB" && String(result.period || "").toLowerCase() === "year");
+
+  if(isYearOeeOnly){
+    ttl.style.display = "none";
+    kpi.innerHTML = "";
+    if(actions){ actions.style.display = "none"; actions.innerHTML = ""; }
+
+    const callout = document.getElementById("thbDownloadCallout");
+    if(callout) callout.style.display = "none";
+
+    destroyPareto();
+    hideProdHour();
+    hideThbLotes();
+    renderThbOeeChart(result);
+    return;
+  }
 
   let order = [
     { key: "Circuitos Cortados",     cls: "kpi-green",  span: "kpi-row-3" },
@@ -2731,7 +2789,7 @@ async function runInlineAnalysis(form, opts = {}){
 
   if(!periodValueOk()){
     if(btn){ btn.disabled = false; btn.textContent = "Ver KPIs"; }
-    alert("Selecciona un Día/Semana/Mes antes de ejecutar el análisis.");
+    alert("Selecciona un Día/Semana/Mes/Año antes de ejecutar el análisis.");
     return;
   }
 

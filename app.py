@@ -774,6 +774,14 @@ def filter_by_period(dt_fecha: pd.Series, period: str, period_value: str) -> pd.
         mask = (dt.dt.year == yy) & (dt.dt.month == mm)
         return mask.fillna(False)
 
+    if period == "year":
+        try:
+            yy = int(str(period_value).strip()[:4])
+        except Exception:
+            return pd.Series([False] * len(dt), index=dt.index)
+        mask = (dt.dt.year == yy)
+        return mask.fillna(False)
+
     return pd.Series([True] * len(dt), index=dt.index)
 
 
@@ -805,6 +813,10 @@ def build_period_options(dt: pd.Series, period: str) -> list[dict]:
             out.append({"value": f"{y}-{m:02d}", "label": f"{m:02d}/{y}"})
         return out
 
+    if period == "year":
+        years = sorted(set(int(y) for y in dt.dt.year.tolist()), reverse=True)
+        return [{"value": str(y), "label": str(y)} for y in years]
+
     return []
 
 
@@ -832,12 +844,14 @@ def build_thb_cache(path: str) -> dict:
         "days": [],
         "weeks": [],
         "months": [],
-        "by_period": {"day": {}, "week": {}, "month": {}},
+        "years": [],
+        "by_period": {"day": {}, "week": {}, "month": {}, "year": {}},
     }
 
     cache["days"] = build_period_options(dt_fecha, "day")
     cache["weeks"] = build_period_options(dt_fecha, "week")
     cache["months"] = build_period_options(dt_fecha, "month")
+    cache["years"] = build_period_options(dt_fecha, "year")
 
     def store(period: str, value: str, mask: pd.Series):
         sub = df.loc[mask].copy()
@@ -867,6 +881,10 @@ def build_thb_cache(path: str) -> dict:
     for o in cache["months"]:
         v = o["value"]
         store("month", v, filter_by_period(dt_fecha, "month", v))
+
+    for o in cache["years"]:
+        v = o["value"]
+        store("year", v, filter_by_period(dt_fecha, "year", v))
 
     return cache
 
@@ -1144,6 +1162,11 @@ def period_options():
                 options = [{"value": x, "label": x} for x in uniq]
                 return jsonify({"options": options})
 
+            if period == "year":
+                uniq = sorted(dt.dt.year.dropna().astype(int).unique().tolist(), reverse=True)
+                options = [{"value": str(y), "label": str(y)} for y in uniq]
+                return jsonify({"options": options})
+
             return jsonify({"options": []})
 
         except Exception:
@@ -1234,6 +1257,11 @@ def period_options():
     if period == "month":
         uniq = sorted(dt.dt.strftime("%Y-%m").unique(), reverse=True)
         options = [{"value": x, "label": x} for x in uniq]
+        return jsonify({"options": options})
+
+    if period == "year":
+        uniq = sorted(dt.dt.year.dropna().astype(int).unique().tolist(), reverse=True)
+        options = [{"value": str(y), "label": str(y)} for y in uniq]
         return jsonify({"options": options})
 
     return jsonify({"options": []})
@@ -1469,6 +1497,13 @@ def thb_filter_options():
         elif period == "month":
             # pv esperado "YYYY-MM"
             m = m & (dt.dt.strftime("%Y-%m") == pv)
+
+        elif period == "year":
+            try:
+                yy = int(str(pv).strip()[:4])
+                m = m & (dt.dt.year == yy)
+            except Exception:
+                pass
 
         elif period == "week":
             # pv esperado "YYYY-Www"
@@ -2553,8 +2588,8 @@ def run_analysis_api():
                 if dd.isdigit() and mm.isdigit() and yy.isdigit():
                     return f"{yy}-{mm}-{dd}"
 
-        # week/month: solo normaliza '/'
-        if period in ("week", "month"):
+        # week/month/year: solo normaliza '/'
+        if period in ("week", "month", "year"):
             return pv
 
         return pv
@@ -2617,6 +2652,13 @@ def run_analysis_api():
             except Exception:
                 return dt.notna()
             return (dt.dt.year == y) & (dt.dt.month == mo)
+
+        if period == "year":
+            try:
+                y = int(str(pv).strip()[:4])
+            except Exception:
+                return dt.notna()
+            return dt.dt.year == y
 
         if period == "week":
             # pv esperado típico: YYYY-W##  (por ejemplo 2026-W05)
@@ -2953,7 +2995,7 @@ def run_analysis_api():
         raw_time_start = (request.form.get("time_start", "") or "").strip()
         raw_time_end = (request.form.get("time_end", "") or "").strip()
 
-        if period in ("week", "month"):
+        if period in ("week", "month", "year"):
             time_start = ""
             time_end = ""
             time_apply = False
@@ -3281,5 +3323,3 @@ if __name__ == "__main__":
     import webbrowser
     webbrowser.open("http://127.0.0.1:5000")
     app.run(debug=False, host="127.0.0.1", port=5000)
-
-

@@ -735,6 +735,13 @@ def _normalize_period_value(period: str, period_value: str) -> str:
         dt = pd.to_datetime(s2, errors="coerce", dayfirst=True)
         return dt.strftime("%Y-%m") if not pd.isna(dt) else ""
 
+    if p == "year":
+        m = re.match(r"^(\d{4})$", s2)
+        if m:
+            return m.group(1)
+        dt = pd.to_datetime(s2, errors="coerce", dayfirst=True)
+        return dt.strftime("%Y") if not pd.isna(dt) else ""
+
     if p == "week":
         m = re.match(r"^(\d{4})-?[Ww](\d{1,2})$", s2.replace(" ", ""))
         if m:
@@ -799,6 +806,15 @@ def _period_bounds(period: str, pv: str) -> Tuple[Optional[pd.Timestamp], Option
         d = pd.Timestamp(d).normalize()
         r0 = d - pd.Timedelta(days=int(d.weekday()))
         r1 = r0 + pd.Timedelta(days=7)
+        return r0, r1
+
+    if p == "year":
+        try:
+            y = int(str(pv).strip()[:4])
+        except Exception:
+            return None, None
+        r0 = pd.Timestamp(year=y, month=1, day=1)
+        r1 = pd.Timestamp(year=y + 1, month=1, day=1)
         return r0, r1
 
     return None, None
@@ -2288,6 +2304,73 @@ def _build_thb_oee_chart(
             )
 
             week_idx += 1
+            seg0 = seg1
+
+        return out
+
+    if period == "year":
+        MONTH_ABBR = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+
+        seg0 = pd.Timestamp(r0).normalize()
+        while seg0 < pd.Timestamp(r1):
+            seg1 = min((seg0 + pd.offsets.MonthBegin(1)).normalize(), pd.Timestamp(r1))
+
+            m_seg = dtv.notna() & (dtv >= seg0) & (dtv < seg1)
+            df_seg = df_verif.loc[m_seg].copy()
+            dt_seg = dtv.loc[m_seg].copy()
+            p_seg = _slice_paradas_intervals(df_paradas_iv, seg0, seg1)
+
+            if df_seg.empty and p_seg.empty:
+                seg0 = seg1
+                continue
+
+            k_seg = _compute_daily_kpis(
+                df_verif=df_seg,
+                dt_verif=dt_seg,
+                cols=cols,
+                selected_day=None,
+                df_paradas_iv=p_seg,
+                period="month",
+            )
+
+            m_all = dt_all_ops.notna() & (dt_all_ops >= seg0) & (dt_all_ops < seg1)
+            df_seg_all = df_all_ops.loc[m_all].copy() if isinstance(df_all_ops, pd.DataFrame) else df_seg
+            dt_seg_all = dt_all_ops.loc[m_all].copy() if dt_all_ops is not None else dt_seg
+
+            tpaid_sec = float(_compute_horas_hombre_thb(
+                period="month",
+                r0=seg0,
+                r1=seg1,
+                df_verif=df_seg,
+                dt_verif=dt_seg,
+                cols=cols,
+                operator=operator,
+                df_paradas_iv=p_seg,
+                df_verif_all_ops=df_seg_all,
+                dt_verif_all_ops=dt_seg_all,
+            ))
+
+            total_units = float(k_seg.get("circuitos_cortados", 0) or 0)
+            good_units = float(min(total_units, float(k_seg.get("circuitos_planeados", 0) or 0)))
+            teff_sec = float(k_seg.get("tiempo_efectivo_sec", 0) or 0)
+
+            tc_unit_sec = 0.0
+            if total_units > 0:
+                tcnp_seg = float(k_seg.get("tcnp_sec", 0) or 0)
+                if tcnp_seg > 0:
+                    tc_unit_sec = tcnp_seg
+                else:
+                    tc_unit_sec = float(k_seg.get("tnom_total_sec", 0) or 0) / total_units
+
+            _push(
+                label=MONTH_ABBR[int(seg0.month) - 1],
+                total_units=total_units,
+                good_units=good_units,
+                teff_sec=teff_sec,
+                tpaid_sec=tpaid_sec,
+                tc_unit_sec=tc_unit_sec,
+            )
+
             seg0 = seg1
 
         return out

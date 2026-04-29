@@ -3210,7 +3210,7 @@ img{
 
 .time-grid{
   display:grid !important;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(260px, 1fr) auto !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(240px, .95fr) auto !important;
   gap:16px !important;
   align-items:end !important;
 }
@@ -3227,13 +3227,17 @@ img{
   grid-column: 3 / 4;
 }
 
+.time-grid .period-card:nth-child(4){
+  grid-column: 4 / 5;
+}
+
 .time-grid .select-box{
-  grid-column: 4 / 5 !important;
+  grid-column: 5 / 6 !important;
   grid-row: 1 / 2 !important;
 }
 
 .time-grid .action-box{
-  grid-column: 5 / 6 !important;
+  grid-column: 6 / 7 !important;
   grid-row: 1 / 2 !important;
   align-self:end !important;
   justify-self:start !important;
@@ -3258,6 +3262,7 @@ img{
   .time-grid .period-card:nth-child(1),
   .time-grid .period-card:nth-child(2),
   .time-grid .period-card:nth-child(3),
+  .time-grid .period-card:nth-child(4),
   .time-grid .select-box,
   .time-grid .action-box{
     grid-column:auto !important;
@@ -3286,6 +3291,7 @@ img{
   .time-grid .period-card:nth-child(1),
   .time-grid .period-card:nth-child(2),
   .time-grid .period-card:nth-child(3),
+  .time-grid .period-card:nth-child(4),
   .time-grid .select-box,
   .time-grid .action-box{
     grid-column:auto !important;
@@ -4286,5 +4292,74 @@ img{
   .chart-period-subtitle .chart-period-sep{
     font-size:14px;
   }
+}
+
+
+/* =========================
+   THB: Circuitos reales / Producción Planeada en una sola fila
+========================= */
+.ph-circuits{
+  display:flex !important;
+  align-items:baseline !important;
+  justify-content:center !important;
+  gap:5px !important;
+  flex-wrap:nowrap !important;
+  white-space:nowrap !important;
+
+  font-size:33px !important;   /* negro más pequeño */
+  font-weight:950 !important;
+  line-height:1 !important;
+  margin:0 !important;
+}
+
+.ph-circuits-real{
+  color:#0f172a !important;
+  font-size:32px !important;
+  font-weight:950 !important;
+}
+
+.ph-circuits-slash{
+  color:#0f172a !important;
+  font-size:28px !important;
+  font-weight:950 !important;
+  line-height:1 !important;
+}
+
+.ph-circuits-plan{
+  color:#16a34a !important;
+  font-size:23px !important;   /* verde más pequeño */
+  font-weight:950 !important;
+  line-height:1 !important;
+}
+
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
+  .ph-circuits{
+    gap:4px !important;
+  }
+
+  .ph-circuits-real{
+    font-size:29px !important;
+  }
+
+  .ph-circuits-slash{
+    font-size:25px !important;
+  }
+
+  .ph-circuits-plan{
+    font-size:21px !important;
+  }
+}
+
+/* =========================================================
+   OEE POR AÑO: ocultar texto de descarga y acciones
+   ========================================================= */
+#inlineResults.oee-year-mode #thbDownloadCallout,
+#inlineResults.oee-year-mode .thb-download-callout,
+#inlineResults.oee-year-mode #inlineTopBar,
+#inlineResults.oee-year-mode .inline-topbar,
+#inlineResults.oee-year-mode .inline-topbar-left,
+#inlineResults.oee-year-mode .inline-topbar-right,
+#inlineResults.oee-year-mode #inlineActions{
+  display: none !important;
 }
 

@@ -246,6 +246,14 @@
               <p class="period-desc">Agrupa por mes.</p>
             </div>
 
+            <div class="period-card" onclick="selectPeriod('year', this)">
+              <div class="period-title">
+                <img class="period-ico" src="{{ url_for('static', filename='img/icons/day.png') }}" alt="">
+                OEE por Año
+              </div>
+              <p class="period-desc">Muestra el OEE mensual del año seleccionado.</p>
+            </div>
+
             <div class="select-box">
               <label><b id="periodLabel">Días disponibles</b></label>
               <select name="period_value" id="periodValueSelect" required onchange="onPeriodValueChange()">
