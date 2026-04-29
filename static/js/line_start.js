@@ -2132,6 +2132,11 @@ function renderProdHour(result){
   }
 
   const machineU = String(result?.machine || "").toUpperCase();
+  if(title){
+    title.textContent = (machineU === "THB")
+    ? "Productividad por hora THB"
+    : "Productividad por hora";
+  }
   const isAplic = (machineU === "APLICACION" || machineU === "UNION");
   const showLenMix = (!isAplic) && (machineU !== "HP") && (machineU !== "THB");
   const showMeters = (!isAplic) && (machineU !== "HP");
