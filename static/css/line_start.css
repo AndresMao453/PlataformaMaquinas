@@ -4741,3 +4741,19 @@ img{
     padding: 16px 20px;
   }
 }
+
+/* Ajuste: subir cuadro OEE / PA / TW / TX en Productividad por hora */
+.ph-meters{
+  margin-bottom: 2px !important;
+}
+
+.ph-mini-kpis{
+  margin-top: 4px !important;
+  transform: translateY(-6px);
+}
+
+/* Evita que quede demasiado separado abajo después de subirlo */
+.ph-mini-kpis + .ph-nom-box,
+.ph-mini-kpis + .ph-otro-panel{
+  margin-top: 2px !important;
+}

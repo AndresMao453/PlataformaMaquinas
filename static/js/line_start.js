@@ -2299,7 +2299,7 @@ function renderProdHour(result){
   ).trim();
 
   if(machineTitleU === "APLICACION" && machineId === "1"){
-    title.textContent = "Productividad por hora-ELIZABETH C.";
+    title.textContent = "Productividad por hora - ELIZABETH C.";
   }else if(machineTitleU === "THB"){
     title.textContent = "Productividad por hora THB";
   }else{
@@ -4051,3 +4051,237 @@ window.selectMachine = selectMachine;
 window.selectPeriod = selectPeriod;
 window.onPeriodValueChange = onPeriodValueChange;
 window.onAppMachineChange = onAppMachineChange;
+
+
+// ============================================================
+// ✅ MODO TV / ROTATIVO — PRESERVADO
+// IMPORTANTE:
+// Este bloque NO reemplaza tus funciones existentes.
+// Solo automatiza la navegación y el scroll, conservando:
+// - Mensaje motivacional sobre Productividad por hora
+// - Nombres personalizados de Productividad por hora
+// - Ticker de fecha + PA + OEE
+// - Mini KPIs por hora
+//
+// Se activa con URLs tipo:
+//   /line/corte?auto=tv&machine=THB
+//   /line/aplicacion?auto=tv&subcat=aplicacion&machine_id=1
+// ============================================================
+function _tvParams(){
+  return new URLSearchParams(window.location.search || "");
+}
+
+function _tvEnabled(){
+  const p = _tvParams();
+  const v = String(p.get("auto") || p.get("tv") || "").trim().toLowerCase();
+  return v === "tv" || v === "1" || v === "true";
+}
+
+function _tvTodayISO(){
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+}
+
+function _tvSleep(ms){
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function _tvWaitFor(fn, timeoutMs = 15000, stepMs = 150){
+  const t0 = Date.now();
+  while(Date.now() - t0 < timeoutMs){
+    try{
+      const value = fn();
+      if(value) return value;
+    }catch(e){}
+    await _tvSleep(stepMs);
+  }
+  return null;
+}
+
+function _tvSelectOptionTodayOrLatest(){
+  const sel = document.getElementById("periodValueSelect");
+  if(!sel) return false;
+
+  const today = _tvTodayISO();
+  const opts = Array.from(sel.options || [])
+    .filter(op => String(op.value || "").trim() && !/cargando|selecciona|no hay/i.test(String(op.textContent || "")));
+
+  if(!opts.length) return false;
+
+  const todayOpt = opts.find(op => String(op.value || "").trim().replaceAll("/", "-") === today);
+  const chosen = todayOpt || opts[0];
+
+  sel.value = chosen.value;
+  sel.dispatchEvent(new Event("change", { bubbles:true }));
+
+  if(!todayOpt){
+    console.warn(`[Modo TV] No encontré registros para hoy (${today}). Usé el primer día disponible: ${chosen.value}`);
+  }
+
+  return true;
+}
+
+function _tvIsVisible(el){
+  if(!el) return false;
+  const st = window.getComputedStyle(el);
+  if(st.display === "none" || st.visibility === "hidden") return false;
+  const r = el.getBoundingClientRect();
+  return (r.width > 0 || r.height > 0);
+}
+
+function _tvProdHourReady(){
+  const wrap = document.getElementById("prodHourWrap");
+  const grid = document.getElementById("prodHourGrid");
+  const row = document.getElementById("prodHourTitleRow");
+  const title = document.getElementById("prodHourTitle");
+  const cards = document.querySelectorAll("#prodHourGrid .ph-card");
+
+  if(!wrap || !grid || !cards.length) return false;
+  if(!_tvIsVisible(wrap) && !_tvIsVisible(row) && !_tvIsVisible(title)) return false;
+
+  return true;
+}
+
+function _tvScrollToProdHour(){
+  // Primero preferimos el título/fila, porque ahí están:
+  // Productividad por hora + fecha + PA + OEE.
+  const candidates = [
+    document.getElementById("prodHourTitleRow"),
+    document.getElementById("prodHourTitle"),
+    document.getElementById("prodHourTitleSub"),
+    document.getElementById("prodHourWrap"),
+    document.querySelector("#prodHourGrid .ph-card")
+  ];
+
+  const target = candidates.find(_tvIsVisible) || document.getElementById("prodHourWrap") || document.getElementById("prodHourTitleRow");
+  if(!target) return false;
+
+  function doScroll(behavior){
+    const top = Math.max(0, target.getBoundingClientRect().top + window.scrollY - 12);
+    window.scrollTo({ top, behavior });
+  }
+
+  // Reajustes para no quedarse arriba cuando Chart.js/KPIs cambian la altura.
+  doScroll("smooth");
+  setTimeout(()=>doScroll("auto"), 700);
+  setTimeout(()=>doScroll("auto"), 1500);
+  setTimeout(()=>doScroll("auto"), 2800);
+
+  try{
+    window.parent?.postMessage({ type:"fasecol-tv-ready", href:window.location.href }, "*");
+  }catch(e){}
+
+  return true;
+}
+
+async function _tvAutoSelectUploadStage(){
+  const p = _tvParams();
+  const line = _cfgStr(CFG.line_key);
+
+  if(line === "corte"){
+    const machine = String(p.get("machine") || "THB").trim().toUpperCase();
+    const cards = Array.from(document.querySelectorAll(".machine-card"));
+    const card = cards.find(c => (c.textContent || "").toUpperCase().includes(machine));
+
+    if(card){
+      selectMachine(machine, card);
+      await _tvSleep(450);
+    }
+
+    const form = document.querySelector("#gsheetHpWrap form");
+    if(form){
+      const input = document.getElementById("machineInputGs");
+      if(input) input.value = machine;
+      form.submit();
+    }
+    return true;
+  }
+
+  if(line === "aplicacion"){
+    const subcat = String(p.get("subcat") || "aplicacion").trim().toLowerCase();
+    const mid = String(p.get("machine_id") || "1").trim();
+
+    const cards = Array.from(document.querySelectorAll(".subcat-card"));
+    const card = cards.find(c => c.classList.contains(subcat === "union" ? "union" : "app")) || cards[0];
+
+    if(card){
+      selectSubcat(subcat, card);
+      await _tvSleep(450);
+    }
+
+    const sel = document.getElementById("appMachineSelect");
+    if(sel){
+      sel.value = mid;
+      onAppMachineChange(sel);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+async function _tvAutoSelectSheetStage(){
+  const periodInput = document.getElementById("periodInput");
+  if(periodInput) periodInput.value = "day";
+
+  // Espera a que carguen las fechas reales.
+  await _tvWaitFor(() => {
+    const sel = document.getElementById("periodValueSelect");
+    if(!sel) return null;
+    const hasRealOption = Array.from(sel.options || []).some(op => {
+      const v = String(op.value || "").trim();
+      const t = String(op.textContent || "").trim();
+      return v && !/cargando|selecciona/i.test(t);
+    });
+    return hasRealOption ? sel : null;
+  }, 22000, 200);
+
+  const selected = _tvSelectOptionTodayOrLatest();
+  if(!selected) return false;
+
+  // Espera a que el autoanálisis normal cree las tarjetas de productividad.
+  await _tvWaitFor(() => _tvProdHourReady(), 32000, 250);
+
+  // Si por alguna razón no corrió el análisis automático, lo forzamos sin scroll.
+  if(!_tvProdHourReady()){
+    const form = document.getElementById("runForm");
+    if(form){
+      await runInlineAnalysis(form, { scroll:false });
+    }
+  }
+
+  await _tvWaitFor(() => _tvProdHourReady(), 22000, 250);
+
+  // Espera adicional para que se pinten ticker, nombres, OEE, PA y tarjetas.
+  await _tvSleep(900);
+  _tvScrollToProdHour();
+
+  return true;
+}
+
+async function setupTvAutoModePreservado(){
+  if(!_tvEnabled()) return;
+
+  document.body.classList.add("tv-auto-mode");
+
+  if(_cfgStr(CFG.stage) === "upload"){
+    await _tvAutoSelectUploadStage();
+    return;
+  }
+
+  if(_cfgStr(CFG.stage) === "select_sheet"){
+    await _tvAutoSelectSheetStage();
+  }
+}
+
+// Listener separado para NO tocar tu DOMContentLoaded original.
+document.addEventListener("DOMContentLoaded", () => {
+  if(!_tvEnabled()) return;
+  setTimeout(() => {
+    setupTvAutoModePreservado();
+  }, 350);
+});
+

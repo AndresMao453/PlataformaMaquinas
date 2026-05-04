@@ -910,6 +910,13 @@ def home():
     return render_template("home.html")
 
 
+
+
+@app.route("/pantalla_rotativa", methods=["GET"])
+def pantalla_rotativa():
+    """Pantalla tipo TV: rota automáticamente entre THB y Crimpado Aplicación M1."""
+    return render_template("pantalla_rotativa.html")
+
 @app.route("/line/<line_key>", methods=["GET", "POST"])
 def line_start(line_key: str):
     analyses_map = get_analyses()
