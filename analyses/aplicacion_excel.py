@@ -1213,6 +1213,10 @@ def run_aplicacion_analysis(
         par_f.loc[(par_f["CausaCode"] == 105), "downtime_s"].sum()
     ) if "downtime_s" in par_f.columns else 0.0
 
+    parada104_s = float(
+        par_f.loc[(par_f["CausaCode"] == 104), "downtime_s"].sum()
+    ) if "downtime_s" in par_f.columns else 0.0
+
     registered_slot_s = float(slot_hours_total) * 3600.0
     dead_total_s = float(par_f["downtime_s"].sum()) if "downtime_s" in par_f.columns else 0.0
 
@@ -1262,19 +1266,88 @@ def run_aplicacion_analysis(
 
     pct_eff = (productive_s / active_available_s * 100.0) if active_available_s > 0 else 0.0
 
+    # =========================================================
+    # ✅ MODELO VISUAL TIPO THB PARA CRIMPADO
+    # =========================================================
+    # En Aplicación/Unión no existe todavía un modelo nominal de ciclo
+    # equivalente al de corte THB ni una columna robusta de calidad/defecto.
+    # Por eso, los indicadores que no se pueden calcular quedan en 0,
+    # pero se conserva la estructura visual del OEE tipo THB.
+    oee_pct = 0.0
+    idx_operacional = 0.0
+    idx_disponibilidad = float(pct_eff)
+    idx_calidad = 0.0
+    cumplimiento_plan = 0.0
+
+    def _oee_ui_crimpado() -> str:
+        return (
+            f"{oee_pct:.1f}%||"
+            f"Indice de Eficiencia Operacional: {idx_operacional:.1f}% | "
+            f"Indice de Disponibilidad: {idx_disponibilidad:.1f}% | "
+            f"Indice de Calidad: {idx_calidad:.1f}%"
+        )
+
+    def _build_oee_chart_crimpado() -> Dict[str, Any]:
+        labels: List[str] = []
+        disponibilidad_vals: List[float] = []
+
+        p = str(period or "").strip().lower()
+
+        if p == "day" and hourly_buckets:
+            for b in hourly_buckets:
+                labels.append(str(b.get("hourLabel") or b.get("hour") or ""))
+                cap = float(b.get("capacitySec", 0) or 0)
+                prod = float(b.get("prodSec", 0) or 0)
+                disponibilidad_vals.append((prod / cap * 100.0) if cap > 0 else 0.0)
+
+        elif res_f is not None and not res_f.empty and "Fecha" in res_f.columns:
+            tmp_chart = res_f.copy()
+            tmp_chart["__fecha_chart"] = pd.to_datetime(tmp_chart["Fecha"], errors="coerce", dayfirst=True).dt.normalize()
+            tmp_chart = tmp_chart.dropna(subset=["__fecha_chart"])
+
+            if p == "week":
+                days = sorted(tmp_chart["__fecha_chart"].unique())
+                labels = [pd.Timestamp(d).strftime("%d/%m") for d in days]
+                disponibilidad_vals = [0.0] * len(labels)
+
+            elif p == "month":
+                iso = tmp_chart["__fecha_chart"].dt.isocalendar()
+                tmp_chart["__week_chart"] = iso["week"].astype(int)
+                weeks = sorted(tmp_chart["__week_chart"].dropna().unique().tolist())
+                labels = [f"Semana {int(w):02d}" for w in weeks]
+                disponibilidad_vals = [0.0] * len(labels)
+
+        n = len(labels)
+        if len(disponibilidad_vals) != n:
+            disponibilidad_vals = [0.0] * n
+
+        return {
+            "labels": labels,
+            "oee": [0.0] * n,
+            "operacional": [0.0] * n,
+            "disponibilidad": [round(float(x), 1) for x in disponibilidad_vals],
+            "calidad": [0.0] * n,
+        }
+
+    oee_chart = _build_oee_chart_crimpado()
+
     kpis_ui: Dict[str, str] = {
-        "Crimpados": _fmt_int_es(pulses_total),
-        "Crimpados Carrete": f"{_fmt_int_es(carrete)} ({_fmt_pct_es(pct_carrete)})",
-        "Crimpados Manual": f"{_fmt_int_es(manual)} ({_fmt_pct_es(pct_manual)})",
+        "OEE": _oee_ui_crimpado(),
+        "Cumplimiento del plan": f"{cumplimiento_plan:.1f}%",
+        "Producción Total": _fmt_int_es(pulses_total),
 
+        # Se dejan como detalle porque sí se calculan con los datos actuales.
         "Tiempo Pagado": _fmt_hhmm(active_available_s),
-
         "Tiempos Perdidos": (
             f"{_fmt_hhmm(other_total_s)}"
-            f"||105: {_fmt_hhmm(meal_total_s)} | No registrado: {_fmt_hhmm(no_reg_s)} | {pct_other:.1f}%"
+            f"||105: {_fmt_hhmm(meal_total_s)} | "
+            f"No registrado: {_fmt_hhmm(no_reg_s)} | "
+            f"104: {_fmt_hhmm(parada104_s)} | "
+            f"{pct_other:.1f}%"
         ),
-
         "Tiempo Trabajado": f"{_fmt_hhmm(productive_s)} ({pct_eff:.1f}%)",
+        "Crimpados Carrete": f"{_fmt_int_es(carrete)} ({_fmt_pct_es(pct_carrete)})",
+        "Crimpados Manual": f"{_fmt_int_es(manual)} ({_fmt_pct_es(pct_manual)})",
     }
 
     return {
@@ -1294,8 +1367,279 @@ def run_aplicacion_analysis(
             "other_causes": other_causes,
         },
         "terminal_usage": terminal_usage,
+        "oee_chart": oee_chart,
         "machine_id": _norm_machine_id(machine_id),
     }
+
+
+# ============================================================
+# EXPORT EXCEL CRIMPADO / APLICACIÓN / UNIÓN
+# Modelo tipo THB adaptado a terminales aplicadas
+# ============================================================
+def _clean_export_terminal(x: Any) -> str:
+    if x is None or (isinstance(x, float) and pd.isna(x)):
+        return ""
+    s = str(x).strip()
+    if not s or s.lower() in ("nan", "none", "null", "nat"):
+        return ""
+    s = re.sub(r"\.0$", "", s)
+    return s.strip()
+
+
+def _format_crimpado_equipo(machine: str, machine_id: str = "") -> str:
+    m = (machine or "APLICACION").strip().upper()
+    mid = _norm_machine_id(machine_id)
+    if mid:
+        return f"{m} M{mid}"
+    return m
+
+
+def _app_export_date_series(df: pd.DataFrame) -> pd.Series:
+    if df is None or df.empty or "Fecha" not in df.columns:
+        return pd.Series([], dtype="datetime64[ns]")
+    s = pd.to_datetime(df["Fecha"], errors="coerce", dayfirst=True)
+    return s.dropna().dt.normalize()
+
+
+def _app_days_for_period_export(
+    res_df: pd.DataFrame,
+    par_df: pd.DataFrame,
+    period: str,
+    period_value: str,
+    operator: str = "",
+) -> List[pd.Timestamp]:
+    op = (operator or "").strip()
+    if op.lower() == "general":
+        op = ""
+
+    res_f = _filter_period(res_df, period, period_value, "Fecha") if res_df is not None else pd.DataFrame()
+    par_f = _filter_period(par_df, period, period_value, "Fecha") if par_df is not None else pd.DataFrame()
+
+    if op:
+        if res_f is not None and not res_f.empty and "Nombre" in res_f.columns:
+            res_f = res_f[res_f["Nombre"].astype(str).str.strip().eq(op)]
+        if par_f is not None and not par_f.empty and "Nombre" in par_f.columns:
+            par_f = par_f[par_f["Nombre"].astype(str).str.strip().eq(op)]
+
+    d1 = _app_export_date_series(res_f)
+    d2 = _app_export_date_series(par_f)
+    all_days = pd.concat([d1, d2], ignore_index=True).dropna()
+    if all_days.empty:
+        return []
+
+    days = pd.to_datetime(all_days.unique(), errors="coerce")
+    days = days[~pd.isna(days)]
+    return [pd.Timestamp(d).normalize() for d in sorted(days)]
+
+
+def _crimpado_terminales_for_hour(hour_df: pd.DataFrame) -> str:
+    if hour_df is None or hour_df.empty or "Terminal" not in hour_df.columns:
+        return ""
+
+    vistos = set()
+    terminales: List[str] = []
+    vals = hour_df["Terminal"].dropna().astype(str).tolist()
+    for raw in vals:
+        t = _clean_export_terminal(raw)
+        if not t:
+            continue
+        k = t.upper()
+        if k in vistos:
+            continue
+        vistos.add(k)
+        terminales.append(t)
+
+    return ", ".join(terminales)
+
+
+def _crimpado_operator_for_hour(hour_df: pd.DataFrame, operator: str = "") -> str:
+    op = (operator or "").strip()
+    if op and op.lower() != "general":
+        return op
+
+    if hour_df is not None and not hour_df.empty and "Nombre" in hour_df.columns:
+        ops = hour_df["Nombre"].dropna().astype(str).str.strip()
+        ops = ops[ops.ne("") & ~ops.str.lower().isin(["nan", "none", "general"])]
+        if not ops.empty:
+            try:
+                return str(ops.mode().iloc[0]).strip()
+            except Exception:
+                return str(ops.iloc[0]).strip()
+
+    return "General"
+
+
+def _crimpado_hour_int_from_bucket(b: Dict[str, Any]) -> Optional[int]:
+    raw = str(b.get("hourLabel") or b.get("hour") or "").strip()
+    m = re.search(r"(\d{1,2})", raw)
+    if not m:
+        return None
+    try:
+        hh = int(m.group(1))
+        if 0 <= hh <= 23:
+            return hh
+    except Exception:
+        return None
+    return None
+
+
+def _crimpado_rows_for_day(
+    res_df: pd.DataFrame,
+    day: pd.Timestamp,
+    buckets: List[Dict[str, Any]],
+    machine: str = "APLICACION",
+    machine_id: str = "",
+    operator: str = "",
+) -> List[Dict[str, Any]]:
+    day0 = pd.Timestamp(day).normalize()
+    day1 = day0 + pd.Timedelta(days=1)
+
+    res_day = pd.DataFrame()
+    dt_res = pd.Series([], dtype="datetime64[ns]")
+
+    if res_df is not None and not res_df.empty and "Fecha" in res_df.columns:
+        res_day = _filter_period(res_df, "day", day0.strftime("%Y-%m-%d"), "Fecha").copy()
+        op = (operator or "").strip()
+        if op and op.lower() != "general" and "Nombre" in res_day.columns:
+            res_day = res_day[res_day["Nombre"].astype(str).str.strip().eq(op)].copy()
+
+        if not res_day.empty:
+            fecha = pd.to_datetime(res_day["Fecha"], errors="coerce", dayfirst=True).dt.normalize()
+            if "Hora" in res_day.columns:
+                sec = res_day["Hora"].apply(_timeobj_to_seconds).fillna(0)
+                dt_res = fecha + pd.to_timedelta(sec, unit="s")
+            else:
+                dt_res = fecha
+
+    rows: List[Dict[str, Any]] = []
+    equipo = _format_crimpado_equipo(machine, machine_id)
+
+    for b in (buckets or []):
+        hh = _crimpado_hour_int_from_bucket(b)
+        if hh is None:
+            continue
+
+        pn = int(round(float(b.get("cut", 0) or 0)))
+        dead_sec = float(b.get("deadSec", 0.0) or 0.0)
+        meal_sec = float(b.get("mealSec", 0.0) or 0.0)
+        other_sec = float(b.get("otherDeadSec", max(0.0, dead_sec - meal_sec)) or 0.0)
+
+        # No exportar huecos creados solamente para la visualización.
+        if pn <= 0 and dead_sec <= 0 and other_sec <= 0 and bool(b.get("_missing")):
+            continue
+        if pn <= 0 and dead_sec <= 0 and other_sec <= 0:
+            continue
+
+        h0 = day0 + pd.Timedelta(hours=int(hh))
+        h1 = h0 + pd.Timedelta(hours=1)
+
+        hour_df = pd.DataFrame()
+        if res_day is not None and not res_day.empty and len(dt_res) == len(res_day):
+            dt_local = pd.to_datetime(dt_res, errors="coerce")
+            mask_h = dt_local.notna() & (dt_local >= h0) & (dt_local < h1)
+            hour_df = res_day.loc[mask_h].copy()
+
+        referencia = _crimpado_terminales_for_hour(hour_df)
+        operario = _crimpado_operator_for_hour(hour_df, operator=operator)
+
+        meal_sec = max(0.0, min(3600.0, meal_sec))
+        other_sec = max(0.0, min(3600.0, other_sec))
+
+        # En crimpado la parada 105 no se mete a TX; reduce el tiempo pagado.
+        tp_h = max(0.0, (3600.0 - meal_sec) / 3600.0)
+        tx_h = max(0.0, other_sec / 3600.0)
+        tw_h = max(0.0, tp_h - tx_h)
+
+        # TC = tiempo de ciclo efectivo por terminal aplicada (h / terminal).
+        # Si no hay producción, se deja vacío para evitar divisiones inválidas.
+        tc_h_uni = (tw_h / float(pn)) if pn > 0 and tw_h > 0 else None
+
+        rows.append({
+            "fecha": day0.to_pydatetime(),
+            "referencia": referencia,
+            "equipo": equipo,
+            "operario": operario,
+            "inicio": h0.to_pydatetime(),
+            "fin": h1.to_pydatetime(),
+            "pp": None,
+            "pn": int(pn),
+            "rx": 0,
+            "tp_h": round(float(tp_h), 3),
+            "tx_h": round(float(tx_h), 3),
+            "tc_h_uni": tc_h_uni,
+        })
+
+    return rows
+
+
+def get_crimpado_export_day_exports(
+    path: str,
+    period: str,
+    period_value: str,
+    machine: str = "APLICACION",
+    subcat: str = "",
+    operator: str = "",
+    machine_id: str = "",
+) -> List[Dict[str, Any]]:
+    """
+    Construye los datos para descargar Excel de crimpado usando el mismo
+    modelo de THB, pero con:
+      - Referencia = terminal(es) aplicada(s)
+      - Equipo = APLICACION/UNION + M1/M2
+      - PN = pulsos / terminales aplicadas
+      - RX = 0 si no hay datos de defectos
+      - TC = TW / PN, para que Excel calcule VN, TCN, TCE, ID, IEO, IC, OEE y PA.
+    """
+    m = (machine or "APLICACION").strip().upper()
+    mid = _norm_machine_id(machine_id)
+    op = (operator or "").strip()
+    if op.lower() == "general":
+        op = ""
+
+    res_df = load_resumen_pulsos(path, machine=m, machine_id=mid)
+    par_df, _ = load_paradas(path, machine=m, machine_id=mid)
+
+    days = _app_days_for_period_export(res_df, par_df, period, period_value, operator=op)
+    if not days:
+        return []
+
+    day_exports: List[Dict[str, Any]] = []
+    for day in days:
+        day_str = pd.Timestamp(day).strftime("%Y-%m-%d")
+        result_day = run_aplicacion_analysis(
+            path=path,
+            period="day",
+            period_value=day_str,
+            machine=m,
+            subcat=subcat,
+            operator=op,
+            time_start="",
+            time_end="",
+            machine_id=mid,
+        )
+
+        buckets = []
+        if isinstance(result_day, dict):
+            buckets = result_day.get("kpis", {}).get("hourly_buckets", []) or []
+
+        rows = _crimpado_rows_for_day(
+            res_df=res_df,
+            day=pd.Timestamp(day),
+            buckets=buckets,
+            machine=m,
+            machine_id=mid,
+            operator=op,
+        )
+
+        if not rows:
+            continue
+
+        day_exports.append({
+            "sheet_title": day_str,
+            "rows": rows,
+        })
+
+    return day_exports
 
 
 def analyze_aplicacion1(

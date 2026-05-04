@@ -29,6 +29,7 @@ except Exception:
 
 from analyses.aplicacion_excel import get_period_options_aplicacion
 from analyses.aplicacion_excel import run_aplicacion_analysis
+from analyses.aplicacion_excel import get_crimpado_export_day_exports
 
 
 # =========================
@@ -774,14 +775,6 @@ def filter_by_period(dt_fecha: pd.Series, period: str, period_value: str) -> pd.
         mask = (dt.dt.year == yy) & (dt.dt.month == mm)
         return mask.fillna(False)
 
-    if period == "year":
-        try:
-            yy = int(str(period_value).strip()[:4])
-        except Exception:
-            return pd.Series([False] * len(dt), index=dt.index)
-        mask = (dt.dt.year == yy)
-        return mask.fillna(False)
-
     return pd.Series([True] * len(dt), index=dt.index)
 
 
@@ -813,10 +806,6 @@ def build_period_options(dt: pd.Series, period: str) -> list[dict]:
             out.append({"value": f"{y}-{m:02d}", "label": f"{m:02d}/{y}"})
         return out
 
-    if period == "year":
-        years = sorted(set(int(y) for y in dt.dt.year.tolist()), reverse=True)
-        return [{"value": str(y), "label": str(y)} for y in years]
-
     return []
 
 
@@ -844,14 +833,12 @@ def build_thb_cache(path: str) -> dict:
         "days": [],
         "weeks": [],
         "months": [],
-        "years": [],
-        "by_period": {"day": {}, "week": {}, "month": {}, "year": {}},
+        "by_period": {"day": {}, "week": {}, "month": {}},
     }
 
     cache["days"] = build_period_options(dt_fecha, "day")
     cache["weeks"] = build_period_options(dt_fecha, "week")
     cache["months"] = build_period_options(dt_fecha, "month")
-    cache["years"] = build_period_options(dt_fecha, "year")
 
     def store(period: str, value: str, mask: pd.Series):
         sub = df.loc[mask].copy()
@@ -881,10 +868,6 @@ def build_thb_cache(path: str) -> dict:
     for o in cache["months"]:
         v = o["value"]
         store("month", v, filter_by_period(dt_fecha, "month", v))
-
-    for o in cache["years"]:
-        v = o["value"]
-        store("year", v, filter_by_period(dt_fecha, "year", v))
 
     return cache
 
@@ -1162,11 +1145,6 @@ def period_options():
                 options = [{"value": x, "label": x} for x in uniq]
                 return jsonify({"options": options})
 
-            if period == "year":
-                uniq = sorted(dt.dt.year.dropna().astype(int).unique().tolist(), reverse=True)
-                options = [{"value": str(y), "label": str(y)} for y in uniq]
-                return jsonify({"options": options})
-
             return jsonify({"options": []})
 
         except Exception:
@@ -1257,11 +1235,6 @@ def period_options():
     if period == "month":
         uniq = sorted(dt.dt.strftime("%Y-%m").unique(), reverse=True)
         options = [{"value": x, "label": x} for x in uniq]
-        return jsonify({"options": options})
-
-    if period == "year":
-        uniq = sorted(dt.dt.year.dropna().astype(int).unique().tolist(), reverse=True)
-        options = [{"value": str(y), "label": str(y)} for y in uniq]
         return jsonify({"options": options})
 
     return jsonify({"options": []})
@@ -1497,13 +1470,6 @@ def thb_filter_options():
         elif period == "month":
             # pv esperado "YYYY-MM"
             m = m & (dt.dt.strftime("%Y-%m") == pv)
-
-        elif period == "year":
-            try:
-                yy = int(str(pv).strip()[:4])
-                m = m & (dt.dt.year == yy)
-            except Exception:
-                pass
 
         elif period == "week":
             # pv esperado "YYYY-Www"
@@ -2550,6 +2516,76 @@ def export_thb_excel():
         return jsonify({"ok": False, "error": f"Error exportando Excel THB: {e}"}), 500
 
 
+@app.get("/export_crimpado_excel")
+def export_crimpado_excel():
+    try:
+        filename = (request.args.get("filename") or "").strip()
+        machine = (request.args.get("machine") or "APLICACION").strip().upper()
+        subcat = (request.args.get("subcat") or "").strip().lower()
+        machine_id = (request.args.get("machine_id") or "").strip()
+        period = (request.args.get("period") or "day").strip().lower()
+        period_value = (request.args.get("period_value") or "").strip()
+        operator = (request.args.get("operator") or "").strip()
+
+        if machine not in ("APLICACION", "UNION"):
+            return jsonify({"ok": False, "error": "Esta exportación solo aplica para máquinas de crimpado."}), 400
+        if not filename:
+            return jsonify({"ok": False, "error": "Falta filename."}), 400
+        if not period_value:
+            return jsonify({"ok": False, "error": "Falta period_value."}), 400
+
+        # Aplicación/Unión trabaja normalmente por Google Sheets con este token.
+        if filename == GSHEET_APP_TOKEN:
+            path = GSHEET_APP_TOKEN
+        else:
+            path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+            if not os.path.exists(path):
+                return jsonify({"ok": False, "error": f"No existe el archivo: {filename}"}), 400
+
+        op2 = (operator or "").strip()
+        if op2.lower() == "general":
+            op2 = ""
+
+        day_exports = get_crimpado_export_day_exports(
+            path=path,
+            period=period,
+            period_value=period_value,
+            machine=machine,
+            subcat=subcat,
+            operator=op2,
+            machine_id=machine_id,
+        )
+
+        if not day_exports:
+            return jsonify({"ok": False, "error": "No hubo datos exportables para la selección actual."}), 404
+
+        period_tag = {
+            "day": period_value,
+            "week": period_value.replace("/", "-"),
+            "month": period_value,
+        }.get(period, period_value)
+
+        machine_tag = f"{machine}_M{machine_id}" if machine_id else machine
+        download_name = f"Crimpado_{machine_tag}_{period}_{period_tag}.xlsx".replace("/", "-").replace("\\", "-")
+
+        payload = _build_thb_export_workbook(day_exports, period)
+
+        resp = send_file(
+            payload,
+            as_attachment=True,
+            download_name=download_name,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        return resp
+
+    except Exception as e:
+        app.logger.exception("export_crimpado_excel failed")
+        return jsonify({"ok": False, "error": f"Error exportando Excel Crimpado: {e}"}), 500
+
+
 @app.post("/run_analysis_api")
 def run_analysis_api():
     import os
@@ -2588,8 +2624,8 @@ def run_analysis_api():
                 if dd.isdigit() and mm.isdigit() and yy.isdigit():
                     return f"{yy}-{mm}-{dd}"
 
-        # week/month/year: solo normaliza '/'
-        if period in ("week", "month", "year"):
+        # week/month: solo normaliza '/'
+        if period in ("week", "month"):
             return pv
 
         return pv
@@ -2652,13 +2688,6 @@ def run_analysis_api():
             except Exception:
                 return dt.notna()
             return (dt.dt.year == y) & (dt.dt.month == mo)
-
-        if period == "year":
-            try:
-                y = int(str(pv).strip()[:4])
-            except Exception:
-                return dt.notna()
-            return dt.dt.year == y
 
         if period == "week":
             # pv esperado típico: YYYY-W##  (por ejemplo 2026-W05)
@@ -2868,9 +2897,52 @@ def run_analysis_api():
     # =========================================================
     def _analyze_continuidad(df_hora: pd.DataFrame, df_dia: pd.DataFrame, period: str, pv: str, machine: str) -> dict:
         """
-        df_hora: Resumen Hora (Fecha, Hora, Referencia, Cantidad por referencia, Total por hora)
-        df_dia : Resumen Día x Ref (Fecha, Referencia, Cantidad del día)
+        Continuidad con salida visual tipo THB.
+
+        Datos disponibles:
+          - df_hora: Resumen Hora (Fecha, Hora, Referencia, Cantidad por referencia, Total por hora)
+          - df_dia : Resumen Día x Ref (Fecha, Referencia, Cantidad del día)
+
+        Regla solicitada:
+          - Donde THB muestra "Metros Cortados", Continuidad muestra "Producción Total".
+          - No se incluyen: Producción Buena, Producción con Defectos,
+            Tiempo De Corte, Metros Extras, Metros Planeados.
+          - Indicadores sin datos suficientes quedan en 0.
         """
+        def _fmt_int_dot(n: Any) -> str:
+            try:
+                return f"{int(round(float(n))):,}".replace(",", ".")
+            except Exception:
+                return "0"
+
+        def _fmt_hhmm_local(seconds: Any) -> str:
+            try:
+                sec = int(round(float(seconds)))
+            except Exception:
+                sec = 0
+            sec = max(0, sec)
+            hh = sec // 3600
+            mm = (sec % 3600) // 60
+            return f"{hh:02d}:{mm:02d}"
+
+        def _zero_oee_ui() -> str:
+            return (
+                "0.0%||"
+                "Indice de Eficiencia Operacional: 0.0% | "
+                "Indice de Disponibilidad: 0.0% | "
+                "Indice de Calidad: 0.0%"
+            )
+
+        def _empty_oee_chart(labels: list[str]) -> dict:
+            labels = [str(x) for x in (labels or [])]
+            return {
+                "labels": labels,
+                "oee": [0.0] * len(labels),
+                "operacional": [0.0] * len(labels),
+                "disponibilidad": [0.0] * len(labels),
+                "calidad": [0.0] * len(labels),
+            }
+
         if df_hora is None or df_hora.empty:
             return {"status": "error", "message": "Continuidad: hoja 'Resumen Hora' sin datos."}
 
@@ -2888,20 +2960,32 @@ def run_analysis_api():
         dt = _build_dt_from_fecha_hora(df_hora, c_fecha, c_hora)
         m = _mask_by_period(dt, period, pv)
         sub = df_hora.loc[m].copy()
+        dt_sub = pd.to_datetime(dt.loc[m], errors="coerce") if hasattr(dt, "loc") else pd.to_datetime([], errors="coerce")
+
         if sub.empty:
             return {
                 "status": "ok",
+                "analysis": "continuidad",
+                "title": "Análisis Continuidad",
                 "machine": machine,
                 "period": period,
                 "period_value": pv,
+                "rows_total": 0,
                 "kpis_ui": {
-                    "Total pruebas": "0",
-                    "Horas registradas": "0",
+                    "OEE": _zero_oee_ui(),
+                    "Cumplimiento del plan": "0.0%",
+                    "Producción Total": "0",
+                    "Tiempo Pagado": "00:00",
+                    "Tiempos Perdidos": "00:00||105: 00:00 | No registrado: 00:00 | 0.0%",
+                    "Tiempo Trabajado": "00:00 (0.0%)",
                     "Referencias únicas": "0",
                     "Promedio por hora": "0.00",
                 },
+                "kpis": {"hourly_buckets": [], "other_causes": []},
                 "terminal_usage": {"labels": [], "manual": [], "carrete": [], "otros": [], "total": []},
-                "top_refs_day": []
+                "top_refs_day": [],
+                "pareto": {"labels": [], "durations_sec": [], "cum_pct": []},
+                "oee_chart": _empty_oee_chart([]),
             }
 
         # numéricos
@@ -2910,21 +2994,55 @@ def run_analysis_api():
         if c_total_h:
             sub[c_total_h] = pd.to_numeric(sub[c_total_h], errors="coerce").fillna(0)
 
-        # Total pruebas (evitar duplicar por referencia): max por (Fecha, Hora)
-        key_hour = [c_fecha, c_hora]
-        if c_total_h:
-            total_por_hora_unique = sub.groupby(key_hour, dropna=False)[c_total_h].max()
-            total_pruebas = int(total_por_hora_unique.sum())
-            horas_reg = int(total_por_hora_unique.shape[0])
-        else:
-            total_pruebas = int(sub[c_qty_ref].sum()) if c_qty_ref else int(len(sub))
-            horas_reg = int(sub.groupby(key_hour).size().shape[0])
+        sub["__dt_cont"] = pd.to_datetime(dt_sub, errors="coerce").values
+        sub = sub.loc[sub["__dt_cont"].notna()].copy()
 
-        refs_unicas = int(sub[c_ref].astype(str).str.strip().nunique())
+        if sub.empty:
+            horas_reg = 0
+            total_pruebas = 0
+        else:
+            sub["__date_cont"] = sub["__dt_cont"].dt.normalize()
+            sub["__hour_cont"] = sub["__dt_cont"].dt.hour.astype(int)
+
+            # Total pruebas: si existe "Total por hora", tomar máximo por fecha/hora
+            # para no duplicar el mismo total repetido por cada referencia.
+            if c_total_h:
+                total_por_hora = sub.groupby(["__date_cont", "__hour_cont"], dropna=False)[c_total_h].max()
+                total_pruebas = int(total_por_hora.sum())
+                horas_reg = int(total_por_hora.shape[0])
+            elif c_qty_ref:
+                total_por_hora = sub.groupby(["__date_cont", "__hour_cont"], dropna=False)[c_qty_ref].sum()
+                total_pruebas = int(total_por_hora.sum())
+                horas_reg = int(total_por_hora.shape[0])
+            else:
+                total_por_hora = sub.groupby(["__date_cont", "__hour_cont"], dropna=False).size()
+                total_pruebas = int(total_por_hora.sum())
+                horas_reg = int(total_por_hora.shape[0])
+
+        refs_unicas = int(sub[c_ref].astype(str).str.strip().replace({"": pd.NA, "nan": pd.NA}).dropna().nunique()) if c_ref in sub.columns and not sub.empty else 0
         promedio_hora = (total_pruebas / horas_reg) if horas_reg > 0 else 0.0
 
-        # barras “Referencias más usadas” (reusamos terminal_usage)
-        if c_qty_ref:
+        # En Continuidad no hay modelo nominal ni defectos en estas hojas.
+        # Por eso OEE, cumplimiento y sus componentes quedan en cero.
+        tiempo_pagado_s = int(horas_reg * 3600)
+        tiempo_trabajado_s = int(horas_reg * 3600) if total_pruebas > 0 else 0
+        pct_trab = (tiempo_trabajado_s / tiempo_pagado_s * 100.0) if tiempo_pagado_s > 0 else 0.0
+
+        kpis_ui = {
+            "OEE": _zero_oee_ui(),
+            "Cumplimiento del plan": "0.0%",
+            "Producción Total": _fmt_int_dot(total_pruebas),
+
+            "Tiempo Pagado": _fmt_hhmm_local(tiempo_pagado_s),
+            "Tiempos Perdidos": "00:00||105: 00:00 | No registrado: 00:00 | 0.0%",
+            "Tiempo Trabajado": f"{_fmt_hhmm_local(tiempo_trabajado_s)} ({pct_trab:.1f}%)",
+
+            "Referencias únicas": _fmt_int_dot(refs_unicas),
+            "Promedio por hora": f"{promedio_hora:.2f}",
+        }
+
+        # Referencias más usadas (se reutiliza terminal_usage para pintar tarjetas)
+        if c_qty_ref and c_qty_ref in sub.columns:
             grp_ref = sub.groupby(c_ref, dropna=False)[c_qty_ref].sum().sort_values(ascending=False).head(12)
         else:
             grp_ref = sub.groupby(c_ref, dropna=False).size().sort_values(ascending=False).head(12)
@@ -2932,7 +3050,7 @@ def run_analysis_api():
         labels = [str(x) for x in grp_ref.index.tolist()]
         totals = [int(x) for x in grp_ref.values.tolist()]
 
-        # top_refs desde Resumen Día x Ref (si existe)
+        # Top referencias desde Resumen Día x Ref, si existe.
         top_refs = []
         if df_dia is not None and not df_dia.empty:
             cd_fecha = _find_col_local(df_dia, "fecha")
@@ -2946,16 +3064,56 @@ def run_analysis_api():
                 grp = dsub.groupby(cd_ref, dropna=False)[cd_qty].sum().sort_values(ascending=False).head(10)
                 top_refs = [{"label": str(k), "value": int(v)} for k, v in grp.items()]
 
+        # Productividad por hora: solo para vista por día.
+        hourly_buckets = []
+        if str(period or "").strip().lower() == "day" and not sub.empty:
+            if c_total_h:
+                hour_totals = sub.groupby("__hour_cont", dropna=False)[c_total_h].max().sort_index()
+            elif c_qty_ref:
+                hour_totals = sub.groupby("__hour_cont", dropna=False)[c_qty_ref].sum().sort_index()
+            else:
+                hour_totals = sub.groupby("__hour_cont", dropna=False).size().sort_index()
+
+            for h, val in hour_totals.items():
+                try:
+                    h_int = int(h)
+                except Exception:
+                    continue
+                qty = int(round(float(val) if pd.notna(val) else 0))
+                hourly_buckets.append({
+                    "hour": f"{h_int:02d}:00",
+                    "hourLabel": f"{h_int:02d}:00",
+                    "cut": qty,
+                    "meters": 0,
+                    "prodSec": 3600 if qty > 0 else 0,
+                    "deadSec": 0,
+                    "otherDeadSec": 0,
+                    "mealSec": 0,
+                    "capacitySec": 3600,
+                    "other_causes": [],
+                    "len_mix": None,
+                })
+
+        # Gráfico OEE: mismo formato THB, valores en cero por falta de modelo nominal/calidad.
+        chart_labels: list[str] = []
+        if str(period or "").strip().lower() == "day":
+            chart_labels = [b["hourLabel"] for b in hourly_buckets]
+        elif not sub.empty:
+            by_date = sub.groupby("__date_cont", dropna=False).size().sort_index()
+            chart_labels = [pd.Timestamp(d).strftime("%d/%m") for d in by_date.index if pd.notna(d)]
+
         return {
             "status": "ok",
+            "analysis": "continuidad",
+            "title": "Análisis Continuidad",
             "machine": machine,
             "period": period,
             "period_value": pv,
-            "kpis_ui": {
-                "Total pruebas": str(total_pruebas),
-                "Horas registradas": str(horas_reg),
-                "Referencias únicas": str(refs_unicas),
-                "Promedio por hora": f"{promedio_hora:.2f}",
+            "rows_total": int(len(sub)),
+            "kpis_ui": kpis_ui,
+            "kpis": {
+                "hourly_buckets": hourly_buckets,
+                "other_causes": [],
             },
             "terminal_usage": {
                 "labels": labels,
@@ -2965,6 +3123,8 @@ def run_analysis_api():
                 "total": totals,
             },
             "top_refs_day": top_refs,
+            "pareto": {"labels": [], "durations_sec": [], "cum_pct": []},
+            "oee_chart": _empty_oee_chart(chart_labels),
         }
 
     try:
@@ -2995,7 +3155,7 @@ def run_analysis_api():
         raw_time_start = (request.form.get("time_start", "") or "").strip()
         raw_time_end = (request.form.get("time_end", "") or "").strip()
 
-        if period in ("week", "month", "year"):
+        if period in ("week", "month"):
             time_start = ""
             time_end = ""
             time_apply = False

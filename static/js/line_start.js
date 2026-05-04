@@ -217,18 +217,11 @@ function selectPeriod(value, el){
   const periodInput = document.getElementById("periodInput");
   if(periodInput) periodInput.value = value;
 
-
-  const inlineResults = document.getElementById("inlineResults");
-  if(inlineResults){
-    inlineResults.classList.toggle("oee-year-mode", value === "year");
-  }
-
   const lbl = document.getElementById("periodLabel");
   if(lbl){
     if(value === "day") lbl.textContent = "Días disponibles";
     if(value === "week") lbl.textContent = "Semanas disponibles";
     if(value === "month") lbl.textContent = "Meses disponibles";
-    if(value === "year") lbl.textContent = "Años disponibles";
   }
 
   const sel = document.getElementById("periodValueSelect");
@@ -301,7 +294,6 @@ function _thbOeeChartTitle(period){
   if(period === "day") return "Gráfico OEE por hora";
   if(period === "week") return "Gráfico OEE por día";
   if(period === "month") return "Gráfico OEE por semana";
-  if(period === "year") return "Gráfico OEE por Año";
   return "Gráfico OEE";
 }
 
@@ -362,10 +354,6 @@ function _chartPrettyPeriod(result){
     return raw;
   }
 
-  if(period === "year"){
-    return `Año ${raw}`;
-  }
-
   return raw;
 }
 
@@ -392,6 +380,53 @@ function _setChartSubtitleEdgeToEdge(el, txt){
   el.style.display = "block";
 }
 
+function _kpiMainPercent(raw){
+  const s = String(raw ?? "").trim();
+  const main = s.split("||")[0].trim();
+  const m = main.match(/-?\d+(?:[.,]\d+)?\s*%/);
+  return m ? m[0] : (main || "0.0%");
+}
+
+function _setProdHourTicker(el, result){
+  if(!el) return;
+
+  const fechaTxt = _chartPrettyPeriod(result);
+
+  const kpisUi = result?.kpis_ui || {};
+  const oeeTxt = _kpiMainPercent(
+    kpisUi["OEE"] ??
+    kpisUi["oee"] ??
+    ""
+  );
+
+  const planTxt = _kpiMainPercent(
+    kpisUi["Cumplimiento del plan"] ??
+    kpisUi["Plan de cumplimiento"] ??
+    kpisUi["PA"] ??
+    ""
+  );
+
+  const item = `
+    <span class="prod-ticker-item prod-ticker-date">${escHtml(fechaTxt)}</span>
+    <span class="prod-ticker-dot">•</span>
+    <span class="prod-ticker-item prod-ticker-plan">PA: ${escHtml(planTxt)}</span>
+    <span class="prod-ticker-dot">•</span>
+    <span class="prod-ticker-item prod-ticker-oee">OEE: ${escHtml(oeeTxt)}</span>
+  `;
+
+  const repeated = new Array(12)
+    .fill(item)
+    .join(`<span class="prod-ticker-gap">•</span>`);
+
+  el.innerHTML = `
+    <div class="chart-period-track prod-hour-ticker-track">
+      ${repeated}
+    </div>
+  `;
+
+  el.style.display = "block";
+}
+
 function _ensureChartSubtitle(afterEl, id){
   if(!afterEl || !afterEl.parentNode) return null;
 
@@ -409,7 +444,6 @@ function _thbOeeChartXAxisTitle(period){
   if(period === "day") return "Hora";
   if(period === "week") return "Día";
   if(period === "month") return "Semana";
-  if(period === "year") return "Mes";
   return "Periodo";
 }
 
@@ -431,7 +465,8 @@ function renderThbOeeChart(result){
     const disponibilidad = Array.isArray(chart?.disponibilidad) ? chart.disponibilidad.map(x => Number(x) || 0) : [];
     const calidad = Array.isArray(chart?.calidad) ? chart.calidad.map(x => Number(x) || 0) : [];
 
-    if(machine !== "THB" || !labels.length){
+    const isOeeModel = (machine === "THB" || machine === "APLICACION" || machine === "UNION" || machine === "BUSES" || machine === "MOTOS");
+    if(!isOeeModel || !labels.length){
       destroyThbOeeChart();
       return;
     }
@@ -784,6 +819,29 @@ async function onPeriodValueChange(){
 
 
 
+  // =========================
+  // CONTINUIDAD (BUSES / MOTOS)
+  // =========================
+  if(machine === "BUSES" || machine === "MOTOS"){
+    const opSel = document.getElementById("operatorSelect");
+    const box = document.getElementById("thbFilters");
+    const btn = document.getElementById("btnAnalyze");
+
+    if(opSel){
+      opSel.innerHTML = `<option value="General">General</option>`;
+      opSel.value = "General";
+    }
+
+    setTimeApply(false);
+    setTimeInputsVisible(false);
+
+    if(box) box.style.display = "block";
+    if(btn) btn.disabled = false;
+
+    scheduleAutoRun();
+    return;
+  }
+
 
   // =========================
   // APLICACION / UNION
@@ -867,21 +925,6 @@ async function onPeriodValueChange(){
   // =========================
   if(machine !== "THB" && machine !== "HP"){
     hideThbFilters();
-    return;
-  }
-
-  // ✅ OEE por Año: no usa operaria, no usa horas y se ejecuta directo.
-  if(period === "year"){
-    const opSel = document.getElementById("operatorSelect");
-    if(opSel){
-      opSel.innerHTML = `<option value="General">General</option>`;
-      opSel.value = "General";
-    }
-
-    setTimeInputsVisible(false);
-    setTimeApply(false);
-    hideThbFilters();
-    scheduleAutoRun();
     return;
   }
 
@@ -1305,7 +1348,6 @@ function periodTitle(period){
   if(period === "day") return "Indicadores diarios";
   if(period === "week") return "Indicadores semanales";
   if(period === "month") return "Indicadores mensuales";
-  if(period === "year") return "OEE por año";
   return "Indicadores";
 }
 
@@ -1805,7 +1847,9 @@ function renderTerminalUsage(result){
   const mRaw = String(result?.machine || "").toUpperCase().trim();
   const m = mRaw.split("(")[0].trim(); // "UNION (4 libros)" -> "UNION"
 
-  if(m !== "APLICACION" && m !== "UNION"){
+  const isCont = (m === "BUSES" || m === "MOTOS");
+
+  if(m !== "APLICACION" && m !== "UNION" && !isCont){
     destroyTerminalUsage();
     return;
   }
@@ -1831,8 +1875,10 @@ function renderTerminalUsage(result){
   const sumOtros   = (otros   || []).reduce((a,b)=>a+(Number(b)||0),0);
   const totalOnly  = (sumCarrete === 0 && sumOtros === 0);
 
-  // ✅ título correcto para tu caso (solo pulsos por terminal)
-  titleEl.textContent = totalOnly ? "Crimpados por terminal" : "Terminales más usadas (Manual vs Carrete)";
+  // ✅ título correcto según módulo
+  titleEl.textContent = isCont
+    ? "Pruebas por referencia"
+    : (totalOnly ? "Crimpados por terminal" : "Terminales más usadas (Manual vs Carrete)");
   titleEl.style.display = "block";
   wrap.style.display = "block";
   grid.innerHTML = "";
@@ -1867,7 +1913,7 @@ function renderTerminalUsage(result){
         </div>
         <div>
           <div class="tu-total">${escHtml(fmtIntEs(tot))}</div>
-          <div class="tu-sub" style="text-align:right;">Crimpados</div>
+          <div class="tu-sub" style="text-align:right;">${isCont ? "Pruebas" : "Crimpados"}</div>
         </div>
       </div>
       ${badgesHtml}
@@ -2116,8 +2162,7 @@ function renderProdHour(result){
 
   const titleSub = _ensureChartSubtitle(title, "prodHourTitleSub");
   if(titleSub){
-    const txt = _chartPrettyPeriod(result);
-    _setChartSubtitleEdgeToEdge(titleSub, txt);
+    _setProdHourTicker(titleSub, result);
   }
 
   if(period !== "day"){
@@ -2132,14 +2177,10 @@ function renderProdHour(result){
   }
 
   const machineU = String(result?.machine || "").toUpperCase();
-  if(title){
-    title.textContent = (machineU === "THB")
-    ? "Productividad por hora THB"
-    : "Productividad por hora";
-  }
   const isAplic = (machineU === "APLICACION" || machineU === "UNION");
-  const showLenMix = (!isAplic) && (machineU !== "HP") && (machineU !== "THB");
-  const showMeters = (!isAplic) && (machineU !== "HP");
+  const isCont = (machineU === "BUSES" || machineU === "MOTOS");
+  const showLenMix = (!isAplic) && (!isCont) && (machineU !== "HP") && (machineU !== "THB");
+  const showMeters = (!isAplic) && (!isCont) && (machineU !== "HP");
 
   const OEE_ESPERADO_HORA = 0.70;
 
@@ -2398,7 +2439,14 @@ function renderProdHour(result){
 
     const hasMeal = (Number(mealSec) || 0) > 0;
 
-    const hourlyMiniKpisHtml = (machineU === "THB") ? `
+    // ✅ THB + CRIMPADO: mostrar OEE / PA / TW / TX en tarjetas por hora
+    const showHourMiniKpis = (
+      machineU === "THB" ||
+      machineU === "APLICACION" ||
+      machineU === "UNION"
+    );
+
+    const hourlyMiniKpisHtml = showHourMiniKpis ? `
       <div class="ph-mini-kpis">
         <div class="ph-mini-kpi ph-mini-kpi-oee">
           OEE: ${escHtml(oeeHoraPct.toFixed(1))}%
@@ -2418,9 +2466,36 @@ function renderProdHour(result){
       </div>
     ` : ``;
 
-    const planExcelUnits = Math.round(Number(planHoraUnits) || 0);
+    // ✅ Plan por hora:
+    // - THB: usa cálculo nominal si existe.
+    // - CRIMPADO: usa b.plan / b.planned / b.planificado si backend lo manda.
+    // - Si no existe, queda 0.
+    let planExcelUnits = 0;
 
-    const circuitsHtml = (machineU === "THB" && planExcelUnits > 0)
+    if(machineU === "THB"){
+      planExcelUnits = Math.round(Number(planHoraUnits) || 0);
+    }
+
+    if(machineU === "APLICACION" || machineU === "UNION"){
+      planExcelUnits = Math.round(
+        Number(
+          b.plan ??
+          b.planned ??
+          b.planificado ??
+          b.produccion_plan ??
+          b.produccionPlaneada ??
+          0
+        ) || 0
+      );
+    }
+
+    const showRealVsPlan = (
+      machineU === "THB" ||
+      machineU === "APLICACION" ||
+      machineU === "UNION"
+    );
+
+    const circuitsHtml = showRealVsPlan
       ? `
         <span class="ph-circuits-real">${escHtml(fmtIntEs(circuits))}</span>
         <span class="ph-circuits-slash">/</span>
@@ -2435,7 +2510,7 @@ function renderProdHour(result){
       <div class="ph-circuits ${(machineU === "THB") ? "ph-circuits-link" : ""}"${circuitsAttrs}>
         ${circuitsHtml}
       </div>
-      <div class="ph-unit">${(machineU === "APLICACION" || machineU === "UNION") ? "Crimpados" : "Circuitos"}</div>
+      <div class="ph-unit">${isCont ? "Pruebas" : ((machineU === "APLICACION" || machineU === "UNION") ? "Crimpados" : "Circuitos")}</div>
 
 
       ${metersHtml}
@@ -2541,28 +2616,66 @@ function buildThbExportUrl(result){
   return `${URLS.export_thb_excel}?${p.toString()}`;
 }
 
+function buildCrimpadoExportUrl(result){
+  const exportUrl = URLS.export_crimpado_excel || "/export_crimpado_excel";
+
+  const p = new URLSearchParams();
+  p.set("filename", _cfgStr(CFG.filename));
+  p.set("machine", String(result?.machine || getCurrentMachine() || "APLICACION").toUpperCase());
+  p.set("period", String(result?.period || document.getElementById("periodInput")?.value || "day"));
+  p.set("period_value", String(result?.period_value || getPeriodValue() || ""));
+
+  const subcat = String(result?.subcat || document.getElementById("subcatInput2")?.value || CFG.subcat || "").trim();
+  if(subcat) p.set("subcat", subcat);
+
+  const mid = String(
+    result?.machine_id ||
+    document.getElementById("machineIdInput2")?.value ||
+    document.getElementById("machineIdInput")?.value ||
+    CFG.machine_id ||
+    ""
+  ).trim();
+  if(mid) p.set("machine_id", mid);
+
+  const op = String(document.getElementById("operatorSelect")?.value || result?.operator || "General").trim();
+  if(op) p.set("operator", op);
+
+  p.set("_", String(Date.now()));
+  return `${exportUrl}?${p.toString()}`;
+}
+
 function updateThbExportAction(result){
   const box = document.getElementById("inlineActions");
   const callout = document.getElementById("thbDownloadCallout");
   if(!box) return;
 
-  const isThb = String(result?.machine || "").toUpperCase() === "THB";
-  const isYearOee = String(result?.period || "").toLowerCase() === "year";
-  if(!isThb || isYearOee || !URLS.export_thb_excel){
-    box.style.display = "none";
-    box.innerHTML = "";
-    if(callout) callout.style.display = "none";
+  const machineU = String(result?.machine || "").toUpperCase();
+  const isThb = machineU === "THB";
+  const isCrimpado = (machineU === "APLICACION" || machineU === "UNION");
+
+  if(isThb && URLS.export_thb_excel){
+    const url = buildThbExportUrl(result);
+    box.innerHTML = `
+      <a class="btn thb-download-callout-link" href="${escHtml(url)}">Descargar Excel THB</a>
+    `;
+    box.style.display = "flex";
+    if(callout) callout.style.display = "block";
     return;
   }
 
-  const url = buildThbExportUrl(result);
+  if(isCrimpado){
+    const url = buildCrimpadoExportUrl(result);
+    box.innerHTML = `
+      <a class="btn thb-download-callout-link" href="${escHtml(url)}">Descargar Excel Crimpado</a>
+    `;
+    box.style.display = "flex";
+    if(callout) callout.style.display = "block";
+    return;
+  }
 
-  box.innerHTML = `
-    <a class="btn thb-download-callout-link" href="${escHtml(url)}">Descargar Excel THB</a>
-  `;
-  box.style.display = "flex";
-
-  if(callout) callout.style.display = "block";
+  box.style.display = "none";
+  box.innerHTML = "";
+  if(callout) callout.style.display = "none";
 }
 
 
@@ -2609,22 +2722,6 @@ function renderInlineKPIs(result){
   }
 
   const m = String(result.machine || "").toUpperCase();
-  const isYearOeeOnly = (m === "THB" && String(result.period || "").toLowerCase() === "year");
-
-  if(isYearOeeOnly){
-    ttl.style.display = "none";
-    kpi.innerHTML = "";
-    if(actions){ actions.style.display = "none"; actions.innerHTML = ""; }
-
-    const callout = document.getElementById("thbDownloadCallout");
-    if(callout) callout.style.display = "none";
-
-    destroyPareto();
-    hideProdHour();
-    hideThbLotes();
-    renderThbOeeChart(result);
-    return;
-  }
 
   let order = [
     { key: "Circuitos Cortados",     cls: "kpi-green",  span: "kpi-row-3" },
@@ -2660,14 +2757,20 @@ function renderInlineKPIs(result){
   }
 
   if(m === "APLICACION" || m === "UNION"){
+    // ✅ Modelo visual tipo THB para Crimpado:
+    // OEE + Cumplimiento del plan + Producción Total.
     order = [
-      { key: "Crimpados",         cls: "kpi-green",  span: "kpi-row-3" },
-      { key: "Crimpados Carrete", cls: "kpi-cyan",   span: "kpi-row-3" },
-      { key: "Crimpados Manual",  cls: "kpi-red",    span: "kpi-row-3" },
+      { key: "OEE",                   cls: "kpi-blue",                  span: "kpi-row-2" },
+      { key: "Cumplimiento del plan", cls: "kpi-green",                 span: "kpi-row-4" },
+      { key: "Producción Total",      cls: "kpi-cyan2 kpi-thb-metros",  span: "kpi-row-4" },
+    ];
+  }
 
-      { key: "Tiempo Pagado",     cls: "",           span: "kpi-row-4" },
-      { key: "Tiempos Perdidos",  cls: "kpi-purple", span: "kpi-row-2" },
-      { key: "Tiempo Trabajado",  cls: "kpi-green2", span: "kpi-row-4" },
+  if(m === "BUSES" || m === "MOTOS"){
+    order = [
+      { key: "OEE",                  cls: "kpi-blue",                  span: "kpi-row-2" },
+      { key: "Cumplimiento del plan", cls: "kpi-green",                span: "kpi-row-4" },
+      { key: "Producción Total",      cls: "kpi-cyan2 kpi-thb-metros",  span: "kpi-row-4" },
     ];
   }
 
@@ -2683,6 +2786,31 @@ function renderInlineKPIs(result){
 
     // ✅ THB: ocultar completamente estos dos KPIs
     if(m === "THB" && (kk === "Metros Planeados" || kk === "Metros Extras")){
+      return false;
+    }
+
+    // ✅ Crimpado: no mostrar estos KPIs ni en detalle
+    if((m === "APLICACION" || m === "UNION") && (
+      kk === "Crimpados" ||
+      kk === "Producción Buena" ||
+      kk === "Producción con Defectos" ||
+      kk === "Tiempo De Corte" ||
+      kk === "Tiempo de Corte" ||
+      kk === "Metros Extras" ||
+      kk === "Metros Planeados"
+    )){
+      return false;
+    }
+
+    // ✅ Continuidad: no mostrar estos KPIs ni en detalle
+    if((m === "BUSES" || m === "MOTOS") && (
+      kk === "Producción Buena" ||
+      kk === "Producción con Defectos" ||
+      kk === "Tiempo De Corte" ||
+      kk === "Tiempo de Corte" ||
+      kk === "Metros Extras" ||
+      kk === "Metros Planeados"
+    )){
       return false;
     }
 
@@ -2710,11 +2838,16 @@ function renderInlineKPIs(result){
       { key: "Producción Total",        cls: "kpi-cyan",   span: "kpi-row-4" },
       { key: "Producción con Defectos", cls: "kpi-red",    span: "kpi-row-4" },
       { key: "Tiempo Pagado",           cls: "kpi-blue",   span: "kpi-row-4" },
+
       // fila 2
       { key: "Tiempo Perdido",          cls: "kpi-purple", span: "kpi-row-2" },
-      { key: "Tiempos Perdidos",        cls: "kpi-purple", span: "kpi-row-4" },
+      { key: "Tiempos Perdidos",        cls: "kpi-purple", span: "kpi-row-2" },
       { key: "Tiempo Trabajado",        cls: "kpi-green2", span: "kpi-row-4" },
       { key: "Tiempo De Corte",         cls: "kpi-cyan2",  span: "kpi-row-4" },
+
+        // ✅ CRIMPADO: colorcitos en detalle
+      { key: "Crimpados Carrete",       cls: "kpi-green",  span: "kpi-row-4" },
+      { key: "Crimpados Manual",        cls: "kpi-red",    span: "kpi-row-4" },
 
       { key: "Tiempo de Corte",         cls: "kpi-cyan2",  span: "kpi-row-4" },
       { key: "Tiempo de Ciclo",         cls: "kpi-cyan2",  span: "kpi-row-4" },
@@ -2726,6 +2859,13 @@ function renderInlineKPIs(result){
     const used = new Set();
 
     detailOrder.forEach(item => {
+
+      // ✅ SOLO CRIMPADO: no mostrar Producción Total en indicadores ocultos
+      if((m === "APLICACION" || m === "UNION") &&
+         (item.key === "Producción Total" || item.key === "Produccion Total")){
+        return;
+      }
+
       if(Object.prototype.hasOwnProperty.call(ui, item.key) && !used.has(item.key)){
         extraGrid.appendChild(makeCard(item.key, ui[item.key], item.cls, item.span));
         used.add(item.key);
@@ -2733,8 +2873,16 @@ function renderInlineKPIs(result){
     });
 
     Object.entries(ui).forEach(([kk, vv]) => {
+
+      // ✅ SOLO CRIMPADO: no mostrar Producción Total en indicadores ocultos
+      if((m === "APLICACION" || m === "UNION") &&
+         (kk === "Producción Total" || kk === "Produccion Total")){
+        return;
+      }
+
       if(order.some(o => o.key === kk)) return;
       if(used.has(kk)) return;
+
       extraGrid.appendChild(makeCard(kk, vv, "", "kpi-row-4"));
     });
 
@@ -2749,7 +2897,7 @@ function renderInlineKPIs(result){
     kpi.appendChild(detailsWrap);
   }
 
-  if(m === "HP" || m === "THB"){
+  if(m === "HP" || m === "THB" || m === "BUSES" || m === "MOTOS"){
     adjustHpNoRegistradoUI();
   }
 
@@ -2794,7 +2942,7 @@ async function runInlineAnalysis(form, opts = {}){
 
   if(!periodValueOk()){
     if(btn){ btn.disabled = false; btn.textContent = "Ver KPIs"; }
-    alert("Selecciona un Día/Semana/Mes/Año antes de ejecutar el análisis.");
+    alert("Selecciona un Día/Semana/Mes antes de ejecutar el análisis.");
     return;
   }
 
@@ -3742,3 +3890,4 @@ window.selectMachine = selectMachine;
 window.selectPeriod = selectPeriod;
 window.onPeriodValueChange = onPeriodValueChange;
 window.onAppMachineChange = onAppMachineChange;
+

@@ -4363,3 +4363,186 @@ img{
   display: none !important;
 }
 
+/* =========================================================
+   CRIMPADO / THB - Productividad por hora estilo tarjeta
+   ========================================================= */
+
+.ph-circuits{
+  display:flex;
+  align-items:baseline;
+  justify-content:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.ph-circuits-real{
+  font-size:34px;
+  font-weight:950;
+  color:#0f172a;
+}
+
+.ph-circuits-slash{
+  font-size:30px;
+  font-weight:950;
+  color:#0f172a;
+}
+
+.ph-circuits-plan{
+  font-size:26px;
+  font-weight:950;
+  color:#16a34a;
+}
+
+.ph-mini-kpis{
+  margin-top:14px;
+  padding:12px 14px;
+  border:1px solid rgba(15,23,42,.10);
+  border-radius:16px;
+  background:rgba(255,255,255,.78);
+  text-align:center;
+}
+
+.ph-mini-kpi{
+  font-size:15px;
+  font-weight:950;
+  line-height:1.45;
+  margin:4px 0;
+}
+
+.ph-mini-kpi-oee{
+  color:#6d28d9;
+}
+
+.ph-mini-kpi-plan{
+  color:#16a34a;
+}
+
+.ph-mini-kpi-work{
+  color:#0f172a;
+}
+
+.ph-mini-kpi-loss{
+  color:#b91c1c;
+}
+
+/* =========================================================
+   Productividad por hora: fecha móvil del mismo tamaño del título
+   ========================================================= */
+#prodHourTitleSub.chart-period-subtitle{
+  font-size: clamp(24px, 4.8vw, 44px) !important;
+  font-weight: 950 !important;
+  color: #64748b !important;
+  line-height: 1.05 !important;
+  margin: 0 0 16px 2px !important;
+}
+
+#prodHourTitleSub .chart-period-track{
+  gap: 28px !important;
+}
+
+#prodHourTitleSub .chart-period-item,
+#prodHourTitleSub .chart-period-sep{
+  font-size: clamp(24px, 4.8vw, 44px) !important;
+  font-weight: 950 !important;
+  line-height: 1.05 !important;
+}
+
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
+  #prodHourTitleSub.chart-period-subtitle,
+  #prodHourTitleSub .chart-period-item,
+  #prodHourTitleSub .chart-period-sep{
+    font-size: clamp(24px, 8vw, 38px) !important;
+  }
+}
+
+/* =========================================================
+   Productividad por hora: fecha pegada al título
+   ========================================================= */
+
+/* Título principal */
+#prodHourTitle{
+  margin-bottom: 0 !important;
+}
+
+/* Contenedor de la fecha móvil */
+#prodHourTitleSub.chart-period-subtitle{
+  margin-top: -15px !important;     /* sube la fecha */
+  margin-bottom: 2px !important;   /* menos espacio antes de las tarjetas */
+  min-height: auto !important;
+  line-height: 1 !important;
+}
+
+/* Fila interna que se mueve */
+#prodHourTitleSub .chart-period-track{
+  gap: 8px !important;             /* antes estaba muy separado */
+  align-items: center !important;
+}
+
+/* Fecha y puntos separadores */
+#prodHourTitleSub .chart-period-item,
+#prodHourTitleSub .chart-period-sep{
+  line-height: 1 !important;
+  margin: 0 !important;
+}
+
+/* =========================================================
+   Productividad por hora: ticker fecha + PA + OEE
+   ========================================================= */
+
+#prodHourTitle{
+  margin-bottom: 0 !important;
+}
+
+#prodHourTitleSub.chart-period-subtitle{
+  margin-top: -8px !important;
+  margin-bottom: 8px !important;
+  min-height: auto !important;
+  line-height: 1 !important;
+  overflow: hidden !important;
+}
+
+#prodHourTitleSub .prod-hour-ticker-track{
+  gap: 10px !important;
+  align-items: center !important;
+  animation-duration: 60s !important;
+}
+
+#prodHourTitleSub .prod-ticker-item,
+#prodHourTitleSub .prod-ticker-dot,
+#prodHourTitleSub .prod-ticker-gap{
+  font-size: clamp(24px, 4.8vw, 44px) !important;
+  font-weight: 950 !important;
+  line-height: 1 !important;
+  margin: 0 !important;
+  white-space: nowrap !important;
+}
+
+#prodHourTitleSub .prod-ticker-date{
+  color: #64748b !important;
+}
+
+#prodHourTitleSub .prod-ticker-plan{
+  color: #16a34a !important;
+}
+
+#prodHourTitleSub .prod-ticker-oee{
+  color: #6d28d9 !important;
+}
+
+#prodHourTitleSub .prod-ticker-dot,
+#prodHourTitleSub .prod-ticker-gap{
+  color: #94a3b8 !important;
+  padding: 0 6px !important;
+}
+
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
+  #prodHourTitleSub .prod-ticker-item,
+  #prodHourTitleSub .prod-ticker-dot,
+  #prodHourTitleSub .prod-ticker-gap{
+    font-size: clamp(22px, 8vw, 38px) !important;
+  }
+
+  #prodHourTitleSub .prod-hour-ticker-track{
+    gap: 8px !important;
+  }
+}
