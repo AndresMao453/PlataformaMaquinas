@@ -2299,7 +2299,7 @@ function renderProdHour(result){
   ).trim();
 
   if(machineTitleU === "APLICACION" && machineId === "1"){
-    title.textContent = "Productividad por hora (ELIZABETH CARO)";
+    title.textContent = "Productividad por hora-ELIZABETH C.";
   }else if(machineTitleU === "THB"){
     title.textContent = "Productividad por hora THB";
   }else{
