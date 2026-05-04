@@ -4546,3 +4546,198 @@ img{
     gap: 8px !important;
   }
 }
+
+/* =========================================================
+   THB: Mensaje motivacional en Productividad por hora
+   ========================================================= */
+
+#prodMotivationBox.prod-motivation-box{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+
+  margin: -2px 0 12px 2px;
+  min-height: 54px;
+  padding: 8px 22px;
+
+  border-radius: 999px;
+  font-size: clamp(28px, 5vw, 54px);
+  font-weight: 950;
+  line-height: 1;
+  letter-spacing: -0.04em;
+
+  box-shadow: 0 12px 28px rgba(15,23,42,.10);
+  border: 1px solid rgba(15,23,42,.08);
+
+  animation: prodMotivationPop .45s ease both;
+}
+
+#prodMotivationBox.prod-mot-blue{
+  color:#1d4ed8;
+  background:rgba(59,130,246,.12);
+}
+
+#prodMotivationBox.prod-mot-green{
+  color:#15803d;
+  background:rgba(34,197,94,.14);
+}
+
+#prodMotivationBox.prod-mot-purple{
+  color:#6d28d9;
+  background:rgba(139,92,246,.14);
+}
+
+#prodMotivationBox.prod-mot-orange{
+  color:#c2410c;
+  background:rgba(249,115,22,.14);
+}
+
+#prodMotivationBox.prod-mot-cyan{
+  color:#0891b2;
+  background:rgba(6,182,212,.14);
+}
+
+#prodMotivationBox.prod-mot-indigo{
+  color:#4338ca;
+  background:rgba(99,102,241,.14);
+}
+
+#prodMotivationBox.prod-mot-red{
+  color:#dc2626;
+  background:rgba(239,68,68,.13);
+}
+
+@keyframes prodMotivationPop{
+  0%{
+    opacity:0;
+    transform:translateY(8px) scale(.94);
+    filter:blur(2px);
+  }
+  100%{
+    opacity:1;
+    transform:translateY(0) scale(1);
+    filter:blur(0);
+  }
+}
+
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
+  #prodMotivationBox.prod-motivation-box{
+    font-size: clamp(24px, 9vw, 42px);
+    min-height: 46px;
+    padding: 7px 16px;
+    margin-bottom: 10px;
+  }
+}
+
+/* =========================================================
+   THB: Overlay motivacional sobre Productividad por hora
+   ========================================================= */
+
+#prodHourWrap{
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+#prodMotivationOverlay.prod-motivation-overlay{
+  position: absolute;
+  inset: 0;
+  z-index: 80;
+
+  display: none;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+
+  pointer-events: none;
+
+  background:
+    radial-gradient(circle at center, rgba(255,255,255,.94), rgba(255,255,255,.72)),
+    linear-gradient(135deg, rgba(37,99,235,.08), rgba(34,197,94,.08));
+
+  backdrop-filter: blur(3px);
+  border-radius: 22px;
+}
+
+#prodMotivationOverlay.show{
+  display: flex;
+  animation: prodMotivationOverlayIn .35s ease both;
+}
+
+#prodMotivationWord.prod-motivation-word{
+  font-size: clamp(70px, 10vw, 150px);
+  font-weight: 1000;
+  line-height: .95;
+  letter-spacing: -0.07em;
+  text-transform: uppercase;
+
+  padding: 22px 34px;
+  border-radius: 34px;
+
+  text-shadow:
+    0 8px 26px rgba(15,23,42,.14),
+    0 2px 0 rgba(255,255,255,.85);
+
+  animation: prodMotivationWordPop .55s cubic-bezier(.2, .9, .2, 1.2) both;
+}
+
+#prodMotivationWord.prod-mot-blue{
+  color:#2563eb;
+}
+
+#prodMotivationWord.prod-mot-green{
+  color:#16a34a;
+}
+
+#prodMotivationWord.prod-mot-purple{
+  color:#7c3aed;
+}
+
+#prodMotivationWord.prod-mot-orange{
+  color:#ea580c;
+}
+
+#prodMotivationWord.prod-mot-cyan{
+  color:#0891b2;
+}
+
+#prodMotivationWord.prod-mot-indigo{
+  color:#4f46e5;
+}
+
+#prodMotivationWord.prod-mot-red{
+  color:#dc2626;
+}
+
+@keyframes prodMotivationOverlayIn{
+  from{
+    opacity: 0;
+  }
+  to{
+    opacity: 1;
+  }
+}
+
+@keyframes prodMotivationWordPop{
+  0%{
+    opacity: 0;
+    transform: translateY(22px) scale(.82);
+    filter: blur(4px);
+  }
+  65%{
+    opacity: 1;
+    transform: translateY(0) scale(1.06);
+    filter: blur(0);
+  }
+  100%{
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
+  #prodMotivationWord.prod-motivation-word{
+    font-size: clamp(48px, 15vw, 92px);
+    padding: 16px 20px;
+  }
+}

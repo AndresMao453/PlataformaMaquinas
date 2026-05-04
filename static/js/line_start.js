@@ -2039,6 +2039,132 @@ function renderParetoAplicacion(result){
 }
 
 // =========================
+// THB: Overlay motivacional sobre Productividad por hora
+// =========================
+let __prodMotivationCycleTimer = null;
+let __prodMotivationWordTimer = null;
+let __prodMotivationRunning = false;
+let __prodMotivationIdx = 0;
+
+const __PROD_MOTIVATION_WORDS = [
+  { text: "TÚ", cls: "prod-mot-blue" },
+  { text: "ERES", cls: "prod-mot-green" },
+  { text: "CAPAZ", cls: "prod-mot-purple" },
+  { text: "DE MEJORAR", cls: "prod-mot-orange" },
+  { text: "TU", cls: "prod-mot-cyan" },
+  { text: "RENDIMIENTO", cls: "prod-mot-indigo" },
+  { text: "ÁNIMO", cls: "prod-mot-red" },
+];
+
+// Cada cuánto aparece el mensaje completo
+const PROD_MOTIVATION_EVERY_MS = 40000;
+
+// Velocidad entre palabra y palabra
+const PROD_MOTIVATION_WORD_MS = 900;
+
+function ensureProdMotivationOverlay(hostEl){
+  if(!hostEl) return null;
+
+  let overlay = document.getElementById("prodMotivationOverlay");
+
+  if(!overlay){
+    overlay = document.createElement("div");
+    overlay.id = "prodMotivationOverlay";
+    overlay.className = "prod-motivation-overlay";
+    overlay.innerHTML = `
+      <div id="prodMotivationWord" class="prod-motivation-word"></div>
+    `;
+
+    hostEl.appendChild(overlay);
+  }
+
+  return overlay;
+}
+
+function stopProdMotivationOverlay(removeEl = true){
+  if(__prodMotivationCycleTimer){
+    clearInterval(__prodMotivationCycleTimer);
+    __prodMotivationCycleTimer = null;
+  }
+
+  if(__prodMotivationWordTimer){
+    clearInterval(__prodMotivationWordTimer);
+    __prodMotivationWordTimer = null;
+  }
+
+  __prodMotivationRunning = false;
+  __prodMotivationIdx = 0;
+
+  const overlay = document.getElementById("prodMotivationOverlay");
+
+  if(overlay){
+    overlay.classList.remove("show");
+    if(removeEl) overlay.remove();
+  }
+}
+
+function playProdMotivationOverlay(hostEl){
+  if(__prodMotivationRunning) return;
+
+  const overlay = ensureProdMotivationOverlay(hostEl);
+  const wordEl = document.getElementById("prodMotivationWord");
+
+  if(!overlay || !wordEl) return;
+
+  __prodMotivationRunning = true;
+  __prodMotivationIdx = 0;
+
+  overlay.classList.add("show");
+
+  function paintWord(){
+    const item = __PROD_MOTIVATION_WORDS[__prodMotivationIdx];
+
+    if(!item){
+      if(__prodMotivationWordTimer){
+        clearInterval(__prodMotivationWordTimer);
+        __prodMotivationWordTimer = null;
+      }
+
+      overlay.classList.remove("show");
+      wordEl.textContent = "";
+      __prodMotivationRunning = false;
+      __prodMotivationIdx = 0;
+      return;
+    }
+
+    wordEl.className = `prod-motivation-word ${item.cls}`;
+    wordEl.textContent = item.text;
+
+    // Reinicia animación en cada palabra
+    wordEl.style.animation = "none";
+    void wordEl.offsetWidth;
+    wordEl.style.animation = "";
+
+    __prodMotivationIdx++;
+  }
+
+  paintWord();
+  __prodMotivationWordTimer = setInterval(paintWord, PROD_MOTIVATION_WORD_MS);
+}
+
+function startProdMotivationOverlay(hostEl){
+  if(!hostEl) return;
+
+  ensureProdMotivationOverlay(hostEl);
+
+  if(__prodMotivationCycleTimer) return;
+
+  // Primer mensaje después de unos segundos
+  setTimeout(() => {
+    playProdMotivationOverlay(hostEl);
+  }, 3500);
+
+  // Luego aparece cada cierto tiempo
+  __prodMotivationCycleTimer = setInterval(() => {
+    playProdMotivationOverlay(hostEl);
+  }, PROD_MOTIVATION_EVERY_MS);
+}
+// =========================
 // Productividad por hora (SOLO DAY)
 // =========================
 function hideProdHour(){
@@ -2051,6 +2177,8 @@ function hideProdHour(){
   const g = document.getElementById("prodHourGrid");
   const info = document.getElementById("lenRangesInfo");
   const leg = document.getElementById("prodHourLegend");
+
+  stopProdMotivationOverlay(true);
 
   if(g) g.innerHTML = "";
   if(t) t.style.display = "none";
@@ -2183,6 +2311,13 @@ function renderProdHour(result){
   }
 
   const machineU = String(result?.machine || "").toUpperCase();
+  // Overlay motivacional SOLO para THB
+  if(machineU === "THB"){
+    startProdMotivationOverlay(wrap);
+  }else{
+    stopProdMotivationOverlay(true);
+  }
+
   const isAplic = (machineU === "APLICACION" || machineU === "UNION");
   const isCont = (machineU === "BUSES" || machineU === "MOTOS");
   const showLenMix = (!isAplic) && (!isCont) && (machineU !== "HP") && (machineU !== "THB");
