@@ -2299,7 +2299,7 @@ function renderProdHour(result){
   ).trim();
 
   if(machineTitleU === "APLICACION" && machineId === "1"){
-    title.textContent = "Productividad por hora - ELIZABETH C.";
+    title.textContent = "Productividad por hora-ELIZABETH C.";
   }else if(machineTitleU === "THB"){
     title.textContent = "Productividad por hora THB";
   }else{
@@ -2751,6 +2751,13 @@ function renderProdHour(result){
 
   title.style.display = "block";
   wrap.style.display = "block";
+
+  // ✅ Modo TV: si los datos tardan en cargar, el scroll se dispara DESPUÉS
+  // de que Productividad por hora ya quedó renderizada.
+  if(typeof _tvScheduleScrollAfterProdHourRender === "function"){
+    _tvScheduleScrollAfterProdHourRender("renderProdHour");
+  }
+
   const leg = document.getElementById("prodHourLegend");
   if(leg) leg.style.display = showLenMix ? "flex" : "none";
 
@@ -4160,7 +4167,8 @@ function _tvScrollToProdHour(){
   if(!target) return false;
 
   function doScroll(behavior){
-    const top = Math.max(0, target.getBoundingClientRect().top + window.scrollY - 12);
+    // Un poquito menos de margen para dejar el título pegado arriba en pantalla TV.
+    const top = Math.max(0, target.getBoundingClientRect().top + window.scrollY - 6);
     window.scrollTo({ top, behavior });
   }
 
@@ -4169,10 +4177,56 @@ function _tvScrollToProdHour(){
   setTimeout(()=>doScroll("auto"), 700);
   setTimeout(()=>doScroll("auto"), 1500);
   setTimeout(()=>doScroll("auto"), 2800);
+  setTimeout(()=>doScroll("auto"), 5200);
 
   try{
     window.parent?.postMessage({ type:"fasecol-tv-ready", href:window.location.href }, "*");
   }catch(e){}
+
+  return true;
+}
+
+let __tvProdHourScrollBatch = 0;
+
+function _tvScheduleScrollAfterProdHourRender(reason){
+  if(!_tvEnabled()) return false;
+  if(!_tvProdHourReady()) return false;
+
+  const batch = ++__tvProdHourScrollBatch;
+
+  // En Aplicación M1 los datos pueden tardar y la altura cambia cuando terminan KPIs,
+  // gráfico OEE, Pareto y tarjetas. Por eso se reintenta varias veces DESPUÉS del render.
+  const delays = [80, 350, 900, 1600, 2800, 4500, 7000, 10000, 14000, 19000];
+
+  delays.forEach((delay, idx) => {
+    setTimeout(() => {
+      if(!_tvEnabled()) return;
+      if(batch !== __tvProdHourScrollBatch && idx > 2) return;
+      if(_tvProdHourReady()) _tvScrollToProdHour();
+    }, delay);
+  });
+
+  return true;
+}
+
+function _tvFiltersReady(){
+  const form = document.getElementById("runForm");
+  if(!form) return false;
+  if(!periodValueOk()) return false;
+
+  const opSel = document.getElementById("operatorSelect");
+  if(opSel && !String(opSel.value || "").trim()) return false;
+
+  const period = String(document.getElementById("periodInput")?.value || "day").trim();
+  if(period === "day"){
+    const t0 = document.getElementById("timeStart");
+    const t1 = document.getElementById("timeEnd");
+    const t0Visible = t0 && _tvIsVisible(t0);
+    const t1Visible = t1 && _tvIsVisible(t1);
+
+    if(t0Visible && !String(t0.value || "").trim()) return false;
+    if(t1Visible && !String(t1.value || "").trim()) return false;
+  }
 
   return true;
 }
@@ -4227,37 +4281,39 @@ async function _tvAutoSelectSheetStage(){
   const periodInput = document.getElementById("periodInput");
   if(periodInput) periodInput.value = "day";
 
-  // Espera a que carguen las fechas reales.
+  // Espera a que carguen las fechas reales. En Aplicación M1 Google Sheets puede demorarse.
   await _tvWaitFor(() => {
     const sel = document.getElementById("periodValueSelect");
     if(!sel) return null;
     const hasRealOption = Array.from(sel.options || []).some(op => {
       const v = String(op.value || "").trim();
       const t = String(op.textContent || "").trim();
-      return v && !/cargando|selecciona/i.test(t);
+      return v && !/cargando|selecciona|no hay/i.test(t);
     });
     return hasRealOption ? sel : null;
-  }, 22000, 200);
+  }, 90000, 250);
 
   const selected = _tvSelectOptionTodayOrLatest();
   if(!selected) return false;
 
-  // Espera a que el autoanálisis normal cree las tarjetas de productividad.
-  await _tvWaitFor(() => _tvProdHourReady(), 32000, 250);
+  // Espera a que onPeriodValueChange termine de cargar operaria/hora inicio/hora fin.
+  await _tvWaitFor(() => _tvFiltersReady(), 90000, 250);
 
-  // Si por alguna razón no corrió el análisis automático, lo forzamos sin scroll.
-  if(!_tvProdHourReady()){
-    const form = document.getElementById("runForm");
-    if(form){
-      await runInlineAnalysis(form, { scroll:false });
-    }
+  const form = document.getElementById("runForm");
+
+  // Si todavía no existe Productividad por hora, ejecuta el análisis explícitamente.
+  // Esto evita que Aplicación M1 se quede arriba cuando la carga tarda demasiado.
+  if(!_tvProdHourReady() && form){
+    await runInlineAnalysis(form, { scroll:false, preserveScroll:false });
   }
 
-  await _tvWaitFor(() => _tvProdHourReady(), 22000, 250);
+  // Espera hasta que realmente existan tarjetas de Productividad por hora.
+  await _tvWaitFor(() => _tvProdHourReady(), 90000, 250);
 
-  // Espera adicional para que se pinten ticker, nombres, OEE, PA y tarjetas.
-  await _tvSleep(900);
-  _tvScrollToProdHour();
+  // Espera adicional para que se pinten ticker, nombres, OEE, PA, TW, TX y tarjetas.
+  await _tvSleep(1200);
+
+  _tvScheduleScrollAfterProdHourRender("select_sheet_final");
 
   return true;
 }
