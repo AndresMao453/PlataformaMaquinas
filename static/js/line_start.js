@@ -2160,6 +2160,12 @@ function renderProdHour(result){
   const info  = document.getElementById("lenRangesInfo");
   if(!title || !wrap || !grid) return;
 
+  const machineTitleU = String(result?.machine || "").toUpperCase().trim();
+
+  title.textContent = (machineTitleU === "THB")
+    ? "Productividad por hora THB"
+    : "Productividad por hora";
+
   const titleSub = _ensureChartSubtitle(title, "prodHourTitleSub");
   if(titleSub){
     _setProdHourTicker(titleSub, result);

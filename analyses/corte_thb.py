@@ -1163,6 +1163,24 @@ def _compute_hourly_buckets(
 
     buckets: List[Dict[str, Any]] = []
 
+    # ------------------------------------------------------------
+    # Mantenimiento preventivo semanal
+    # ------------------------------------------------------------
+    # Regla operativa solicitada:
+    # - Todos los lunes.
+    # - Solo en la primera hora real mostrada en Productividad por hora.
+    # - Descuenta 30 minutos de capacidad para la planeación de esa hora.
+    #
+    # Se aplica sobre capacitySec, que es la base que usa el frontend para
+    # calcular la planeación de la tarjeta horaria. No altera TW/TX/Comida,
+    # porque esos tiempos siguen representando la distribución visual de la hora.
+    try:
+        is_monday_preventive = pd.Timestamp(selected_day).weekday() == 0  # lunes = 0
+    except Exception:
+        is_monday_preventive = False
+
+    first_active_hour: Optional[int] = None
+
     for h in range(24):
         h0 = pd.Timestamp(f"{day_iso} {h:02d}:00:00")
         h1 = h0 + pd.Timedelta(hours=1)
@@ -1284,6 +1302,11 @@ def _compute_hourly_buckets(
         if sub.empty and stop_total_raw <= 0:
             continue
 
+        # Primera hora real mostrada en Productividad por hora.
+        # En lunes se usará para descontar el mantenimiento preventivo.
+        if first_active_hour is None:
+            first_active_hour = int(h)
+
         # --------------------------------------------------------
         # NUEVA LÓGICA THB
         # --------------------------------------------------------
@@ -1318,12 +1341,22 @@ def _compute_hourly_buckets(
         other_q = om * 60
         prod_q = pm * 60
 
-        capacity_q = max(0, 3600 - meal_q)
+        # --------------------------------------------------------
+        # Capacidad usada para planeación por hora
+        # --------------------------------------------------------
+        # Lunes: descontar 30 min de mantenimiento preventivo únicamente
+        # en la primera hora real que aparece en Productividad por hora.
+        planned_maintenance_sec = 0
+        if is_monday_preventive and first_active_hour is not None and int(h) == int(first_active_hour):
+            planned_maintenance_sec = 30 * 60
+
+        capacity_q = max(0, 3600 - meal_q - planned_maintenance_sec)
 
         bucket = {
             "hourLabel": f"{h:02d}:00",
             "hour": f"{h:02d}",
             "capacitySec": int(capacity_q),
+            "plannedMaintenanceSec": int(planned_maintenance_sec),
             "prodSec": int(prod_q),
             "mealSec": int(meal_q),
             "otherDeadSec": int(other_q),
