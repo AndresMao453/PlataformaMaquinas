@@ -1267,17 +1267,333 @@ def run_aplicacion_analysis(
     pct_eff = (productive_s / active_available_s * 100.0) if active_available_s > 0 else 0.0
 
     # =========================================================
-    # ✅ MODELO VISUAL TIPO THB PARA CRIMPADO
+    # ✅ MODELO OEE CRIMPADO PARA DASHBOARD
     # =========================================================
-    # En Aplicación/Unión no existe todavía un modelo nominal de ciclo
-    # equivalente al de corte THB ni una columna robusta de calidad/defecto.
-    # Por eso, los indicadores que no se pueden calcular quedan en 0,
-    # pero se conserva la estructura visual del OEE tipo THB.
-    oee_pct = 0.0
-    idx_operacional = 0.0
-    idx_disponibilidad = float(pct_eff)
-    idx_calidad = 0.0
-    cumplimiento_plan = 0.0
+    # El Excel exportado calcula PP, PB, TP, TX, TW, TC, VN, TCN, TCE,
+    # ID, IEO, IC, OEE y PA. Aquí se replica el mismo modelo para que
+    # el dashboard muestre los mismos indicadores sin esperar la descarga.
+    OEE_ESPERADO = 0.70  # mismo valor usado en el Excel: celda G2 del modelo
+
+    def _safe_div_num(a: float, b: float, default: float = 0.0) -> float:
+        try:
+            a = float(a)
+            b = float(b)
+            if b == 0 or pd.isna(b):
+                return default
+            return float(a / b)
+        except Exception:
+            return default
+
+    def _fmt_dec_es(x: Any, nd: int = 2) -> str:
+        try:
+            xf = float(x)
+            if pd.isna(xf):
+                xf = 0.0
+        except Exception:
+            xf = 0.0
+        return f"{xf:,.{nd}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    def _fmt_pct_from_ratio(x: float) -> str:
+        return f"{(float(x or 0.0) * 100.0):.1f}%"
+
+    def _fmt_units_per_hour(x: Any) -> str:
+        try:
+            xf = float(x)
+            if pd.isna(xf) or xf <= 0:
+                return "0 unid/h"
+            return f"{int(round(xf)):,}".replace(",", ".") + " unid/h"
+        except Exception:
+            return "0 unid/h"
+
+    # Tabla RESUMEN_TIEMPOS => TC nominal por terminal en horas decimales.
+    try:
+        resumen_tiempos_df = load_resumen_tiempos(path, machine=machine, machine_id=machine_id)
+        tc_lookup, tc_default_h_uni = _crimpado_build_tc_lookup(resumen_tiempos_df)
+    except Exception:
+        tc_lookup, tc_default_h_uni = {}, None
+
+    def _crimpado_dashboard_rows_for_day(day_value: Any, buckets_day: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Arma filas equivalentes al Excel, pero usando el res_f/par_f ya filtrado."""
+        day0 = pd.Timestamp(day_value).normalize()
+        if pd.isna(day0):
+            return []
+        day1 = day0 + pd.Timedelta(days=1)
+
+        res_day = pd.DataFrame()
+        dt_res = pd.Series([], dtype="datetime64[ns]")
+
+        if res_f is not None and not res_f.empty and "Fecha" in res_f.columns:
+            res_day = _filter_period(res_f, "day", day0.strftime("%Y-%m-%d"), "Fecha").copy()
+            if not res_day.empty:
+                fecha = pd.to_datetime(res_day["Fecha"], errors="coerce", dayfirst=True).dt.normalize()
+                if "Hora" in res_day.columns:
+                    sec = res_day["Hora"].apply(_timeobj_to_seconds).fillna(0)
+                    dt_res = fecha + pd.to_timedelta(sec, unit="s")
+                else:
+                    dt_res = fecha
+
+        rows_out: List[Dict[str, Any]] = []
+
+        for b in (buckets_day or []):
+            hh = _crimpado_hour_int_from_bucket(b)
+            if hh is None:
+                continue
+
+            pn = int(round(float(b.get("cut", 0) or 0)))
+            dead_sec = float(b.get("deadSec", 0.0) or 0.0)
+            meal_sec = float(b.get("mealSec", 0.0) or 0.0)
+            other_sec = float(b.get("otherDeadSec", max(0.0, dead_sec - meal_sec)) or 0.0)
+
+            # No incluir huecos inventados solo para la visualización.
+            if pn <= 0 and dead_sec <= 0 and other_sec <= 0 and bool(b.get("_missing")):
+                continue
+            if pn <= 0 and dead_sec <= 0 and other_sec <= 0:
+                continue
+
+            h0 = day0 + pd.Timedelta(hours=int(hh))
+            h1 = h0 + pd.Timedelta(hours=1)
+
+            hour_df = pd.DataFrame()
+            if res_day is not None and not res_day.empty and len(dt_res) == len(res_day):
+                dt_local = pd.to_datetime(dt_res, errors="coerce")
+                mask_h = dt_local.notna() & (dt_local >= h0) & (dt_local < h1)
+                hour_df = res_day.loc[mask_h].copy()
+
+            meal_sec = max(0.0, min(3600.0, meal_sec))
+            other_sec = max(0.0, min(3600.0, other_sec))
+
+            # Igual al Excel: 105 reduce TP; las demás paradas son TX.
+            tp_h = max(0.0, (3600.0 - meal_sec) / 3600.0)
+            tx_h = max(0.0, other_sec / 3600.0)
+            tw_h = max(0.0, tp_h - tx_h)
+
+            tc_h_uni = _crimpado_tc_from_resumen_for_hour(
+                hour_df,
+                tc_lookup=tc_lookup,
+                tc_default_h_uni=tc_default_h_uni,
+            )
+
+            # Fallback: mantiene compatibilidad si la terminal no está en RESUMEN_TIEMPOS.
+            if tc_h_uni in (None, 0) and pn > 0 and tw_h > 0:
+                tc_h_uni = tw_h / float(pn)
+
+            tc_h_uni = float(tc_h_uni or 0.0)
+            vn = (1.0 / tc_h_uni) if tc_h_uni > 0 else 0.0
+
+            rx = 0
+            pb = max(0, pn - rx)
+            pp = (OEE_ESPERADO * vn * tp_h) if vn > 0 and tp_h > 0 else 0.0
+            tcn = (float(pn) * tc_h_uni) if tc_h_uni > 0 else 0.0
+            tce = (float(pb) * tc_h_uni) if tc_h_uni > 0 else 0.0
+
+            id_ratio = _safe_div_num(tw_h, tp_h)
+            ieo_ratio = _safe_div_num(tcn, tw_h)
+            ic_ratio = _safe_div_num(tce, tcn)
+            oee_ratio = _safe_div_num(tce, tp_h)
+            pa_ratio = _safe_div_num(float(pn), pp)
+
+            rows_out.append({
+                "fecha": day0,
+                "hour": int(hh),
+                "hourLabel": f"{int(hh):02d}:00",
+                "referencia": _crimpado_terminales_for_hour(hour_df),
+                "operario": _crimpado_operator_for_hour(hour_df, operator=operator),
+                "pp": float(pp),
+                "pn": int(pn),
+                "rx": int(rx),
+                "pb": int(pb),
+                "tp_h": float(tp_h),
+                "tx_h": float(tx_h),
+                "tw_h": float(tw_h),
+                "tc_h_uni": float(tc_h_uni),
+                "vn": float(vn),
+                "tcn_h": float(tcn),
+                "tce_h": float(tce),
+                "id": float(id_ratio),
+                "ieo": float(ieo_ratio),
+                "ic": float(ic_ratio),
+                "oee": float(oee_ratio),
+                "pa": float(pa_ratio),
+            })
+
+        return rows_out
+
+    def _crimpado_agg_rows(rows_in: List[Dict[str, Any]]) -> Dict[str, float]:
+        rows_in = rows_in or []
+
+        pp = float(sum(float(r.get("pp", 0.0) or 0.0) for r in rows_in))
+        pn = float(sum(float(r.get("pn", 0.0) or 0.0) for r in rows_in))
+        rx = float(sum(float(r.get("rx", 0.0) or 0.0) for r in rows_in))
+        pb = float(sum(float(r.get("pb", 0.0) or 0.0) for r in rows_in))
+        tp = float(sum(float(r.get("tp_h", 0.0) or 0.0) for r in rows_in))
+        tx = float(sum(float(r.get("tx_h", 0.0) or 0.0) for r in rows_in))
+        tw = float(sum(float(r.get("tw_h", 0.0) or 0.0) for r in rows_in))
+        tcn = float(sum(float(r.get("tcn_h", 0.0) or 0.0) for r in rows_in))
+        tce = float(sum(float(r.get("tce_h", 0.0) or 0.0) for r in rows_in))
+
+        # Para dashboard se usa TC promedio ponderado por producción buena.
+        # Es más representativo que sumar los TC de cada hora.
+        tc_avg = _safe_div_num(tce, pb) if pb > 0 else 0.0
+        vn_avg = (1.0 / tc_avg) if tc_avg > 0 else 0.0
+
+        return {
+            "pp": pp,
+            "pn": pn,
+            "rx": rx,
+            "pb": pb,
+            "tp_h": tp,
+            "tx_h": tx,
+            "tw_h": tw,
+            "tc_h_uni": tc_avg,
+            "vn": vn_avg,
+            "tcn_h": tcn,
+            "tce_h": tce,
+            "id": _safe_div_num(tw, tp),
+            "ieo": _safe_div_num(tcn, tw),
+            "ic": _safe_div_num(tce, tcn),
+            "oee": _safe_div_num(tce, tp),
+            "pa": _safe_div_num(pn, pp),
+        }
+
+    def _crimpado_build_rows_for_current_period() -> List[Dict[str, Any]]:
+        p = str(period or "").strip().lower()
+        rows_period: List[Dict[str, Any]] = []
+
+        if p == "day":
+            day = pd.to_datetime(period_value, errors="coerce")
+            if pd.isna(day):
+                # fallback por si period_value viene extraño, usa fechas reales filtradas
+                days_tmp = _dates_union(res_f, par_f)
+            else:
+                days_tmp = [pd.Timestamp(day).normalize()]
+
+            for d in days_tmp:
+                rows_period.extend(_crimpado_dashboard_rows_for_day(d, hourly_buckets))
+            return rows_period
+
+        # Semana/mes: construir buckets por cada día filtrado y sumar sus filas.
+        days_tmp = _dates_union(res_f, par_f)
+        for d in days_tmp:
+            day_str = pd.Timestamp(d).strftime("%Y-%m-%d")
+            res_d = _filter_period(res_f, "day", day_str, "Fecha")
+            par_d = _filter_period(par_f, "day", day_str, "Fecha")
+            buckets_d = _build_hourly_buckets(res_d, par_d)
+            rows_period.extend(_crimpado_dashboard_rows_for_day(d, buckets_d))
+
+        return rows_period
+
+    def _crimpado_attach_rows_to_hourly_buckets(rows_in: List[Dict[str, Any]]) -> None:
+        if not hourly_buckets or not rows_in:
+            return
+        row_by_hour = {int(r.get("hour", -1)): r for r in rows_in if r.get("hour") is not None}
+
+        for b in hourly_buckets:
+            hh = _crimpado_hour_int_from_bucket(b)
+            if hh is None or hh not in row_by_hour:
+                continue
+            r = row_by_hour[hh]
+
+            # Campos que el JS ya sabe pintar en tarjetas por hora.
+            b["plan"] = float(r.get("pp", 0.0) or 0.0)
+            b["planned"] = b["plan"]
+            b["pp"] = b["plan"]
+            b["pn"] = int(r.get("pn", 0) or 0)
+            b["rx"] = int(r.get("rx", 0) or 0)
+            b["pb"] = int(r.get("pb", 0) or 0)
+            b["tpH"] = float(r.get("tp_h", 0.0) or 0.0)
+            b["txH"] = float(r.get("tx_h", 0.0) or 0.0)
+            b["twH"] = float(r.get("tw_h", 0.0) or 0.0)
+            b["tcHUni"] = float(r.get("tc_h_uni", 0.0) or 0.0)
+            b["tcSecUni"] = float(r.get("tc_h_uni", 0.0) or 0.0) * 3600.0
+            b["vn"] = float(r.get("vn", 0.0) or 0.0)
+            b["tcnH"] = float(r.get("tcn_h", 0.0) or 0.0)
+            b["tceH"] = float(r.get("tce_h", 0.0) or 0.0)
+            b["idPct"] = float(r.get("id", 0.0) or 0.0) * 100.0
+            b["ieoPct"] = float(r.get("ieo", 0.0) or 0.0) * 100.0
+            b["icPct"] = float(r.get("ic", 0.0) or 0.0) * 100.0
+            b["oeePct"] = float(r.get("oee", 0.0) or 0.0) * 100.0
+            b["paPct"] = float(r.get("pa", 0.0) or 0.0) * 100.0
+
+            # Compatibilidad con renderProdHour(): usa tcnpSec para TC y capacitySec para PP/PA.
+            b["tcnpSec"] = b["tcSecUni"]
+            b["capacitySec"] = float(r.get("tp_h", 0.0) or 0.0) * 3600.0
+            b["tcnpTotalSec"] = float(r.get("tcn_h", 0.0) or 0.0) * 3600.0
+            b["tceTotalSec"] = float(r.get("tce_h", 0.0) or 0.0) * 3600.0
+            b["referencia"] = str(r.get("referencia", "") or "")
+
+    def _crimpado_chart_from_rows(rows_in: List[Dict[str, Any]]) -> Dict[str, Any]:
+        p = str(period or "").strip().lower()
+        rows_in = rows_in or []
+
+        if not rows_in:
+            return {"labels": [], "oee": [], "operacional": [], "disponibilidad": [], "calidad": []}
+
+        groups: List[Tuple[str, List[Dict[str, Any]]]] = []
+
+        if p == "day":
+            for r in sorted(rows_in, key=lambda x: int(x.get("hour", 0) or 0)):
+                groups.append((str(r.get("hourLabel", "") or ""), [r]))
+
+        elif p == "week":
+            tmp: Dict[str, List[Dict[str, Any]]] = {}
+            for r in rows_in:
+                key = pd.Timestamp(r.get("fecha")).strftime("%d/%m")
+                tmp.setdefault(key, []).append(r)
+            # ordenar por fecha real
+            ordered = sorted(tmp.items(), key=lambda kv: pd.to_datetime(kv[1][0].get("fecha"), errors="coerce"))
+            groups = [(k, v) for k, v in ordered]
+
+        elif p == "month":
+            tmp: Dict[str, List[Dict[str, Any]]] = {}
+            sort_key: Dict[str, Tuple[int, int]] = {}
+            for r in rows_in:
+                f = pd.Timestamp(r.get("fecha"))
+                iso = f.isocalendar()
+                key = f"Semana {int(iso.week):02d}"
+                tmp.setdefault(key, []).append(r)
+                sort_key[key] = (int(iso.year), int(iso.week))
+            groups = [(k, tmp[k]) for k in sorted(tmp.keys(), key=lambda kk: sort_key.get(kk, (0, 0)))]
+
+        else:
+            groups = [("TOTAL", rows_in)]
+
+        labels: List[str] = []
+        oee_vals: List[float] = []
+        ieo_vals: List[float] = []
+        id_vals: List[float] = []
+        ic_vals: List[float] = []
+
+        for label, rr in groups:
+            agg = _crimpado_agg_rows(rr)
+            labels.append(label)
+            oee_vals.append(round(float(agg.get("oee", 0.0) or 0.0) * 100.0, 1))
+            ieo_vals.append(round(float(agg.get("ieo", 0.0) or 0.0) * 100.0, 1))
+            id_vals.append(round(float(agg.get("id", 0.0) or 0.0) * 100.0, 1))
+            ic_vals.append(round(float(agg.get("ic", 0.0) or 0.0) * 100.0, 1))
+
+        return {
+            "labels": labels,
+            "oee": oee_vals,
+            "operacional": ieo_vals,
+            "disponibilidad": id_vals,
+            "calidad": ic_vals,
+        }
+
+    crimpado_rows = _crimpado_build_rows_for_current_period()
+    crimpado_summary = _crimpado_agg_rows(crimpado_rows)
+
+    if (period or "").strip().lower() == "day" and hourly_buckets:
+        _crimpado_attach_rows_to_hourly_buckets(crimpado_rows)
+
+    oee_pct = float(crimpado_summary.get("oee", 0.0) or 0.0) * 100.0
+    idx_operacional = float(crimpado_summary.get("ieo", 0.0) or 0.0) * 100.0
+    idx_disponibilidad = float(crimpado_summary.get("id", 0.0) or 0.0) * 100.0
+    idx_calidad = float(crimpado_summary.get("ic", 0.0) or 0.0) * 100.0
+    cumplimiento_plan = float(crimpado_summary.get("pa", 0.0) or 0.0) * 100.0
+
+    # Fallback visual si no hubo filas nominales, para no dejar la disponibilidad vacía.
+    if not crimpado_rows:
+        idx_disponibilidad = float(pct_eff)
 
     def _oee_ui_crimpado() -> str:
         return (
@@ -1287,65 +1603,44 @@ def run_aplicacion_analysis(
             f"Indice de Calidad: {idx_calidad:.1f}%"
         )
 
-    def _build_oee_chart_crimpado() -> Dict[str, Any]:
-        labels: List[str] = []
-        disponibilidad_vals: List[float] = []
+    oee_chart = _crimpado_chart_from_rows(crimpado_rows)
 
-        p = str(period or "").strip().lower()
-
-        if p == "day" and hourly_buckets:
-            for b in hourly_buckets:
-                labels.append(str(b.get("hourLabel") or b.get("hour") or ""))
-                cap = float(b.get("capacitySec", 0) or 0)
-                prod = float(b.get("prodSec", 0) or 0)
-                disponibilidad_vals.append((prod / cap * 100.0) if cap > 0 else 0.0)
-
-        elif res_f is not None and not res_f.empty and "Fecha" in res_f.columns:
-            tmp_chart = res_f.copy()
-            tmp_chart["__fecha_chart"] = pd.to_datetime(tmp_chart["Fecha"], errors="coerce", dayfirst=True).dt.normalize()
-            tmp_chart = tmp_chart.dropna(subset=["__fecha_chart"])
-
-            if p == "week":
-                days = sorted(tmp_chart["__fecha_chart"].unique())
-                labels = [pd.Timestamp(d).strftime("%d/%m") for d in days]
-                disponibilidad_vals = [0.0] * len(labels)
-
-            elif p == "month":
-                iso = tmp_chart["__fecha_chart"].dt.isocalendar()
-                tmp_chart["__week_chart"] = iso["week"].astype(int)
-                weeks = sorted(tmp_chart["__week_chart"].dropna().unique().tolist())
-                labels = [f"Semana {int(w):02d}" for w in weeks]
-                disponibilidad_vals = [0.0] * len(labels)
-
-        n = len(labels)
-        if len(disponibilidad_vals) != n:
-            disponibilidad_vals = [0.0] * n
-
-        return {
-            "labels": labels,
-            "oee": [0.0] * n,
-            "operacional": [0.0] * n,
-            "disponibilidad": [round(float(x), 1) for x in disponibilidad_vals],
-            "calidad": [0.0] * n,
-        }
-
-    oee_chart = _build_oee_chart_crimpado()
+    tc_avg_h = float(crimpado_summary.get("tc_h_uni", 0.0) or 0.0)
+    tc_avg_sec = tc_avg_h * 3600.0
+    vn_avg = float(crimpado_summary.get("vn", 0.0) or 0.0)
 
     kpis_ui: Dict[str, str] = {
         "OEE": _oee_ui_crimpado(),
         "Cumplimiento del plan": f"{cumplimiento_plan:.1f}%",
-        "Producción Total": _fmt_int_es(pulses_total),
+        "Producción Total": _fmt_int_es(crimpado_summary.get("pn", pulses_total)),
 
-        # Se dejan como detalle porque sí se calculan con los datos actuales.
-        "Tiempo Pagado": _fmt_hhmm(active_available_s),
+        # Indicadores equivalentes al Excel OEE.
+        "Producción Planeada": _fmt_int_es(crimpado_summary.get("pp", 0.0)),
+        "Producción Buena": _fmt_int_es(crimpado_summary.get("pb", 0.0)),
+        "Producción con Defectos": _fmt_int_es(crimpado_summary.get("rx", 0.0)),
+        "Tiempo Pagado": _fmt_hhmm(float(crimpado_summary.get("tp_h", 0.0) or 0.0) * 3600.0),
         "Tiempos Perdidos": (
-            f"{_fmt_hhmm(other_total_s)}"
+            f"{_fmt_hhmm(float(crimpado_summary.get('tx_h', 0.0) or 0.0) * 3600.0)}"
             f"||105: {_fmt_hhmm(meal_total_s)} | "
             f"No registrado: {_fmt_hhmm(no_reg_s)} | "
             f"104: {_fmt_hhmm(parada104_s)} | "
             f"{pct_other:.1f}%"
         ),
-        "Tiempo Trabajado": f"{_fmt_hhmm(productive_s)} ({pct_eff:.1f}%)",
+        "Tiempo Trabajado": (
+            f"{_fmt_hhmm(float(crimpado_summary.get('tw_h', 0.0) or 0.0) * 3600.0)} "
+            f"({idx_disponibilidad:.1f}%)"
+        ),
+        "Tiempo de Ciclo": (
+            f"{_fmt_dec_es(tc_avg_h, 6)} h/uni||"
+            f"Segundos: {_fmt_dec_es(tc_avg_sec, 2)} s/uni"
+        ),
+        "Velocidad Nominal": _fmt_units_per_hour(vn_avg),
+        "Tiempo Normal (TCN)": _fmt_hhmm(float(crimpado_summary.get("tcn_h", 0.0) or 0.0) * 3600.0),
+        "Tiempo Estándar (TCE)": _fmt_hhmm(float(crimpado_summary.get("tce_h", 0.0) or 0.0) * 3600.0),
+        "Índice de Disponibilidad": f"{idx_disponibilidad:.1f}%",
+        "Índice de Eficiencia Operacional": f"{idx_operacional:.1f}%",
+        "Índice de Calidad": f"{idx_calidad:.1f}%",
+        "PA": f"{cumplimiento_plan:.1f}%",
         "Crimpados Carrete": f"{_fmt_int_es(carrete)} ({_fmt_pct_es(pct_carrete)})",
         "Crimpados Manual": f"{_fmt_int_es(manual)} ({_fmt_pct_es(pct_manual)})",
     }
@@ -1365,6 +1660,8 @@ def run_aplicacion_analysis(
         "kpis": {
             "hourly_buckets": hourly_buckets,
             "other_causes": other_causes,
+            "crimpado_summary": crimpado_summary,
+            "crimpado_rows": crimpado_rows,
         },
         "terminal_usage": terminal_usage,
         "oee_chart": oee_chart,
@@ -1469,6 +1766,219 @@ def _crimpado_operator_for_hour(hour_df: pd.DataFrame, operator: str = "") -> st
     return "General"
 
 
+def _crimpado_norm_col_name(c: Any) -> str:
+    """Normaliza encabezados con saltos de línea, tildes y espacios."""
+    s = str(c or "").replace("\n", " ").replace("\r", " ").strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    trans = str.maketrans("áéíóúüñ", "aeiouun")
+    return s.translate(trans)
+
+
+def _crimpado_find_col(df: pd.DataFrame, required_tokens: List[str]) -> Optional[str]:
+    if df is None or df.empty:
+        return None
+    req = [_crimpado_norm_col_name(x) for x in required_tokens]
+    for c in df.columns:
+        nc = _crimpado_norm_col_name(c)
+        if all(tok in nc for tok in req):
+            return c
+    return None
+
+
+def _crimpado_num_float(x: Any) -> Optional[float]:
+    """Convierte números tipo 20.6 / '20,6' / '1.234,56' a float."""
+    if x is None or (isinstance(x, float) and np.isnan(x)) or pd.isna(x):
+        return None
+    if isinstance(x, (int, float, np.integer, np.floating)) and not pd.isna(x):
+        return float(x)
+
+    s = str(x).strip().replace(" ", "")
+    if not s or s.lower() in ("nan", "none", "null"):
+        return None
+
+    lc = s.rfind(",")
+    ld = s.rfind(".")
+    if lc > -1 and ld > -1:
+        if lc > ld:
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif lc > -1:
+        s = s.replace(".", "").replace(",", ".")
+
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+def _crimpado_terminal_key(x: Any) -> str:
+    """
+    Llave robusta para cruzar Terminal entre:
+    - RESUMEN_TIEMPOS
+    - APLICACION1_Resumen_Pulsos
+    - Referencia exportada
+    """
+    if x is None or (isinstance(x, float) and np.isnan(x)) or pd.isna(x):
+        return ""
+    if isinstance(x, (int, float, np.integer, np.floating)):
+        xf = float(x)
+        if np.isfinite(xf) and abs(xf - round(xf)) < 1e-9:
+            return str(int(round(xf)))
+    s = str(x).strip()
+    if not s or s.lower() in ("nan", "none", "null", "nat"):
+        return ""
+    s = re.sub(r"\.0$", "", s)
+    return s.strip().upper()
+
+
+def load_resumen_tiempos(
+    path: str,
+    machine: str = "APLICACION",
+    machine_id: str = "",
+) -> pd.DataFrame:
+    """
+    Lee la hoja RESUMEN_TIEMPOS.
+
+    Estructura esperada:
+      Terminal | Sesiones registradas | Tiempo Neto Total | Unidades Aplicadas |
+      Promedio (segundos) | Promedio (mm:ss)
+
+    Nota:
+    - Para Google Sheets con GSHEET_APP_TOKEN se lee por export XLSX, porque esta
+      hoja nueva no necesita un GID adicional en config.py.
+    - Si la hoja no existe, retorna DataFrame vacío y el export conserva fallback.
+    """
+    sheet_id, _gid_res, _gid_par, _ttl_s = _pick_gsheet_params(machine, machine_id)
+    m = (machine or "APLICACION").strip().upper()
+    mid = (machine_id or "").strip()
+
+    prefix = f"{m}{mid}" if mid else m
+    sheet_candidates = [
+        f"{prefix}_RESUMEN_TIEMPOS",
+        f"{prefix}_Resumen_Tiempos",
+        f"{prefix} RESUMEN_TIEMPOS",
+        "RESUMEN_TIEMPOS",
+        "Resumen_Tiempos",
+        "Resumen Tiempos",
+    ]
+
+    try:
+        if not path:
+            raw = _read_sheet_try(GSHEET_APP_TOKEN, sheet_candidates, header=None, sheet_id=sheet_id)
+        else:
+            token_sheet_id = sheet_id if path == GSHEET_APP_TOKEN else ""
+            raw = _read_sheet_try(path, sheet_candidates, header=None, sheet_id=token_sheet_id)
+    except Exception:
+        return pd.DataFrame()
+
+    try:
+        hi = _find_header_row(raw, {"Terminal"}, max_scan=25)
+        header = raw.iloc[hi].astype(str).str.strip().tolist()
+        df = raw.iloc[hi + 1 :].copy()
+        df.columns = header
+        df = df.dropna(how="all").reset_index(drop=True)
+
+        # Quitar filas de notas/metodología que vienen debajo de la tabla.
+        terminal_col = _crimpado_find_col(df, ["terminal"])
+        if not terminal_col:
+            return pd.DataFrame()
+
+        df = df[df[terminal_col].notna()].copy()
+        df = df[~df[terminal_col].astype(str).str.strip().str.lower().isin(["", "nan", "none"])].copy()
+        return df.reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _crimpado_build_tc_lookup(
+    resumen_tiempos_df: pd.DataFrame,
+) -> Tuple[Dict[str, float], Optional[float]]:
+    """
+    Convierte RESUMEN_TIEMPOS a:
+      - lookup[terminal] = tiempo de ciclo en horas decimales (h/uni)
+      - promedio_global = fallback en h/uni si existe la fila PROMEDIO GLOBAL
+    """
+    if resumen_tiempos_df is None or resumen_tiempos_df.empty:
+        return {}, None
+
+    df = resumen_tiempos_df.copy()
+
+    terminal_col = _crimpado_find_col(df, ["terminal"])
+    prom_sec_col = _crimpado_find_col(df, ["promedio", "seg"])
+    if not terminal_col or not prom_sec_col:
+        return {}, None
+
+    lookup: Dict[str, float] = {}
+    promedio_global: Optional[float] = None
+
+    for _, r in df.iterrows():
+        raw_terminal = r.get(terminal_col)
+        key = _crimpado_terminal_key(raw_terminal)
+        sec = _crimpado_num_float(r.get(prom_sec_col))
+
+        if sec is None or sec <= 0:
+            continue
+
+        tc_h = float(sec) / 3600.0
+
+        raw_txt = str(raw_terminal or "").strip().upper()
+        if "PROMEDIO" in raw_txt and "GLOBAL" in raw_txt:
+            promedio_global = tc_h
+            continue
+
+        if key:
+            lookup[key] = tc_h
+
+    return lookup, promedio_global
+
+
+def _crimpado_tc_from_resumen_for_hour(
+    hour_df: pd.DataFrame,
+    tc_lookup: Optional[Dict[str, float]] = None,
+    tc_default_h_uni: Optional[float] = None,
+) -> Optional[float]:
+    """
+    Retorna TC en horas decimales usando RESUMEN_TIEMPOS.
+
+    Si en una misma hora hay varias terminales, calcula promedio ponderado:
+      TC_hora = SUM(Pulsos_terminal * TC_terminal) / SUM(Pulsos_terminal)
+
+    Si una terminal no existe en RESUMEN_TIEMPOS, usa PROMEDIO GLOBAL si está
+    disponible. Si no hay ninguna coincidencia, retorna None.
+    """
+    tc_lookup = tc_lookup or {}
+    if hour_df is None or hour_df.empty or "Terminal" not in hour_df.columns:
+        return tc_default_h_uni if tc_default_h_uni and tc_default_h_uni > 0 else None
+
+    weighted_sum = 0.0
+    weight_sum = 0.0
+
+    for _, r in hour_df.iterrows():
+        key = _crimpado_terminal_key(r.get("Terminal"))
+        if not key:
+            continue
+
+        tc = tc_lookup.get(key)
+        if tc is None or tc <= 0:
+            tc = tc_default_h_uni
+
+        if tc is None or tc <= 0:
+            continue
+
+        w = _crimpado_num_float(r.get("Pulsos", 1))
+        if w is None or w <= 0:
+            w = 1.0
+
+        weighted_sum += float(tc) * float(w)
+        weight_sum += float(w)
+
+    if weight_sum > 0:
+        return weighted_sum / weight_sum
+
+    return tc_default_h_uni if tc_default_h_uni and tc_default_h_uni > 0 else None
+
+
 def _crimpado_hour_int_from_bucket(b: Dict[str, Any]) -> Optional[int]:
     raw = str(b.get("hourLabel") or b.get("hour") or "").strip()
     m = re.search(r"(\d{1,2})", raw)
@@ -1490,6 +2000,8 @@ def _crimpado_rows_for_day(
     machine: str = "APLICACION",
     machine_id: str = "",
     operator: str = "",
+    tc_lookup: Optional[Dict[str, float]] = None,
+    tc_default_h_uni: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     day0 = pd.Timestamp(day).normalize()
     day1 = day0 + pd.Timedelta(days=1)
@@ -1550,9 +2062,19 @@ def _crimpado_rows_for_day(
         tx_h = max(0.0, other_sec / 3600.0)
         tw_h = max(0.0, tp_h - tx_h)
 
-        # TC = tiempo de ciclo efectivo por terminal aplicada (h / terminal).
-        # Si no hay producción, se deja vacío para evitar divisiones inválidas.
-        tc_h_uni = (tw_h / float(pn)) if pn > 0 and tw_h > 0 else None
+        # TC = tiempo de ciclo nominal por terminal desde RESUMEN_TIEMPOS.
+        # La hoja trae Promedio (segundos); se convierte a horas decimales (h/uni).
+        # Si hay varias terminales en la misma hora, se usa promedio ponderado por Pulsos.
+        tc_h_uni = _crimpado_tc_from_resumen_for_hour(
+            hour_df,
+            tc_lookup=tc_lookup,
+            tc_default_h_uni=tc_default_h_uni,
+        )
+
+        # Fallback de seguridad: si no existe RESUMEN_TIEMPOS o no hay coincidencia,
+        # conserva el cálculo anterior para no romper la descarga.
+        if tc_h_uni in (None, 0) and pn > 0 and tw_h > 0:
+            tc_h_uni = tw_h / float(pn)
 
         rows.append({
             "fecha": day0.to_pydatetime(),
@@ -1588,7 +2110,7 @@ def get_crimpado_export_day_exports(
       - Equipo = APLICACION/UNION + M1/M2
       - PN = pulsos / terminales aplicadas
       - RX = 0 si no hay datos de defectos
-      - TC = TW / PN, para que Excel calcule VN, TCN, TCE, ID, IEO, IC, OEE y PA.
+      - TC = Promedio(segundos) / 3600 desde RESUMEN_TIEMPOS, cruzado por Terminal.
     """
     m = (machine or "APLICACION").strip().upper()
     mid = _norm_machine_id(machine_id)
@@ -1598,6 +2120,11 @@ def get_crimpado_export_day_exports(
 
     res_df = load_resumen_pulsos(path, machine=m, machine_id=mid)
     par_df, _ = load_paradas(path, machine=m, machine_id=mid)
+
+    # Hoja nueva: RESUMEN_TIEMPOS.
+    # De aquí sale el TC exportado en la columna N del Excel OEE.
+    resumen_tiempos_df = load_resumen_tiempos(path, machine=m, machine_id=mid)
+    tc_lookup, tc_default_h_uni = _crimpado_build_tc_lookup(resumen_tiempos_df)
 
     days = _app_days_for_period_export(res_df, par_df, period, period_value, operator=op)
     if not days:
@@ -1629,6 +2156,8 @@ def get_crimpado_export_day_exports(
             machine=m,
             machine_id=mid,
             operator=op,
+            tc_lookup=tc_lookup,
+            tc_default_h_uni=tc_default_h_uni,
         )
 
         if not rows:

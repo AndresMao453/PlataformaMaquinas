@@ -2039,7 +2039,7 @@ function renderParetoAplicacion(result){
 }
 
 // =========================
-// THB: Overlay motivacional sobre Productividad por hora
+// Corte/Crimpado: Overlay motivacional sobre Productividad por hora
 // =========================
 let __prodMotivationCycleTimer = null;
 let __prodMotivationWordTimer = null;
@@ -2057,7 +2057,7 @@ const __PROD_MOTIVATION_WORDS = [
 ];
 
 // Cada cuánto aparece el mensaje completo
-const PROD_MOTIVATION_EVERY_MS = 40000;
+const PROD_MOTIVATION_EVERY_MS = 60000;
 
 // Velocidad entre palabra y palabra
 const PROD_MOTIVATION_WORD_MS = 900;
@@ -2290,9 +2290,21 @@ function renderProdHour(result){
 
   const machineTitleU = String(result?.machine || "").toUpperCase().trim();
 
-  title.textContent = (machineTitleU === "THB")
-    ? "Productividad por hora THB"
-    : "Productividad por hora";
+  const machineId = String(
+    result?.machine_id ||
+    document.getElementById("machineIdInput2")?.value ||
+    document.getElementById("machineIdInput")?.value ||
+    CFG.machine_id ||
+    ""
+  ).trim();
+
+  if(machineTitleU === "APLICACION" && machineId === "1"){
+    title.textContent = "Productividad por hora (ELIZABETH CARO)";
+  }else if(machineTitleU === "THB"){
+    title.textContent = "Productividad por hora THB";
+  }else{
+    title.textContent = "Productividad por hora";
+  }
 
   const titleSub = _ensureChartSubtitle(title, "prodHourTitleSub");
   if(titleSub){
@@ -2311,8 +2323,16 @@ function renderProdHour(result){
   }
 
   const machineU = String(result?.machine || "").toUpperCase();
-  // Overlay motivacional SOLO para THB
-  if(machineU === "THB"){
+  // ✅ Overlay motivacional en Corte (HP/THB) y Crimpado (Aplicación/Unión)
+  // No se elimina: se conserva y se adapta para ambos dashboards.
+  const showMotivationOverlay = (
+    machineU === "THB" ||
+    machineU === "HP" ||
+    machineU === "APLICACION" ||
+    machineU === "UNION"
+  );
+
+  if(showMotivationOverlay){
     startProdMotivationOverlay(wrap);
   }else{
     stopProdMotivationOverlay(true);
@@ -3229,7 +3249,7 @@ document.addEventListener("DOMContentLoaded", ()=>{
     // =========================
     // LIVE REFRESH (Aplicación/Unión + Corte) — SOLO HOY con registros
     // =========================
-    const AUTO_REFRESH_MS = 30000;
+    const AUTO_REFRESH_MS = 50000;
     let __autoTimer = null;
     let __inFlight = false;
 
@@ -4031,4 +4051,3 @@ window.selectMachine = selectMachine;
 window.selectPeriod = selectPeriod;
 window.onPeriodValueChange = onPeriodValueChange;
 window.onAppMachineChange = onAppMachineChange;
-
