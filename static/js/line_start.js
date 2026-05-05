@@ -2059,6 +2059,8 @@ function _prodMotivationCurrentTimeText(){
   return `HORA: ${horaCo}`;
 }
 
+const PROD_MOTIVATION_PATRIA_IMG = "/static/img/firme_patria.png";
+
 const __PROD_MOTIVATION_WORDS = [
   { text: "TÚ", cls: "prod-mot-blue" },
   { text: "ERES", cls: "prod-mot-green" },
@@ -2068,6 +2070,7 @@ const __PROD_MOTIVATION_WORDS = [
   { text: "RENDIMIENTO", cls: "prod-mot-indigo" },
   { text: "ÁNIMO", cls: "prod-mot-red" },
   { text: "FIRME POR LA PATRIA", cls: "prod-mot-orange", ms: 3500 },
+  { image: PROD_MOTIVATION_PATRIA_IMG, alt: "Firme por la patria", cls: "prod-mot-image", ms: 3500 },
   { text: _prodMotivationCurrentTimeText, cls: "prod-mot-time", ms: 3500 },
 ];
 
@@ -2142,15 +2145,22 @@ function playProdMotivationOverlay(hostEl){
 
       overlay.classList.remove("show");
       wordEl.textContent = "";
+      wordEl.innerHTML = "";
       __prodMotivationRunning = false;
       __prodMotivationIdx = 0;
       return;
     }
 
-    const wordText = (typeof item.text === "function") ? item.text() : item.text;
+    wordEl.className = `prod-motivation-word ${item.cls || ""}`;
 
-    wordEl.className = `prod-motivation-word ${item.cls}`;
-    wordEl.textContent = wordText;
+    if(item.image){
+      const imgSrc = (typeof item.image === "function") ? item.image() : item.image;
+      const imgAlt = item.alt || "Imagen motivacional";
+      wordEl.innerHTML = `<img src="${escHtml(imgSrc)}" alt="${escHtml(imgAlt)}" class="prod-motivation-img">`;
+    }else{
+      const wordText = (typeof item.text === "function") ? item.text() : item.text;
+      wordEl.textContent = wordText;
+    }
 
     // Reinicia animación en cada palabra
     wordEl.style.animation = "none";
