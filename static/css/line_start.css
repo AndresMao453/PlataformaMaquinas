@@ -4714,28 +4714,6 @@ img{
   letter-spacing: -0.03em;
 }
 
-#prodMotivationWord.prod-mot-image{
-  color: inherit;
-  font-size: 0;
-  line-height: 1;
-  letter-spacing: 0;
-  text-transform: none;
-  text-shadow: none;
-  padding: 0;
-  border-radius: 34px;
-  background: transparent;
-}
-
-#prodMotivationWord .prod-motivation-img{
-  display: block;
-  width: min(540px, 78vw);
-  max-height: min(340px, 58vh);
-  object-fit: contain;
-  border-radius: 28px;
-  border: 4px solid rgba(255,255,255,.92);
-  box-shadow: 0 18px 44px rgba(15,23,42,.28);
-}
-
 @keyframes prodMotivationOverlayIn{
   from{
     opacity: 0;
@@ -4771,12 +4749,6 @@ img{
 
   #prodMotivationWord.prod-mot-time{
     font-size: clamp(28px, 8vw, 48px);
-  }
-
-  #prodMotivationWord .prod-motivation-img{
-    width: min(420px, 84vw);
-    max-height: min(280px, 52vh);
-    border-radius: 20px;
   }
 }
 
