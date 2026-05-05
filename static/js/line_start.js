@@ -2067,7 +2067,7 @@ const __PROD_MOTIVATION_WORDS = [
   { text: "TU", cls: "prod-mot-cyan" },
   { text: "RENDIMIENTO", cls: "prod-mot-indigo" },
   { text: "ÁNIMO", cls: "prod-mot-red" },
-  { text: "FIRME POR LA PATRIA", cls: "prod-mot-orange" },
+  { text: "FIRME POR LA PATRIA", cls: "prod-mot-orange", ms: 3500 },
   { text: _prodMotivationCurrentTimeText, cls: "prod-mot-time", ms: 3500 },
 ];
 
