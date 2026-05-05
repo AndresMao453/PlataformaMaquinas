@@ -4708,6 +4708,12 @@ img{
   color:#dc2626;
 }
 
+#prodMotivationWord.prod-mot-time{
+  color:#0f172a;
+  font-size: clamp(34px, 5vw, 74px);
+  letter-spacing: -0.03em;
+}
+
 @keyframes prodMotivationOverlayIn{
   from{
     opacity: 0;
@@ -4739,6 +4745,10 @@ img{
   #prodMotivationWord.prod-motivation-word{
     font-size: clamp(48px, 15vw, 92px);
     padding: 16px 20px;
+  }
+
+  #prodMotivationWord.prod-mot-time{
+    font-size: clamp(28px, 8vw, 48px);
   }
 }
 

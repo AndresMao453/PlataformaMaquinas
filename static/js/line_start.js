@@ -2046,6 +2046,19 @@ let __prodMotivationWordTimer = null;
 let __prodMotivationRunning = false;
 let __prodMotivationIdx = 0;
 
+function _prodMotivationCurrentTimeText(){
+  const now = new Date();
+  const horaCo = new Intl.DateTimeFormat("es-CO", {
+    timeZone: "America/Bogota",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).format(now);
+
+  return `HORA: ${horaCo}`;
+}
+
 const __PROD_MOTIVATION_WORDS = [
   { text: "TÚ", cls: "prod-mot-blue" },
   { text: "ERES", cls: "prod-mot-green" },
@@ -2054,6 +2067,7 @@ const __PROD_MOTIVATION_WORDS = [
   { text: "TU", cls: "prod-mot-cyan" },
   { text: "RENDIMIENTO", cls: "prod-mot-indigo" },
   { text: "ÁNIMO", cls: "prod-mot-red" },
+  { text: _prodMotivationCurrentTimeText, cls: "prod-mot-time", ms: 3500 },
 ];
 
 // Cada cuánto aparece el mensaje completo
@@ -2088,7 +2102,7 @@ function stopProdMotivationOverlay(removeEl = true){
   }
 
   if(__prodMotivationWordTimer){
-    clearInterval(__prodMotivationWordTimer);
+    clearTimeout(__prodMotivationWordTimer);
     __prodMotivationWordTimer = null;
   }
 
@@ -2121,7 +2135,7 @@ function playProdMotivationOverlay(hostEl){
 
     if(!item){
       if(__prodMotivationWordTimer){
-        clearInterval(__prodMotivationWordTimer);
+        clearTimeout(__prodMotivationWordTimer);
         __prodMotivationWordTimer = null;
       }
 
@@ -2132,8 +2146,10 @@ function playProdMotivationOverlay(hostEl){
       return;
     }
 
+    const wordText = (typeof item.text === "function") ? item.text() : item.text;
+
     wordEl.className = `prod-motivation-word ${item.cls}`;
-    wordEl.textContent = item.text;
+    wordEl.textContent = wordText;
 
     // Reinicia animación en cada palabra
     wordEl.style.animation = "none";
@@ -2141,10 +2157,12 @@ function playProdMotivationOverlay(hostEl){
     wordEl.style.animation = "";
 
     __prodMotivationIdx++;
+
+    const nextMs = Number(item.ms || PROD_MOTIVATION_WORD_MS) || PROD_MOTIVATION_WORD_MS;
+    __prodMotivationWordTimer = setTimeout(paintWord, nextMs);
   }
 
   paintWord();
-  __prodMotivationWordTimer = setInterval(paintWord, PROD_MOTIVATION_WORD_MS);
 }
 
 function startProdMotivationOverlay(hostEl){
