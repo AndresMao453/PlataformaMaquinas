@@ -2343,6 +2343,15 @@ def _build_thb_export_workbook(day_exports: list[dict], period: str) -> io.Bytes
     for ws, item in sheets_to_fill:
         rows = item.get("rows", []) or []
 
+        # OEE esperado específico para exportación de crimpado.
+        # Si no llega, se conserva el valor que tenga la plantilla en G2.
+        try:
+            oee_expected = item.get("oee_expected", None)
+            if oee_expected is not None:
+                ws["G2"] = float(oee_expected)
+        except Exception:
+            pass
+
         body_start = 7
         body_end = 38
         total_row_template = 40
@@ -2373,8 +2382,17 @@ def _build_thb_export_workbook(day_exports: list[dict], period: str) -> io.Bytes
             ws.cell(idx, 5).value = row["inicio"]
             ws.cell(idx, 6).value = row["fin"]
 
-            # Producción Planeada = OEE esperado * VN * TP
-            ws.cell(idx, 7).value = f'=IFERROR($G$2*O{idx}*K{idx},"")'
+            # Producción Planeada = OEE esperado * VN * tiempo base * factor de meta
+            # Unión M1 usa TW (columna M) para que las paradas TX reduzcan la meta;
+            # las demás máquinas conservan TP (columna K).
+            try:
+                meta_factor = float(row.get("meta_factor", item.get("meta_factor", 1.0)) or 1.0)
+            except Exception:
+                meta_factor = 1.0
+
+            equipo_txt = str(row.get("equipo", "") or "").upper().replace(" ", "")
+            plan_time_col = "M" if ("UNION" in equipo_txt and "M1" in equipo_txt) else "K"
+            ws.cell(idx, 7).value = f'=IFERROR($G$2*O{idx}*{plan_time_col}{idx}*{meta_factor},"")'
 
             ws.cell(idx, 8).value = row["pn"]
             ws.cell(idx, 9).value = row["rx"]

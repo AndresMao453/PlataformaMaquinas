@@ -2325,8 +2325,10 @@ function renderProdHour(result){
     ""
   ).trim();
 
-  if(machineTitleU === "APLICACION" && machineId === "1"){
-    title.textContent = "Productividad por hora-ELIZABETH C.";
+  if(machineTitleU === "UNION" && machineId === "1"){
+    title.textContent = "Productividad por hora - VIVIANA B.";
+  }else if(machineTitleU === "APLICACION" && machineId === "1"){
+    title.textContent = "Productividad por hora - ELIZABETH C.";
   }else if(machineTitleU === "THB"){
     title.textContent = "Productividad por hora THB";
   }else{
@@ -2370,7 +2372,33 @@ function renderProdHour(result){
   const showLenMix = (!isAplic) && (!isCont) && (machineU !== "HP") && (machineU !== "THB");
   const showMeters = (!isAplic) && (!isCont) && (machineU !== "HP");
 
-  const OEE_ESPERADO_HORA = 0.70;
+  // OEE esperado visual por hora.
+  // IMPORTANTE:
+  // - THB conserva su 70% original.
+  // - Crimpado base conserva 90%.
+  // - Solo Unión M1 usa 95%.
+  const OEE_ESPERADO_THB_HORA = 0.70;
+  const OEE_ESPERADO_CRIMPADO_BASE_HORA = 0.90;
+
+  // Cambia SOLO este valor para Unión - Máquina 1.
+  // Ejemplos: 0.95 = 95%, 0.90 = 90%, 0.85 = 85%.
+  const OEE_ESPERADO_UNION1_HORA = 0.95;
+
+  const __isCrimpadoForOee = (machineU === "APLICACION" || machineU === "UNION");
+  const oeeEsperadoBackend = Number(result?.kpis?.oee_esperado);
+  const OEE_ESPERADO_HORA = (__isCrimpadoForOee && Number.isFinite(oeeEsperadoBackend) && oeeEsperadoBackend > 0)
+    ? oeeEsperadoBackend
+    : (machineU === "THB"
+      ? OEE_ESPERADO_THB_HORA
+      : ((machineU === "UNION" && machineId === "1") ? OEE_ESPERADO_UNION1_HORA : OEE_ESPERADO_CRIMPADO_BASE_HORA));
+
+  // Factor adicional de meta SOLO para Unión - Máquina 1.
+  // Ejemplos: 1.15 = sube 15%, 1.10 = sube 10%, 1.00 = sin ajuste.
+  const FACTOR_META_UNION1_HORA = 1.25;
+  const metaFactorBackend = Number(result?.kpis?.meta_factor);
+  const META_FACTOR_HORA = Number.isFinite(metaFactorBackend) && metaFactorBackend > 0
+    ? metaFactorBackend
+    : ((machineU === "UNION" && machineId === "1") ? FACTOR_META_UNION1_HORA : 1.0);
 
   function _normHourKey(s){
     const m = String(s || "").match(/(\d{1,2})/);
@@ -2599,14 +2627,16 @@ function renderProdHour(result){
     const tcnpSec = Number(b.tcnpSec) || 0;
     const tnomSec = Number(b.tcnpTotalSec) || 0;
 
-    const tcnpHtml = (machineU === "THB" && tcnpSec > 0)
-      ? `<div class="ph-tcnp">T. Ciclo: ${escHtml(tcnpSec.toFixed(4))} s/pz</div>`
+    const isCrimpadoMachine = (machineU === "APLICACION" || machineU === "UNION");
+
+    const tcnpHtml = (tcnpSec > 0 && (machineU === "THB" || isCrimpadoMachine))
+      ? `<div class="ph-tcnp">${machineU === "THB" ? "T. Ciclo" : "T. Estándar"}: ${escHtml(tcnpSec.toFixed(4))} ${machineU === "THB" ? "s/pz" : "s/terminal"}</div>`
       : ``;
 
     const vnUph = (tcnpSec > 0) ? (3600 / tcnpSec) : 0;
     const vnTxt = escHtml(fmtIntEs(Math.round(vnUph)));
 
-    const vnHtml = (machineU === "THB" && tcnpSec > 0)
+    const vnHtml = (tcnpSec > 0 && (machineU === "THB" || isCrimpadoMachine))
       ? `<div class="ph-tcnp">Vel Nom: ${vnTxt} unid/h</div>`
       : ``;
 
@@ -2618,11 +2648,34 @@ function renderProdHour(result){
     const oeeHoraPct = Number(oeeByHour.get(bucketHourKey) ?? 0) || 0;
 
     const vnHoraUph = (tcnpSec > 0) ? (3600 / tcnpSec) : 0;
-    const tpHoraH = (Number(b.capacitySec) || 0) / 3600;
-    const planHoraUnits = OEE_ESPERADO_HORA * vnHoraUph * tpHoraH;
 
-    const cumplimientoHoraPct = (planHoraUnits > 0)
-      ? ((circuits / planHoraUnits) * 100)
+    // Tiempo base para meta por hora:
+    // - Unión M1 usa TW, para que TX reduzca la meta.
+    // - Las demás máquinas conservan capacitySec/TP como venían.
+    const tpHoraH = (Number(b.capacitySec) || 0) / 3600;
+    const twHoraH = Number(b.twH);
+    const planBaseTimeH = (machineU === "UNION" && machineId === "1" && Number.isFinite(twHoraH) && twHoraH >= 0)
+      ? twHoraH
+      : tpHoraH;
+
+    const bucketMetaFactor = Number(b.metaFactor || b.meta_factor || META_FACTOR_HORA) || META_FACTOR_HORA;
+    const planHoraUnits = OEE_ESPERADO_HORA * vnHoraUph * planBaseTimeH * bucketMetaFactor;
+
+    const backendPlanUnits = Number(
+      b.plan ??
+      b.planned ??
+      b.planificado ??
+      b.produccion_plan ??
+      b.produccionPlaneada ??
+      0
+    ) || 0;
+
+    const planForPctUnits = (isCrimpadoMachine && backendPlanUnits > 0)
+      ? backendPlanUnits
+      : planHoraUnits;
+
+    const cumplimientoHoraPct = (planForPctUnits > 0)
+      ? ((circuits / planForPctUnits) * 100)
       : 0;
 
     const hasMeal = (Number(mealSec) || 0) > 0;
@@ -2665,16 +2718,7 @@ function renderProdHour(result){
     }
 
     if(machineU === "APLICACION" || machineU === "UNION"){
-      planExcelUnits = Math.round(
-        Number(
-          b.plan ??
-          b.planned ??
-          b.planificado ??
-          b.produccion_plan ??
-          b.produccionPlaneada ??
-          0
-        ) || 0
-      );
+      planExcelUnits = Math.round(backendPlanUnits || planHoraUnits || 0);
     }
 
     const showRealVsPlan = (
@@ -2704,7 +2748,7 @@ function renderProdHour(result){
       ${metersHtml}
       ${hourlyMiniKpisHtml}
 
-      ${(machineU === "THB") ? `
+      ${((machineU === "THB" || isCrimpadoMachine) && (tcnpHtml || vnHtml || tnomHtml)) ? `
         <div class="ph-nom-box">
           ${tcnpHtml}
           ${vnHtml}

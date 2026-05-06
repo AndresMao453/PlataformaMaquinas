@@ -118,6 +118,56 @@ def _norm_machine_id(machine_id: Any) -> str:
 
 
 # ============================================================
+# OEE esperado crimpado
+# ============================================================
+# Base para Aplicación M1/M2 y Unión M2.
+OEE_ESPERADO_CRIMPADO_BASE = 0.90
+
+# Cambia SOLO este valor para Unión - Máquina 1.
+# Ejemplos: 0.95 = 95%, 0.90 = 90%, 0.85 = 85%.
+OEE_ESPERADO_UNION1 = 0.95
+
+
+def _crimpado_oee_esperado(machine: str = "", machine_id: str = "") -> float:
+    """Devuelve el OEE esperado. Solo Unión M1 tiene valor independiente."""
+    m = str(machine or "").strip().upper()
+    mid = str(machine_id or "").strip()
+    if m == "UNION" and mid == "1":
+        return float(OEE_ESPERADO_UNION1)
+    return float(OEE_ESPERADO_CRIMPADO_BASE)
+
+
+# ============================================================
+# Factor adicional de meta crimpado
+# ============================================================
+# Cambia SOLO este valor si quieres subir/bajar la meta de Unión - Máquina 1.
+# Ejemplos: 1.15 = sube 15%, 1.10 = sube 10%, 1.00 = sin ajuste.
+FACTOR_META_UNION1 = 1.25
+
+
+def _crimpado_meta_factor(machine: str = "", machine_id: str = "") -> float:
+    """Devuelve el factor de meta. Solo Unión M1 tiene ajuste independiente."""
+    m = str(machine or "").strip().upper()
+    mid = str(machine_id or "").strip()
+    if m == "UNION" and mid == "1":
+        return float(FACTOR_META_UNION1)
+    return 1.0
+
+
+def _crimpado_meta_plan_time_h(tp_h: float, tw_h: float, machine: str = "", machine_id: str = "") -> float:
+    """
+    Tiempo base para calcular la producción planeada.
+
+    Regla solicitada:
+    - Unión M1 usa TW, para que las paradas TX reduzcan la meta de la hora.
+    - Las demás máquinas conservan TP, como venían trabajando.
+    """
+    if _crimpado_is_union1(machine, machine_id):
+        return max(0.0, float(tw_h or 0.0))
+    return max(0.0, float(tp_h or 0.0))
+
+
+# ============================================================
 # Google Sheets XLSX (fallback / token)
 # ============================================================
 def _download_gsheet_xlsx_bytes(sheet_id: str) -> bytes:
@@ -920,9 +970,13 @@ def run_aplicacion_analysis(
 
             dead = min(max(dead, 0.0), 3600.0)
             meal = min(max(meal, 0.0), dead)
-
-            prod = max(0.0, 3600.0 - dead)
             other_dead = max(0.0, dead - meal)
+
+            # Unión 1: garantizar desayuno/almuerzo no pagos aunque no estén
+            # registrados explícitamente como parada 105.
+            dead, meal, other_dead, prod = _crimpado_apply_fixed_non_paid_to_parts(
+                dead, meal, other_dead, h, machine=machine, machine_id=machine_id
+            )
 
             slot = (d, h)
             other_items = _to_items(other_secs_by_slot.get(slot, {}), other_desc_by_slot.get(slot, {}), top_n=10)
@@ -1272,7 +1326,7 @@ def run_aplicacion_analysis(
     # El Excel exportado calcula PP, PB, TP, TX, TW, TC, VN, TCN, TCE,
     # ID, IEO, IC, OEE y PA. Aquí se replica el mismo modelo para que
     # el dashboard muestre los mismos indicadores sin esperar la descarga.
-    OEE_ESPERADO = 0.70  # mismo valor usado en el Excel: celda G2 del modelo
+    OEE_ESPERADO = _crimpado_oee_esperado(machine, machine_id)
 
     def _safe_div_num(a: float, b: float, default: float = 0.0) -> float:
         try:
@@ -1311,6 +1365,19 @@ def run_aplicacion_analysis(
         tc_lookup, tc_default_h_uni = _crimpado_build_tc_lookup(resumen_tiempos_df)
     except Exception:
         tc_lookup, tc_default_h_uni = {}, None
+
+    # Unión 1 no siempre tiene RESUMEN_TIEMPOS. En ese caso se calcula un
+    # tiempo estándar nominal histórico único para la terminal de esa máquina:
+    # TC_nom_UNION1 = SUM(TW_h) / SUM(PN_h).
+    tc_nominal_history_h_uni = _crimpado_estimate_tc_nominal_from_history(
+        res_df=res_df,
+        par_df=par_df,
+        machine=machine,
+        machine_id=machine_id,
+        operator=operator,
+    )
+    if (tc_default_h_uni is None or float(tc_default_h_uni or 0.0) <= 0.0) and tc_nominal_history_h_uni:
+        tc_default_h_uni = float(tc_nominal_history_h_uni)
 
     def _crimpado_dashboard_rows_for_day(day_value: Any, buckets_day: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Arma filas equivalentes al Excel, pero usando el res_f/par_f ya filtrado."""
@@ -1361,6 +1428,9 @@ def run_aplicacion_analysis(
 
             meal_sec = max(0.0, min(3600.0, meal_sec))
             other_sec = max(0.0, min(3600.0, other_sec))
+            dead_sec, meal_sec, other_sec, _prod_sec = _crimpado_apply_fixed_non_paid_to_parts(
+                dead_sec, meal_sec, other_sec, hh, machine=machine, machine_id=machine_id
+            )
 
             # Igual al Excel: 105 reduce TP; las demás paradas son TX.
             tp_h = max(0.0, (3600.0 - meal_sec) / 3600.0)
@@ -1382,7 +1452,9 @@ def run_aplicacion_analysis(
 
             rx = 0
             pb = max(0, pn - rx)
-            pp = (OEE_ESPERADO * vn * tp_h) if vn > 0 and tp_h > 0 else 0.0
+            meta_factor = _crimpado_meta_factor(machine, machine_id)
+            meta_plan_time_h = _crimpado_meta_plan_time_h(tp_h, tw_h, machine=machine, machine_id=machine_id)
+            pp = (OEE_ESPERADO * vn * meta_plan_time_h * meta_factor) if vn > 0 and meta_plan_time_h > 0 else 0.0
             tcn = (float(pn) * tc_h_uni) if tc_h_uni > 0 else 0.0
             tce = (float(pb) * tc_h_uni) if tc_h_uni > 0 else 0.0
 
@@ -1414,6 +1486,8 @@ def run_aplicacion_analysis(
                 "ic": float(ic_ratio),
                 "oee": float(oee_ratio),
                 "pa": float(pa_ratio),
+                "meta_factor": float(meta_factor),
+                "meta_plan_time_h": float(meta_plan_time_h),
             })
 
         return rows_out
@@ -1515,10 +1589,13 @@ def run_aplicacion_analysis(
             b["paPct"] = float(r.get("pa", 0.0) or 0.0) * 100.0
 
             # Compatibilidad con renderProdHour(): usa tcnpSec para TC y capacitySec para PP/PA.
+            # En Unión M1, capacitySec queda basado en TW para que las paradas TX reduzcan la meta.
             b["tcnpSec"] = b["tcSecUni"]
-            b["capacitySec"] = float(r.get("tp_h", 0.0) or 0.0) * 3600.0
+            b["capacitySec"] = float(r.get("meta_plan_time_h", r.get("tp_h", 0.0)) or 0.0) * 3600.0
             b["tcnpTotalSec"] = float(r.get("tcn_h", 0.0) or 0.0) * 3600.0
             b["tceTotalSec"] = float(r.get("tce_h", 0.0) or 0.0) * 3600.0
+            b["oeeEsperado"] = float(OEE_ESPERADO)
+            b["metaFactor"] = float(r.get("meta_factor", _crimpado_meta_factor(machine, machine_id)) or 1.0)
             b["referencia"] = str(r.get("referencia", "") or "")
 
     def _crimpado_chart_from_rows(rows_in: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1662,6 +1739,11 @@ def run_aplicacion_analysis(
             "other_causes": other_causes,
             "crimpado_summary": crimpado_summary,
             "crimpado_rows": crimpado_rows,
+            "tc_nominal_history_h_uni": float(tc_nominal_history_h_uni or 0.0),
+            "tc_nominal_history_sec": float(tc_nominal_history_h_uni or 0.0) * 3600.0,
+            "oee_esperado": float(OEE_ESPERADO),
+            "oee_esperado_pct": float(OEE_ESPERADO) * 100.0,
+            "meta_factor": float(_crimpado_meta_factor(machine, machine_id)),
         },
         "terminal_usage": terminal_usage,
         "oee_chart": oee_chart,
@@ -1979,6 +2061,214 @@ def _crimpado_tc_from_resumen_for_hour(
     return tc_default_h_uni if tc_default_h_uni and tc_default_h_uni > 0 else None
 
 
+def _crimpado_is_union1(machine: str = "", machine_id: str = "") -> bool:
+    """Modelo nominal fijo solicitado únicamente para Unión - Máquina 1."""
+    return (str(machine or "").strip().upper() == "UNION") and (str(machine_id or "").strip() == "1")
+
+
+def _crimpado_fixed_non_paid_sec_for_hour(hour: Any, machine: str = "", machine_id: str = "") -> float:
+    """
+    Tiempo no pago fijo para Unión 1.
+    Se trata como comida/tiempo no pago, no como TX:
+      - 08:00-09:00 -> 15 min desayuno
+      - 13:00-14:00 -> 30 min almuerzo
+    """
+    if not _crimpado_is_union1(machine, machine_id):
+        return 0.0
+    try:
+        h = int(hour)
+    except Exception:
+        return 0.0
+    if h == 8:
+        return 15.0 * 60.0
+    if h == 13:
+        return 30.0 * 60.0
+    return 0.0
+
+
+def _crimpado_apply_fixed_non_paid_to_parts(
+    dead_sec: Any,
+    meal_sec: Any,
+    other_sec: Any,
+    hour: Any,
+    machine: str = "",
+    machine_id: str = "",
+) -> Tuple[float, float, float, float]:
+    """
+    Ajusta una hora para garantizar el desayuno/almuerzo no pago de Unión 1.
+    Retorna (dead_sec, meal_sec, other_sec, prod_sec).
+
+    La regla evita duplicar la parada 105: si ya hay 105 registrada, se toma
+    el mayor valor entre lo registrado y el fijo.
+    """
+    dead = max(0.0, min(3600.0, float(dead_sec or 0.0)))
+    meal = max(0.0, min(3600.0, float(meal_sec or 0.0)))
+    other = max(0.0, min(3600.0, float(other_sec or 0.0)))
+
+    if other <= 0 and dead > meal:
+        other = max(0.0, dead - meal)
+
+    fixed_meal = _crimpado_fixed_non_paid_sec_for_hour(hour, machine, machine_id)
+    if fixed_meal > 0:
+        meal = max(meal, fixed_meal)
+
+    dead = max(dead, meal + other)
+    dead = min(3600.0, dead)
+    if meal > dead:
+        meal = dead
+    other = max(0.0, min(3600.0 - meal, other))
+    if meal + other > dead:
+        other = max(0.0, dead - meal)
+
+    prod = max(0.0, 3600.0 - dead)
+    return float(dead), float(meal), float(other), float(prod)
+
+
+def _crimpado_paradas_with_downtime(par_df: pd.DataFrame) -> pd.DataFrame:
+    """Agrega/normaliza downtime_s en una hoja de paradas de crimpado."""
+    if par_df is None or par_df.empty:
+        return pd.DataFrame()
+
+    df = par_df.copy()
+    if "downtime_s" in df.columns:
+        df["downtime_s"] = pd.to_numeric(df["downtime_s"], errors="coerce").fillna(0.0).astype(float)
+    else:
+        dur_raw = df.get("Duracion", pd.Series([None] * len(df), index=df.index, dtype="object"))
+        dt = pd.to_timedelta(dur_raw, errors="coerce")
+        secs = dt.dt.total_seconds()
+
+        if secs.isna().all() and ("Hora de Inicio" in df.columns) and ("Hora de Fin" in df.columns):
+            ini = df["Hora de Inicio"].apply(_timeobj_to_seconds)
+            fin = df["Hora de Fin"].apply(_timeobj_to_seconds)
+            ini = pd.to_numeric(ini, errors="coerce")
+            fin = pd.to_numeric(fin, errors="coerce")
+            diff = fin - ini
+            diff = np.where(diff < 0, diff + 86400, diff)
+            secs = pd.Series(diff, index=df.index, dtype="float64")
+
+        df["downtime_s"] = pd.to_numeric(secs, errors="coerce").fillna(0.0).astype(float)
+
+    df["CausaCode"] = pd.to_numeric(df.get("Causa", np.nan), errors="coerce")
+    return df
+
+
+def _crimpado_estimate_tc_nominal_from_history(
+    res_df: pd.DataFrame,
+    par_df: pd.DataFrame,
+    machine: str = "APLICACION",
+    machine_id: str = "",
+    operator: str = "",
+) -> Optional[float]:
+    """
+    Calcula el tiempo estándar nominal para Unión 1 cuando no existe RESUMEN_TIEMPOS.
+
+    Modelo solicitado para una sola terminal:
+      TC_nom_UNION1 = SUM(TW_h) / SUM(PN_h)
+      TW_h = 3600 - TNP_h - TX_h
+
+    Retorna horas/unidad. Internamente calcula segundos/terminal y divide entre 3600.
+    """
+    if not _crimpado_is_union1(machine, machine_id):
+        return None
+    if res_df is None or res_df.empty or "Pulsos" not in res_df.columns:
+        return None
+    if "Fecha" not in res_df.columns or "Hora" not in res_df.columns:
+        return None
+
+    op = str(operator or "").strip()
+    res = res_df.copy()
+    if op and op.lower() != "general" and "Nombre" in res.columns:
+        res = res[res["Nombre"].astype(str).str.strip().eq(op)].copy()
+
+    if res.empty:
+        return None
+
+    tmp = res.dropna(subset=["Fecha", "Hora"]).copy()
+    tmp["Fecha_d"] = pd.to_datetime(tmp["Fecha"], errors="coerce", dayfirst=True).dt.date
+    tmp["Hora_h"] = tmp["Hora"].apply(lambda t: int(t.hour) if hasattr(t, "hour") else np.nan)
+    tmp["Pulsos"] = pd.to_numeric(tmp["Pulsos"], errors="coerce").fillna(0).astype(float)
+    tmp = tmp.dropna(subset=["Fecha_d", "Hora_h"]).copy()
+    tmp["Hora_h"] = tmp["Hora_h"].astype(int)
+    tmp = tmp[tmp["Pulsos"] > 0].copy()
+    if tmp.empty:
+        return None
+
+    pulses_by_slot = tmp.groupby(["Fecha_d", "Hora_h"], dropna=False)["Pulsos"].sum().to_dict()
+
+    downtime_by_slot: Dict[Tuple[Any, int], float] = {}
+    meal_by_slot: Dict[Tuple[Any, int], float] = {}
+
+    ptmp = _crimpado_paradas_with_downtime(par_df)
+    if ptmp is not None and not ptmp.empty and "Fecha" in ptmp.columns and "Hora de Inicio" in ptmp.columns:
+        if op and op.lower() != "general" and "Nombre" in ptmp.columns:
+            ptmp = ptmp[ptmp["Nombre"].astype(str).str.strip().eq(op)].copy()
+
+        if "Tipo de Intervalo" in ptmp.columns:
+            ptmp = ptmp[~ptmp["Tipo de Intervalo"].astype(str).str.contains("marcador", case=False, na=False)].copy()
+
+        ptmp["Fecha0"] = pd.to_datetime(ptmp["Fecha"], errors="coerce", dayfirst=True).dt.normalize()
+        sec0 = ptmp["Hora de Inicio"].apply(_timeobj_to_seconds)
+        sec0 = pd.to_numeric(sec0, errors="coerce").fillna(0).astype(int)
+        start_dt = ptmp["Fecha0"] + pd.to_timedelta(sec0, unit="s")
+        dur_s = pd.to_numeric(ptmp.get("downtime_s", 0.0), errors="coerce").fillna(0.0).astype(float)
+        end_dt = start_dt + pd.to_timedelta(dur_s, unit="s")
+
+        for s0, e0, cc in zip(start_dt.tolist(), end_dt.tolist(), ptmp.get("CausaCode", pd.Series([np.nan] * len(ptmp))).tolist()):
+            if pd.isna(s0) or pd.isna(e0) or e0 <= s0:
+                continue
+            try:
+                code_int = int(cc) if not pd.isna(cc) else None
+            except Exception:
+                code_int = None
+
+            cur = s0
+            while cur < e0:
+                hour_start = cur.replace(minute=0, second=0, microsecond=0)
+                next_hour = hour_start + pd.Timedelta(hours=1)
+                overlap_end = e0 if e0 < next_hour else next_hour
+                secs = float((overlap_end - cur).total_seconds())
+                slot = (hour_start.date(), int(hour_start.hour))
+                downtime_by_slot[slot] = downtime_by_slot.get(slot, 0.0) + secs
+                if code_int == 105:
+                    meal_by_slot[slot] = meal_by_slot.get(slot, 0.0) + secs
+                cur = overlap_end
+
+    total_tw_s = 0.0
+    total_pn = 0.0
+
+    for (d, h), pn in pulses_by_slot.items():
+        pn = float(pn or 0.0)
+        if pn <= 0:
+            continue
+
+        dead = float(downtime_by_slot.get((d, h), 0.0) or 0.0)
+        meal = float(meal_by_slot.get((d, h), 0.0) or 0.0)
+        other = max(0.0, dead - meal)
+        _dead, _meal, other, prod = _crimpado_apply_fixed_non_paid_to_parts(
+            dead, meal, other, h, machine=machine, machine_id=machine_id
+        )
+        tw_s = max(0.0, prod)
+
+        # Filtro suave para evitar horas corruptas o extremadamente pequeñas.
+        if tw_s <= 0 or pn < 5:
+            continue
+
+        tc_s = tw_s / pn
+        if not (1.0 <= tc_s <= 180.0):
+            continue
+
+        total_tw_s += tw_s
+        total_pn += pn
+
+    if total_tw_s <= 0 or total_pn <= 0:
+        return None
+
+    tc_sec = total_tw_s / total_pn
+    if tc_sec <= 0 or not np.isfinite(tc_sec):
+        return None
+    return float(tc_sec) / 3600.0
+
+
 def _crimpado_hour_int_from_bucket(b: Dict[str, Any]) -> Optional[int]:
     raw = str(b.get("hourLabel") or b.get("hour") or "").strip()
     m = re.search(r"(\d{1,2})", raw)
@@ -2056,6 +2346,9 @@ def _crimpado_rows_for_day(
 
         meal_sec = max(0.0, min(3600.0, meal_sec))
         other_sec = max(0.0, min(3600.0, other_sec))
+        dead_sec, meal_sec, other_sec, _prod_sec = _crimpado_apply_fixed_non_paid_to_parts(
+            dead_sec, meal_sec, other_sec, hh, machine=machine, machine_id=machine_id
+        )
 
         # En crimpado la parada 105 no se mete a TX; reduce el tiempo pagado.
         tp_h = max(0.0, (3600.0 - meal_sec) / 3600.0)
@@ -2076,6 +2369,9 @@ def _crimpado_rows_for_day(
         if tc_h_uni in (None, 0) and pn > 0 and tw_h > 0:
             tc_h_uni = tw_h / float(pn)
 
+        meta_factor = _crimpado_meta_factor(machine, machine_id)
+        meta_plan_time_h = _crimpado_meta_plan_time_h(tp_h, tw_h, machine=machine, machine_id=machine_id)
+
         rows.append({
             "fecha": day0.to_pydatetime(),
             "referencia": referencia,
@@ -2088,7 +2384,10 @@ def _crimpado_rows_for_day(
             "rx": 0,
             "tp_h": round(float(tp_h), 3),
             "tx_h": round(float(tx_h), 3),
+            "tw_h": round(float(tw_h), 3),
             "tc_h_uni": tc_h_uni,
+            "meta_factor": meta_factor,
+            "meta_plan_time_h": round(float(meta_plan_time_h), 3),
         })
 
     return rows
@@ -2125,6 +2424,18 @@ def get_crimpado_export_day_exports(
     # De aquí sale el TC exportado en la columna N del Excel OEE.
     resumen_tiempos_df = load_resumen_tiempos(path, machine=m, machine_id=mid)
     tc_lookup, tc_default_h_uni = _crimpado_build_tc_lookup(resumen_tiempos_df)
+
+    # Si no hay RESUMEN_TIEMPOS, Unión 1 usa un TC nominal histórico constante:
+    # TC_nom_UNION1 = SUM(TW_h) / SUM(PN_h).
+    tc_nominal_history_h_uni = _crimpado_estimate_tc_nominal_from_history(
+        res_df=res_df,
+        par_df=par_df,
+        machine=m,
+        machine_id=mid,
+        operator=op,
+    )
+    if (tc_default_h_uni is None or float(tc_default_h_uni or 0.0) <= 0.0) and tc_nominal_history_h_uni:
+        tc_default_h_uni = float(tc_nominal_history_h_uni)
 
     days = _app_days_for_period_export(res_df, par_df, period, period_value, operator=op)
     if not days:
@@ -2166,6 +2477,8 @@ def get_crimpado_export_day_exports(
         day_exports.append({
             "sheet_title": day_str,
             "rows": rows,
+            "oee_expected": _crimpado_oee_esperado(m, mid),
+            "meta_factor": _crimpado_meta_factor(m, mid),
         })
 
     return day_exports
