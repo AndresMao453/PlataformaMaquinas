@@ -1,6 +1,7 @@
 # analyses/aplicacion_excel.py
 from __future__ import annotations
 
+import copy
 import io
 import re
 import time
@@ -21,6 +22,101 @@ _GS_CACHE: Dict[str, Dict[str, Any]] = {}  # {sheet_id: {"ts": float, "bytes": b
 _GS_TTL_SEC = int(getattr(config, "GSHEET_TTL_S", 10) or 10)
 # ✅ cache de DataFrames por (sheet_id, gid) para NO volver a descargar/parsear en cada endpoint
 _GS_DF_CACHE: Dict[Tuple[str, int], Dict[str, Any]] = {}  # {(sheet_id,gid): {"ts": float, "df": pd.DataFrame}}
+
+# ============================================================
+# Cache de objetos YA NORMALIZADOS (clave para UNION M1)
+# ============================================================
+# La descarga CSV ya estaba cacheada, pero cada endpoint volvía a:
+#   1) buscar encabezados,
+#   2) convertir Fecha/Hora,
+#   3) convertir Pulsos/Duración,
+#   4) intentar leer RESUMEN_TIEMPOS por XLSX.
+# En hojas grandes (especialmente UNION M1) esa normalización repetida es lo
+# que hace lenta la carga. Estos caches guardan el resultado ya procesado sin
+# tocar la lógica de cálculo.
+_CACHE_MISS = object()
+_APP_DF_READY_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+_APP_RESULT_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+_APP_SCALAR_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+_APP_CACHE_MAX_ITEMS = int(getattr(config, "APP_CACHE_MAX_ITEMS", 80) or 80)
+_APP_ANALYSIS_TTL_S = int(getattr(config, "APP_ANALYSIS_TTL_S", 600) or 600)
+
+
+def _app_now() -> float:
+    return time.time()
+
+
+def _app_trim_cache(cache: Dict[Tuple[Any, ...], Dict[str, Any]], max_items: int = _APP_CACHE_MAX_ITEMS) -> None:
+    """Evita que la memoria crezca indefinidamente si se consultan muchos periodos."""
+    try:
+        if len(cache) <= int(max_items):
+            return
+        ordered = sorted(cache.items(), key=lambda kv: float(kv[1].get("ts", 0.0)))
+        for k, _v in ordered[: max(1, len(cache) - int(max_items))]:
+            cache.pop(k, None)
+    except Exception:
+        pass
+
+
+def _app_clone_cached(value: Any) -> Any:
+    """Devuelve una copia segura y liviana del valor cacheado."""
+    if isinstance(value, pd.DataFrame):
+        return value.copy(deep=False)
+    if isinstance(value, tuple):
+        out = []
+        for v in value:
+            if isinstance(v, pd.DataFrame):
+                out.append(v.copy(deep=False))
+            elif isinstance(v, dict):
+                out.append(dict(v))
+            elif isinstance(v, list):
+                out.append([dict(x) if isinstance(x, dict) else x for x in v])
+            else:
+                out.append(copy.deepcopy(v))
+        return tuple(out)
+    if isinstance(value, list):
+        return [dict(x) if isinstance(x, dict) else copy.deepcopy(x) for x in value]
+    if isinstance(value, dict):
+        return copy.deepcopy(value)
+    return value
+
+
+def _app_cache_get(cache: Dict[Tuple[Any, ...], Dict[str, Any]], key: Tuple[Any, ...], ttl_s: int) -> Any:
+    hit = cache.get(key)
+    if not hit:
+        return _CACHE_MISS
+    try:
+        if (_app_now() - float(hit.get("ts", 0.0))) > float(max(1, int(ttl_s))):
+            cache.pop(key, None)
+            return _CACHE_MISS
+    except Exception:
+        cache.pop(key, None)
+        return _CACHE_MISS
+    return _app_clone_cached(hit.get("value"))
+
+
+def _app_cache_set(cache: Dict[Tuple[Any, ...], Dict[str, Any]], key: Tuple[Any, ...], value: Any) -> Any:
+    cache[key] = {"ts": _app_now(), "value": value}
+    _app_trim_cache(cache)
+    return _app_clone_cached(value)
+
+
+def _app_path_sig(path: str) -> Tuple[Any, ...]:
+    """Firma de origen: Google Sheets usa token; Excel local usa ruta + mtime."""
+    src = str(path or "").strip()
+    if not src or src == GSHEET_APP_TOKEN:
+        return ("gsheet", GSHEET_APP_TOKEN)
+    try:
+        import os
+        ap = os.path.abspath(src)
+        return ("file", ap, round(float(os.path.getmtime(ap)), 3))
+    except Exception:
+        return ("file", src)
+
+
+def _app_gsheet_sig(sheet_id: str, gid: int, path: str) -> Tuple[Any, ...]:
+    return _app_path_sig(path) + (str(sheet_id or "").strip(), int(gid or 0))
+
 
 def _load_gsheet_tab_csv_cached(sheet_id: str, gid: int, ttl_s: int) -> pd.DataFrame:
     """Carga un tab de Google Sheets con cache TTL (por sheet_id + gid)."""
@@ -331,10 +427,19 @@ def load_resumen_pulsos(path: str, machine: str = "APLICACION", machine_id: str 
     - path vacío => lee por CSV usando GID según machine/machine_id
     - path == GSHEET_APP_TOKEN => lee XLSX export (sheet_id según machine/machine_id)
     - path Excel local => lee por nombres de hoja candidates
+
+    Optimización:
+    - guarda el DataFrame ya normalizado en memoria por (sheet_id, gid, máquina).
+      Así UNION M1 no vuelve a convertir Fecha/Hora/Pulsos en cada endpoint.
     """
     sheet_id, gid_res, _gid_par, ttl_s = _pick_gsheet_params(machine, machine_id)
     m = (machine or "APLICACION").strip().upper()
     mid = (machine_id or "").strip()
+
+    cache_key = ("resumen_pulsos_ready", m, mid) + _app_gsheet_sig(sheet_id, int(gid_res), path)
+    cached = _app_cache_get(_APP_DF_READY_CACHE, cache_key, ttl_s)
+    if cached is not _CACHE_MISS:
+        return cached
 
     if not path:
         gs = _load_gsheet_tab_csv_cached(sheet_id, int(gid_res), ttl_s=ttl_s)
@@ -383,7 +488,7 @@ def load_resumen_pulsos(path: str, machine: str = "APLICACION", machine_id: str 
     if "Aplicación" in df.columns:
         df["Aplicación"] = df["Aplicación"].astype(str)
 
-    return df
+    return _app_cache_set(_APP_DF_READY_CACHE, cache_key, df)
 
 
 def load_paradas(path: str, machine: str = "APLICACION", machine_id: str = "") -> Tuple[pd.DataFrame, Dict[int, str]]:
@@ -391,10 +496,18 @@ def load_paradas(path: str, machine: str = "APLICACION", machine_id: str = "") -
     - path vacío => lee por CSV usando GID según machine/machine_id
     - path == GSHEET_APP_TOKEN => lee XLSX export (sheet_id según machine/machine_id)
     - path Excel local => lee por nombres de hoja candidates
+
+    Optimización:
+    - guarda la hoja de paradas ya normalizada por (sheet_id, gid, máquina).
     """
     sheet_id, _gid_res, gid_par, ttl_s = _pick_gsheet_params(machine, machine_id)
     m = (machine or "APLICACION").strip().upper()
     mid = (machine_id or "").strip()
+
+    cache_key = ("paradas_ready", m, mid) + _app_gsheet_sig(sheet_id, int(gid_par), path)
+    cached = _app_cache_get(_APP_DF_READY_CACHE, cache_key, ttl_s)
+    if cached is not _CACHE_MISS:
+        return cached
 
     if not path:
         gs = _load_gsheet_tab_csv_cached(sheet_id, int(gid_par), ttl_s=ttl_s)
@@ -430,7 +543,7 @@ def load_paradas(path: str, machine: str = "APLICACION", machine_id: str = "") -
     # --- extraer matriz de códigos (si existe) ---
     code_col = None
     desc_col = None
-    first_row = df.iloc[0].astype(str).str.strip() if len(df) else pd.Series([], dtype=str)
+    _first_row = df.iloc[0].astype(str).str.strip() if len(df) else pd.Series([], dtype=str)
 
     for c in df.columns:
         lc = str(c).strip().lower()
@@ -447,7 +560,7 @@ def load_paradas(path: str, machine: str = "APLICACION", machine_id: str = "") -
         for _, r in tmp.iterrows():
             reasons[int(r[code_col])] = str(r[desc_col])
 
-    return df, reasons
+    return _app_cache_set(_APP_DF_READY_CACHE, cache_key, (df, reasons))
 
 
 # ============================================================
@@ -487,6 +600,18 @@ def get_period_options_aplicacion(
     machine: str = "APLICACION",
     machine_id: str = "",
 ) -> List[Dict[str, str]]:
+    sheet_id, gid_res, gid_par, ttl_s = _pick_gsheet_params(machine, machine_id)
+    cache_key = (
+        "period_options",
+        str(period or "").strip().lower(),
+        str(machine or "").strip().upper(),
+        str(machine_id or "").strip(),
+    ) + _app_gsheet_sig(sheet_id, int(gid_res), path) + ("par", int(gid_par))
+
+    cached = _app_cache_get(_APP_RESULT_CACHE, cache_key, ttl_s)
+    if cached is not _CACHE_MISS:
+        return cached
+
     res_df = load_resumen_pulsos(path, machine=machine, machine_id=machine_id)
     par_df, _ = load_paradas(path, machine=machine, machine_id=machine_id)
 
@@ -494,23 +619,27 @@ def get_period_options_aplicacion(
 
     # ✅ NO usar "if not dates" (puede fallar según tipo)
     if dates is None or len(dates) == 0:
-        return []
+        return _app_cache_set(_APP_RESULT_CACHE, cache_key, [])
 
     dates = [pd.Timestamp(d).date() for d in dates]
 
-    if period == "day":
+    p = str(period or "").strip().lower()
+    if p == "day":
         dates_sorted = sorted(dates, reverse=True)
-        return [{"value": d.isoformat(), "label": d.strftime("%d/%m/%Y")} for d in dates_sorted]
+        out = [{"value": d.isoformat(), "label": d.strftime("%d/%m/%Y")} for d in dates_sorted]
+        return _app_cache_set(_APP_RESULT_CACHE, cache_key, out)
 
-    if period == "month":
+    if p == "month":
         months = sorted(set((d.year, d.month) for d in dates), reverse=True)
-        return [{"value": f"{y}-{m:02d}", "label": f"{y}-{m:02d}"} for (y, m) in months]
+        out = [{"value": f"{y}-{m:02d}", "label": f"{y}-{m:02d}"} for (y, m) in months]
+        return _app_cache_set(_APP_RESULT_CACHE, cache_key, out)
 
-    if period == "week":
+    if p == "week":
         weeks = sorted(set((d.isocalendar()[0], d.isocalendar()[1]) for d in dates), reverse=True)
-        return [{"value": f"{y}-W{w:02d}", "label": f"{y} - Semana {w:02d}"} for (y, w) in weeks]
+        out = [{"value": f"{y}-W{w:02d}", "label": f"{y} - Semana {w:02d}"} for (y, w) in weeks]
+        return _app_cache_set(_APP_RESULT_CACHE, cache_key, out)
 
-    return []
+    return _app_cache_set(_APP_RESULT_CACHE, cache_key, [])
 
 
 
@@ -591,6 +720,20 @@ def get_app_filter_options_aplicacion(
     subcat: str = "",
     machine_id: str = "",
 ) -> Dict[str, Any]:
+    sheet_id, gid_res, _gid_par, ttl_s = _pick_gsheet_params(machine, machine_id)
+    cache_key = (
+        "filter_options",
+        str(period or "").strip().lower(),
+        str(period_value or "").strip(),
+        str(machine or "").strip().upper(),
+        str(subcat or "").strip().lower(),
+        str(machine_id or "").strip(),
+    ) + _app_gsheet_sig(sheet_id, int(gid_res), path)
+
+    cached = _app_cache_get(_APP_RESULT_CACHE, cache_key, ttl_s)
+    if cached is not _CACHE_MISS:
+        return cached
+
     res_df = load_resumen_pulsos(path, machine=machine, machine_id=machine_id)
     res_f = _filter_period(res_df, period, period_value, "Fecha")
 
@@ -607,7 +750,8 @@ def get_app_filter_options_aplicacion(
             min_time = _fmt_hhmm(float(secs.min()))
             max_time = _fmt_hhmm(float(secs.max()))
 
-    return {"operators": operators, "min_time": min_time, "max_time": max_time}
+    out = {"operators": operators, "min_time": min_time, "max_time": max_time}
+    return _app_cache_set(_APP_RESULT_CACHE, cache_key, out)
 
 
 # ============================================================
@@ -698,6 +842,29 @@ def run_aplicacion_analysis(
     time_end: str = "",
     machine_id: str = "",
 ) -> Dict[str, Any]:
+
+    # Cache corto del resultado final. No cambia el cálculo: solo evita repetirlo
+    # cuando el frontend dispara la misma consulta varias veces seguidas.
+    try:
+        _sid, _gid_res, _gid_par, _ttl_s = _pick_gsheet_params(machine, machine_id)
+        _analysis_cache_key = (
+            "run_aplicacion_analysis",
+            str(period or "").strip().lower(),
+            str(period_value or "").strip(),
+            str(machine or "").strip().upper(),
+            str(subcat or "").strip().lower(),
+            str(operator or "").strip(),
+            str(time_start or "").strip(),
+            str(time_end or "").strip(),
+            str(machine_id or "").strip(),
+        ) + _app_gsheet_sig(_sid, int(_gid_res), path) + ("par", int(_gid_par))
+        _analysis_cache_ttl = min(max(5, int(_ttl_s or _APP_ANALYSIS_TTL_S)), _APP_ANALYSIS_TTL_S)
+        _cached_analysis = _app_cache_get(_APP_RESULT_CACHE, _analysis_cache_key, _analysis_cache_ttl)
+        if _cached_analysis is not _CACHE_MISS:
+            return _cached_analysis
+    except Exception:
+        _analysis_cache_key = None
+        _analysis_cache_ttl = _APP_ANALYSIS_TTL_S
 
     def _timeobj_to_seconds_local(t: Any) -> float:
         if pd.isna(t) or t is None:
@@ -1722,7 +1889,7 @@ def run_aplicacion_analysis(
         "Crimpados Manual": f"{_fmt_int_es(manual)} ({_fmt_pct_es(pct_manual)})",
     }
 
-    return {
+    result_payload = {
         "machine": machine,
         "subcat": subcat or "",
         "operator": operator,
@@ -1749,6 +1916,10 @@ def run_aplicacion_analysis(
         "oee_chart": oee_chart,
         "machine_id": _norm_machine_id(machine_id),
     }
+
+    if _analysis_cache_key is not None:
+        return _app_cache_set(_APP_RESULT_CACHE, _analysis_cache_key, result_payload)
+    return result_payload
 
 
 # ============================================================
@@ -1914,6 +2085,43 @@ def _crimpado_terminal_key(x: Any) -> str:
     return s.strip().upper()
 
 
+
+def _pick_resumen_tiempos_gid(machine: str = "APLICACION", machine_id: str = "") -> int:
+    """
+    GID opcional para leer RESUMEN_TIEMPOS por CSV, sin exportar todo el XLSX.
+    Si no existe en config.py devuelve 0 y se usa el comportamiento anterior.
+
+    Nombres soportados en config.py:
+      GSHEET_GID_RESUMEN_TIEMPOS
+      GSHEET_GID_RESUMEN_TIEMPOS2
+      GSHEET_GID_RESUMEN_TIEMPOS3
+      GSHEET_GID_RESUMEN_TIEMPOS4
+    """
+    m = str(machine or "").strip().upper()
+    mid = str(machine_id or "").strip()
+
+    suffix = ""
+    if m == "APLICACION" and mid == "2":
+        suffix = "2"
+    elif m == "UNION" and mid == "1":
+        suffix = "3"
+    elif m == "UNION" and mid == "2":
+        suffix = "4"
+
+    names = []
+    if suffix:
+        names.append(f"GSHEET_GID_RESUMEN_TIEMPOS{suffix}")
+    names.append("GSHEET_GID_RESUMEN_TIEMPOS")
+
+    for name in names:
+        try:
+            v = int(getattr(config, name, 0) or 0)
+            if v > 0:
+                return v
+        except Exception:
+            pass
+    return 0
+
 def load_resumen_tiempos(
     path: str,
     machine: str = "APLICACION",
@@ -1930,10 +2138,19 @@ def load_resumen_tiempos(
     - Para Google Sheets con GSHEET_APP_TOKEN se lee por export XLSX, porque esta
       hoja nueva no necesita un GID adicional en config.py.
     - Si la hoja no existe, retorna DataFrame vacío y el export conserva fallback.
+
+    Optimización:
+    - cachea también el caso "hoja no existe". En UNION M1 esto evita intentar
+      descargar/abrir el XLSX completo en cada análisis.
     """
-    sheet_id, _gid_res, _gid_par, _ttl_s = _pick_gsheet_params(machine, machine_id)
+    sheet_id, _gid_res, _gid_par, ttl_s = _pick_gsheet_params(machine, machine_id)
     m = (machine or "APLICACION").strip().upper()
     mid = (machine_id or "").strip()
+
+    cache_key = ("resumen_tiempos_ready", m, mid) + _app_path_sig(path) + (str(sheet_id or "").strip(),)
+    cached = _app_cache_get(_APP_DF_READY_CACHE, cache_key, ttl_s)
+    if cached is not _CACHE_MISS:
+        return cached
 
     prefix = f"{m}{mid}" if mid else m
     sheet_candidates = [
@@ -1946,13 +2163,25 @@ def load_resumen_tiempos(
     ]
 
     try:
-        if not path:
-            raw = _read_sheet_try(GSHEET_APP_TOKEN, sheet_candidates, header=None, sheet_id=sheet_id)
+        # ✅ OPTIMIZACIÓN CLAVE PARA RENDER / GOOGLE SHEETS:
+        # Exportar todo el libro como XLSX solo para buscar RESUMEN_TIEMPOS puede
+        # tardar mucho, especialmente en UNION M1. Si se configura el GID de esa
+        # pestaña, se lee por CSV. Si UNION M1 no tiene ese GID, se usa el
+        # fallback histórico ya existente y se evita descargar el XLSX completo.
+        resumen_gid = _pick_resumen_tiempos_gid(machine, machine_id)
+
+        if (not path) or path == GSHEET_APP_TOKEN:
+            if resumen_gid > 0:
+                gs = _load_gsheet_tab_csv_cached(sheet_id, int(resumen_gid), ttl_s=ttl_s)
+                raw = pd.concat([pd.DataFrame([gs.columns.tolist()]), gs.reset_index(drop=True)], ignore_index=True)
+            elif _crimpado_is_union1(machine, machine_id):
+                return _app_cache_set(_APP_DF_READY_CACHE, cache_key, pd.DataFrame())
+            else:
+                raw = _read_sheet_try(GSHEET_APP_TOKEN, sheet_candidates, header=None, sheet_id=sheet_id)
         else:
-            token_sheet_id = sheet_id if path == GSHEET_APP_TOKEN else ""
-            raw = _read_sheet_try(path, sheet_candidates, header=None, sheet_id=token_sheet_id)
+            raw = _read_sheet_try(path, sheet_candidates, header=None, sheet_id="")
     except Exception:
-        return pd.DataFrame()
+        return _app_cache_set(_APP_DF_READY_CACHE, cache_key, pd.DataFrame())
 
     try:
         hi = _find_header_row(raw, {"Terminal"}, max_scan=25)
@@ -1964,13 +2193,13 @@ def load_resumen_tiempos(
         # Quitar filas de notas/metodología que vienen debajo de la tabla.
         terminal_col = _crimpado_find_col(df, ["terminal"])
         if not terminal_col:
-            return pd.DataFrame()
+            return _app_cache_set(_APP_DF_READY_CACHE, cache_key, pd.DataFrame())
 
         df = df[df[terminal_col].notna()].copy()
         df = df[~df[terminal_col].astype(str).str.strip().str.lower().isin(["", "nan", "none"])].copy()
-        return df.reset_index(drop=True)
+        return _app_cache_set(_APP_DF_READY_CACHE, cache_key, df.reset_index(drop=True))
     except Exception:
-        return pd.DataFrame()
+        return _app_cache_set(_APP_DF_READY_CACHE, cache_key, pd.DataFrame())
 
 
 def _crimpado_build_tc_lookup(
@@ -2176,6 +2405,21 @@ def _crimpado_estimate_tc_nominal_from_history(
         return None
 
     op = str(operator or "").strip()
+
+    # UNION M1 calcula este TC con todo el historial; cachearlo evita repetir
+    # el barrido completo en cada análisis del mismo periodo.
+    cache_key = (
+        "tc_nominal_history_union1",
+        str(machine or "").strip().upper(),
+        str(machine_id or "").strip(),
+        op.lower(),
+        int(len(res_df)),
+        int(len(par_df)) if isinstance(par_df, pd.DataFrame) else 0,
+    )
+    cached = _app_cache_get(_APP_SCALAR_CACHE, cache_key, _APP_ANALYSIS_TTL_S)
+    if cached is not _CACHE_MISS:
+        return cached
+
     res = res_df.copy()
     if op and op.lower() != "general" and "Nombre" in res.columns:
         res = res[res["Nombre"].astype(str).str.strip().eq(op)].copy()
@@ -2261,12 +2505,12 @@ def _crimpado_estimate_tc_nominal_from_history(
         total_pn += pn
 
     if total_tw_s <= 0 or total_pn <= 0:
-        return None
+        return _app_cache_set(_APP_SCALAR_CACHE, cache_key, None)
 
     tc_sec = total_tw_s / total_pn
     if tc_sec <= 0 or not np.isfinite(tc_sec):
-        return None
-    return float(tc_sec) / 3600.0
+        return _app_cache_set(_APP_SCALAR_CACHE, cache_key, None)
+    return _app_cache_set(_APP_SCALAR_CACHE, cache_key, float(tc_sec) / 3600.0)
 
 
 def _crimpado_hour_int_from_bucket(b: Dict[str, Any]) -> Optional[int]:

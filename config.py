@@ -12,7 +12,9 @@ SECRET_KEY = "dev-secret-key-change-me"
 GSHEET_ID = "16WX3jqnbmYCglR2jH_1uHyWH-DKFuh80uEynKVghnyE"
 GSHEET_GID_APLICACION = 1418050425
 GSHEET_GID_UNION = 369782990
-GSHEET_TTL_S = 120
+GSHEET_TTL_S = 600
+APP_ANALYSIS_TTL_S = 600
+APP_CACHE_MAX_ITEMS = 120
 
 
 # =========================
@@ -28,6 +30,10 @@ GSHEET_GID_UNION2 = 41529279
 GSHEET_ID3 = "1xC4dIaUKo0IYyS232HuIPAzI0DeksnhOvsAX57rGzko"
 GSHEET_GID_APLICACION3 = 326889329
 GSHEET_GID_UNION3 = 1786033126
+
+# Opcional: si existe una pestaña RESUMEN_TIEMPOS en Unión M1, coloca aquí su GID.
+# Si se deja en 0, Unión M1 usa el TC histórico y evita descargar el XLSX completo.
+GSHEET_GID_RESUMEN_TIEMPOS3 = 0
 
 # UNION - Máquina 2
 GSHEET_ID4 = "1D_EWkHpk8VDnBle35Ptr_x6AU07TGNv_ocUimLo13K0"
