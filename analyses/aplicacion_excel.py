@@ -2202,13 +2202,44 @@ def load_resumen_tiempos(
         return _app_cache_set(_APP_DF_READY_CACHE, cache_key, pd.DataFrame())
 
 
+def _crimpado_aplicacion_key(x: Any) -> str:
+    """Llave robusta para cruzar el tipo de aplicación (Manual / Carrete)."""
+    if x is None or (isinstance(x, float) and np.isnan(x)) or pd.isna(x):
+        return ""
+    s = str(x).strip()
+    if not s or s.lower() in ("nan", "none", "null", "nat"):
+        return ""
+    trans = str.maketrans("áéíóúüñ", "aeiouun")
+    s = re.sub(r"\s+", " ", s.lower().translate(trans)).strip()
+    return s.upper()
+
+
+def _crimpado_lookup_key_terminal_app(terminal: Any, aplicacion: Any) -> str:
+    """Llave compuesta Terminal + Aplicación para RESUMEN_TIEMPOS."""
+    t = _crimpado_terminal_key(terminal)
+    a = _crimpado_aplicacion_key(aplicacion)
+    return f"TA::{t}::{a}" if t and a else ""
+
+
+def _crimpado_lookup_key_app_global(aplicacion: Any) -> str:
+    """Llave de fallback por tipo de aplicación."""
+    a = _crimpado_aplicacion_key(aplicacion)
+    return f"APP_GLOBAL::{a}" if a else ""
+
+
 def _crimpado_build_tc_lookup(
     resumen_tiempos_df: pd.DataFrame,
 ) -> Tuple[Dict[str, float], Optional[float]]:
     """
-    Convierte RESUMEN_TIEMPOS a:
-      - lookup[terminal] = tiempo de ciclo en horas decimales (h/uni)
-      - promedio_global = fallback en h/uni si existe la fila PROMEDIO GLOBAL
+    Convierte RESUMEN_TIEMPOS a una tabla de tiempos de ciclo en h/uni.
+
+    Prioridad que luego usa el dashboard:
+      1) Terminal + Aplicación, si la hoja trae columna Aplicación.
+      2) Solo Terminal, para mantener compatibilidad con las hojas anteriores.
+      3) Promedio global por Aplicación, si existe.
+      4) Promedio global general.
+
+    La columna usada como tiempo base sigue siendo Promedio (segundos).
     """
     if resumen_tiempos_df is None or resumen_tiempos_df.empty:
         return {}, None
@@ -2216,6 +2247,7 @@ def _crimpado_build_tc_lookup(
     df = resumen_tiempos_df.copy()
 
     terminal_col = _crimpado_find_col(df, ["terminal"])
+    aplicacion_col = _crimpado_find_col(df, ["aplicacion"])
     prom_sec_col = _crimpado_find_col(df, ["promedio", "seg"])
     if not terminal_col or not prom_sec_col:
         return {}, None
@@ -2225,7 +2257,9 @@ def _crimpado_build_tc_lookup(
 
     for _, r in df.iterrows():
         raw_terminal = r.get(terminal_col)
-        key = _crimpado_terminal_key(raw_terminal)
+        raw_app = r.get(aplicacion_col) if aplicacion_col else ""
+        key_terminal = _crimpado_terminal_key(raw_terminal)
+        key_app = _crimpado_aplicacion_key(raw_app)
         sec = _crimpado_num_float(r.get(prom_sec_col))
 
         if sec is None or sec <= 0:
@@ -2234,12 +2268,27 @@ def _crimpado_build_tc_lookup(
         tc_h = float(sec) / 3600.0
 
         raw_txt = str(raw_terminal or "").strip().upper()
-        if "PROMEDIO" in raw_txt and "GLOBAL" in raw_txt:
-            promedio_global = tc_h
+        is_global = ("PROMEDIO" in raw_txt and "GLOBAL" in raw_txt)
+
+        if is_global:
+            # Si existe Aplicación en la fila global, queda como fallback específico
+            # para Manual/Carrete. Si no, queda como global general.
+            if key_app:
+                lookup[_crimpado_lookup_key_app_global(raw_app)] = tc_h
+            else:
+                promedio_global = tc_h
             continue
 
-        if key:
-            lookup[key] = tc_h
+        if not key_terminal:
+            continue
+
+        # Compatibilidad anterior: lookup por terminal solamente.
+        lookup[key_terminal] = tc_h
+
+        # Nueva prioridad: Terminal + Aplicación. Esto permite que Aplicación M1
+        # use tiempos distintos para la misma terminal si aparece Manual/Carrete.
+        if key_app:
+            lookup[_crimpado_lookup_key_terminal_app(raw_terminal, raw_app)] = tc_h
 
     return lookup, promedio_global
 
@@ -2255,8 +2304,11 @@ def _crimpado_tc_from_resumen_for_hour(
     Si en una misma hora hay varias terminales, calcula promedio ponderado:
       TC_hora = SUM(Pulsos_terminal * TC_terminal) / SUM(Pulsos_terminal)
 
-    Si una terminal no existe en RESUMEN_TIEMPOS, usa PROMEDIO GLOBAL si está
-    disponible. Si no hay ninguna coincidencia, retorna None.
+    Prioridad de búsqueda:
+      1) Terminal + Aplicación.
+      2) Solo Terminal.
+      3) Promedio global por Aplicación.
+      4) Promedio global general.
     """
     tc_lookup = tc_lookup or {}
     if hour_df is None or hour_df.empty or "Terminal" not in hour_df.columns:
@@ -2265,12 +2317,29 @@ def _crimpado_tc_from_resumen_for_hour(
     weighted_sum = 0.0
     weight_sum = 0.0
 
+    has_app_col = "Aplicación" in hour_df.columns
+
     for _, r in hour_df.iterrows():
-        key = _crimpado_terminal_key(r.get("Terminal"))
-        if not key:
+        terminal = r.get("Terminal")
+        aplicacion = r.get("Aplicación") if has_app_col else ""
+        key_terminal = _crimpado_terminal_key(terminal)
+        if not key_terminal:
             continue
 
-        tc = tc_lookup.get(key)
+        tc = None
+
+        key_ta = _crimpado_lookup_key_terminal_app(terminal, aplicacion)
+        if key_ta:
+            tc = tc_lookup.get(key_ta)
+
+        if tc is None or tc <= 0:
+            tc = tc_lookup.get(key_terminal)
+
+        if tc is None or tc <= 0:
+            key_app_global = _crimpado_lookup_key_app_global(aplicacion)
+            if key_app_global:
+                tc = tc_lookup.get(key_app_global)
+
         if tc is None or tc <= 0:
             tc = tc_default_h_uni
 

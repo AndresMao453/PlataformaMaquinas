@@ -2361,11 +2361,7 @@ function renderProdHour(result){
     machineU === "UNION"
   );
 
-  if(showMotivationOverlay){
-    startProdMotivationOverlay(wrap);
-  }else{
-    stopProdMotivationOverlay(true);
-  }
+  stopProdMotivationOverlay(true);
 
   const isAplic = (machineU === "APLICACION" || machineU === "UNION");
   const isCont = (machineU === "BUSES" || machineU === "MOTOS");
