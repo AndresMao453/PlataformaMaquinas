@@ -2810,7 +2810,8 @@ function renderProdHour(result){
 
     const hasMeal = (Number(mealSec) || 0) > 0;
 
-    // ✅ THB + CRIMPADO: mostrar OEE / PA / TW / TX en tarjetas por hora
+    // ✅ THB + CRIMPADO: mostrar OEE / PA / TW / TX en tarjetas por hora.
+    // Por solicitud: porcentajes cerrados sin decimales y TW/TX siempre en una sola línea.
     const showHourMiniKpis = (
       machineU === "THB" ||
       machineU === "HP" ||
@@ -2818,22 +2819,24 @@ function renderProdHour(result){
       machineU === "UNION"
     );
 
+    const _pct0 = (v) => String(Math.round(Number(v) || 0));
+
     const hourlyMiniKpisHtml = showHourMiniKpis ? `
       <div class="ph-mini-kpis">
-        <div class="ph-mini-kpi ph-mini-kpi-oee">
-          OEE: ${escHtml(oeeHoraPct.toFixed(1))}%
+        <div class="ph-mini-kpi ph-mini-kpi-oee" style="white-space:nowrap;">
+          OEE:&nbsp;${escHtml(_pct0(oeeHoraPct))}%
         </div>
 
-        <div class="ph-mini-kpi ph-mini-kpi-plan">
-          PA: ${escHtml(cumplimientoHoraPct.toFixed(1))}%
+        <div class="ph-mini-kpi ph-mini-kpi-plan" style="white-space:nowrap;">
+          PA:&nbsp;${escHtml(_pct0(cumplimientoHoraPct))}%
         </div>
 
-        <div class="ph-mini-kpi ph-mini-kpi-work">
-          TW: ${escHtml(_fmtHourDecFromSec(twExcelSec))} &nbsp; ${escHtml(idExcelPct.toFixed(1))}%
+        <div class="ph-mini-kpi ph-mini-kpi-work" style="white-space:nowrap;">
+          TW:&nbsp;${escHtml(_fmtHourDecFromSec(twExcelSec))}&nbsp;${escHtml(_pct0(idExcelPct))}%
         </div>
 
-        <div class="ph-mini-kpi ph-mini-kpi-loss ph-otro-btn" role="button" tabindex="0" title="Ver causas de paro">
-          TX: ${escHtml(_fmtHourDecFromSec(txExcelSec))} &nbsp; ${escHtml(txExcelPct.toFixed(1))}%
+        <div class="ph-mini-kpi ph-mini-kpi-loss ph-otro-btn" style="white-space:nowrap;" role="button" tabindex="0" title="Ver causas de paro">
+          TX:&nbsp;${escHtml(_fmtHourDecFromSec(txExcelSec))}&nbsp;${escHtml(_pct0(txExcelPct))}%
         </div>
       </div>
     ` : ``;
