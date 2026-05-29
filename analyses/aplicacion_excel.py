@@ -480,37 +480,118 @@ def _parse_crimpado_hour_series(s: pd.Series, prefer_closed_hour: bool = False) 
 
 
 
+# ✅ FIX VISIBLE 2026-05-29: pantalla rotativa soporta Hora de Inicio/Fin numérica, NaN y texto sin romper.
 def _parse_excel_time_series(s: pd.Series) -> pd.Series:
     """
-    Convierte una columna de hora a datetime.time sin warnings:
-    - Numérico Excel (fracción del día)
-    - Strings HH:MM / HH:MM:SS (usa to_timedelta)
-    - Strings con fecha+hora (fallback por elemento)
+    Convierte una columna de hora a datetime.time de forma robusta.
+
+    Corrige el error visto en pantalla rotativa:
+      TypeError: expected string or bytes-like object, got 'float'
+
+    Soporta:
+    - datetime.time / datetime / Timestamp
+    - strings HH:MM / HH:MM:SS
+    - valores numéricos de Excel como fracción de día: 0.5 -> 12:00
+    - valores numéricos enteros de hora: 10 -> 10:00
+    - NaN / None / celdas vacías sin romper el análisis
     """
     if s is None:
         return pd.Series([], dtype="object")
 
-    if pd.api.types.is_numeric_dtype(s):
-        td = pd.to_timedelta(s, unit="D", errors="coerce")
-        base = pd.Timestamp("1900-01-01")
-        return (base + td).dt.time
+    ser = pd.Series(s).copy()
+    out = pd.Series([None] * len(ser), index=ser.index, dtype="object")
+    base = pd.Timestamp("1900-01-01")
 
-    ss = s.astype(str).str.strip()
+    def _is_empty_value(x: Any) -> bool:
+        try:
+            if x is None:
+                return True
+            if pd.isna(x):
+                return True
+        except Exception:
+            pass
+        sx = str(x).strip().lower()
+        return sx in ("", "nan", "none", "nat", "null")
 
-    mask_time = ss.apply(lambda x: bool(_TIME_RE.match(x)))
-    out = pd.Series([None] * len(ss), index=ss.index, dtype="object")
+    def _num_to_time(x: Any):
+        try:
+            n = float(x)
+        except Exception:
+            return None
+        if not np.isfinite(n) or n < 0:
+            return None
 
+        # Excel guarda horas como fracción de día: 0.5 = 12:00.
+        if n <= 2.0:
+            try:
+                return (base + pd.to_timedelta(n, unit="D")).time()
+            except Exception:
+                return None
+
+        # Algunos CSV/Sheets pueden traer 7, 8, 10, 13 como hora cerrada.
+        if n <= 23.999999:
+            try:
+                total_seconds = int(round(n * 3600.0))
+                total_seconds = max(0, min(86399, total_seconds))
+                return (base + pd.to_timedelta(total_seconds, unit="s")).time()
+            except Exception:
+                return None
+
+        return None
+
+    # 1) Objetos tipo time/datetime/Timestamp o numéricos reales.
+    for idx, val in ser.items():
+        if _is_empty_value(val):
+            continue
+
+        if hasattr(val, "hour") and hasattr(val, "minute"):
+            try:
+                out.loc[idx] = (
+                    pd.Timestamp("1900-01-01")
+                    + pd.Timedelta(
+                        hours=int(val.hour),
+                        minutes=int(val.minute),
+                        seconds=int(getattr(val, "second", 0) or 0),
+                    )
+                ).time()
+                continue
+            except Exception:
+                pass
+
+        if isinstance(val, (int, float, np.integer, np.floating)):
+            tv = _num_to_time(val)
+            if tv is not None:
+                out.loc[idx] = tv
+                continue
+
+    # 2) Convertir SIEMPRE a string Python normal para evitar Arrow/string dtype con floats.
+    ss = ser.map(lambda x: "" if _is_empty_value(x) else str(x).strip()).astype("object")
+
+    # 3) Strings HH:MM / HH:MM:SS.
+    mask_time = ss.map(lambda x: bool(_TIME_RE.match(str(x)))) & out.isna()
     if mask_time.any():
-        td = pd.to_timedelta(ss[mask_time], errors="coerce")
-        base = pd.Timestamp("1900-01-01")
-        out.loc[mask_time] = (base + td).dt.time
+        td = pd.to_timedelta(ss.loc[mask_time], errors="coerce")
+        ok = td.notna()
+        if ok.any():
+            out.loc[td.index[ok]] = (base + td.loc[ok]).dt.time
 
+    # 4) Strings numéricos: "0.5", "10", "10,5".
     mask_rest = out.isna()
     if mask_rest.any():
+        num = pd.to_numeric(ss.loc[mask_rest].str.replace(",", ".", regex=False), errors="coerce")
+        for idx, val in num.items():
+            if pd.isna(val):
+                continue
+            tv = _num_to_time(val)
+            if tv is not None:
+                out.loc[idx] = tv
 
-        def _one(x: str):
-            x = (x or "").strip()
-            if not x or x.lower() in ("nan", "none"):
+    # 5) Fallback para strings con fecha+hora.
+    mask_rest = out.isna()
+    if mask_rest.any():
+        def _one(x: Any):
+            x = str(x or "").strip()
+            if not x or x.lower() in ("nan", "none", "nat", "null"):
                 return None
             try:
                 dt = pd.to_datetime(x, errors="coerce", dayfirst=True)
@@ -523,7 +604,6 @@ def _parse_excel_time_series(s: pd.Series) -> pd.Series:
         out.loc[mask_rest] = ss.loc[mask_rest].map(_one)
 
     return out
-
 
 # ============================================================
 # Helpers de lectura (headers embebidos)
