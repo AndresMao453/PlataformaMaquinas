@@ -4767,3 +4767,36 @@ img{
 .ph-mini-kpis + .ph-otro-panel{
   margin-top: 2px !important;
 }
+/* =========================================================
+   FIX: mantener OEE / PA / TW / TX en una sola línea
+   dentro de cada tarjeta de productividad por hora.
+   Especialmente evita que el porcentaje de TW baje a otra línea.
+   ========================================================= */
+.ph-mini-kpis{
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+}
+
+.ph-mini-kpi{
+  display: flex !important;
+  align-items: baseline !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  flex-wrap: nowrap !important;
+  white-space: nowrap !important;
+  font-size: 14px !important;
+  line-height: 1.28 !important;
+}
+
+@media (min-width: 1101px){
+  .ph-mini-kpi{
+    font-size: 13.5px !important;
+    gap: 5px !important;
+  }
+}
+
+@media (max-width: 760px), (hover: none) and (pointer: coarse){
+  .ph-mini-kpi{
+    font-size: 14px !important;
+  }
+}
