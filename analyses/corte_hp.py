@@ -8,6 +8,102 @@ import pandas as pd
 import re
 import numpy as np
 
+# ============================================================
+# Modelo nominal propio HP (calibrado con lotes reales)
+# ============================================================
+# Modelo aplicado:
+#   T_lote = c + piezas * (a + b * Longitud_mm)
+#
+# Donde:
+#   T_lote      = tiempo estándar del registro/lote en segundos
+#   piezas      = piezas buenas del registro
+#   Longitud_mm = longitud del cable en milímetros
+#   c           = tiempo fijo del lote/registro
+#   a           = tiempo base por pieza
+#   b           = incremento por mm por pieza
+#
+# Tipos:
+#   1 = sin terminal
+#   2 = 1 terminal
+#   3 = 2 terminales
+#
+# IMPORTANTE:
+# - Estos coeficientes son SOLO para HP.
+# - THB no se toca ni se importa aquí.
+# - Si se toman nuevas mediciones, se recalculan estos valores y se reemplazan aquí.
+# ============================================================
+
+HP_FIT_LOTE = {
+    # Tipo 1: sin terminal
+    1: {"c": 10.892280, "a": 3.577177, "b": 0.002351303},
+
+    # Tipo 2: 1 terminal
+    2: {"c": 5.405789, "a": 5.497684, "b": 0.002410333},
+
+    # Tipo 3: 2 terminales
+    3: {"c": 25.950493, "a": 1.817238, "b": 0.002704590},
+}
+
+
+def _hp_is_no_aplica(x: Any) -> bool:
+    ss = str(x or "").strip().lower()
+    return ss in ("", "no aplica", "na", "n/a", "none", "null", "no")
+
+
+def _hp_tipo_from_terminals(t1: Any, t2: Any) -> int:
+    """
+    Clasifica el registro según Terminal 1 / Terminal 2 de la hoja Corte.
+
+    Tipo 1: no aplica en ambas terminales.
+    Tipo 2: aplica una sola terminal.
+    Tipo 3: aplican las dos terminales.
+    """
+    na1 = _hp_is_no_aplica(t1)
+    na2 = _hp_is_no_aplica(t2)
+    if na1 and na2:
+        return 1
+    if (na1 and not na2) or (not na1 and na2):
+        return 2
+    return 3
+
+
+def _hp_nominal_lote_sec(L_mm: float, piezas: float, tipo: int) -> float:
+    """
+    Tiempo estándar HP para un registro/lote completo.
+    """
+    try:
+        L = float(L_mm or 0.0)
+        n = float(piezas or 0.0)
+    except Exception:
+        return 0.0
+
+    if L <= 0 or n <= 0:
+        return 0.0
+
+    fit = HP_FIT_LOTE.get(int(tipo), HP_FIT_LOTE[1])
+    c = float(fit["c"])
+    a = float(fit["a"])
+    b = float(fit["b"])
+
+    return float(max(0.0, c + n * (a + b * L)))
+
+
+def _hp_nominal_sec(L_mm: float, tipo: int, *, model: str = "calc") -> float:
+    """
+    Tiempo estándar aproximado por pieza.
+    Se conserva por compatibilidad interna, pero el cálculo principal
+    de HP usa _hp_nominal_lote_sec porque el modelo fue calibrado por lote.
+    """
+    try:
+        L = float(L_mm or 0.0)
+    except Exception:
+        return 0.0
+    if L <= 0:
+        return 0.0
+
+    fit = HP_FIT_LOTE.get(int(tipo), HP_FIT_LOTE[1])
+    return float(max(0.0, float(fit["a"]) + float(fit["b"]) * L))
+
 ANALYSIS_KEY = "corte_hp"
 ANALYSIS_TITLE = "Análisis Línea de Corte (HP)"
 
@@ -508,9 +604,13 @@ class HPVerifCols:
 class HPCorteCols:
     col_fecha: Optional[str]
     col_hora: Optional[str]
+    col_ref_cable: Optional[str]
+    col_long_mm: Optional[str]
     col_total: Optional[str]
     col_solic: Optional[str]
     col_buenas: Optional[str]
+    col_terminal1: Optional[str]
+    col_terminal2: Optional[str]
 
 
 @dataclass
@@ -530,13 +630,253 @@ def _resolve_hp_verif_cols(df: pd.DataFrame) -> HPVerifCols:
 
 
 def _resolve_hp_corte_cols(df: pd.DataFrame) -> HPCorteCols:
+    def _col_at(idx: int) -> Optional[str]:
+        try:
+            return df.columns[idx]
+        except Exception:
+            return None
+
     return HPCorteCols(
-        col_fecha=_find_col(df, ["fecha"]),
-        col_hora=_find_col(df, ["hora"]),
-        col_total=_find_col(df, ["total", "piezas"]) or _find_col(df, ["total"]),
-        col_solic=_find_col(df, ["solicitadas"]) or _find_col(df, ["solicitadas", "usuario"]) or _find_col(df, ["piezas", "solicitadas"]),
-        col_buenas=_find_col(df, ["piezas", "buenas"]) or _find_col(df, ["buenas"]),
+        col_fecha=_find_col(df, ["fecha"]) or _col_at(0),
+        col_hora=_find_col(df, ["hora"]) or _col_at(1),
+        col_ref_cable=(
+            _find_col(df, ["referencia", "cable"]) or
+            _find_col(df, ["referencia"]) or
+            _find_col(df, ["cable"]) or
+            _col_at(2)
+        ),
+        col_long_mm=(
+            _find_col(df, ["longitud"]) or
+            _find_col(df, ["largo"]) or
+            _find_col(df, ["long"]) or
+            _col_at(3)
+        ),
+        col_total=_find_col(df, ["total", "piezas"]) or _find_col(df, ["total"]) or _col_at(4),
+        col_solic=(
+            _find_col(df, ["solicitadas", "usuario"]) or
+            _find_col(df, ["piezas", "solicitadas"]) or
+            _find_col(df, ["solicitadas"]) or
+            _col_at(5)
+        ),
+        col_buenas=_find_col(df, ["piezas", "buenas"]) or _find_col(df, ["buenas"]) or _col_at(6),
+        col_terminal1=_find_col(df, ["terminal", "1"]) or _col_at(7),
+        col_terminal2=_find_col(df, ["terminal", "2"]) or _col_at(8),
     )
+
+
+def _hp_num_es(x: Any) -> float:
+    """Número robusto para HP: soporta 1.093 como 1093 y 0.5 como 0.5."""
+    if x is None or (isinstance(x, float) and pd.isna(x)):
+        return 0.0
+    if isinstance(x, (int, float, np.integer, np.floating)) and not pd.isna(x):
+        return float(x)
+    ss = str(x).strip().replace(" ", "").replace(" ", "")
+    if not ss or ss.lower() in ("nan", "none", "null"):
+        return 0.0
+    lc = ss.rfind(",")
+    ld = ss.rfind(".")
+    if lc > -1 and ld > -1:
+        if lc > ld:
+            ss = ss.replace(".", "").replace(",", ".")
+        else:
+            ss = ss.replace(",", "")
+    elif lc > -1:
+        ss = ss.replace(".", "").replace(",", ".")
+    else:
+        if re.match(r"^\d{1,3}(\.\d{3})+$", ss):
+            ss = ss.replace(".", "")
+        ss = ss.replace(",", "")
+    try:
+        return float(ss)
+    except Exception:
+        return 0.0
+
+
+def _hp_numeric_series(df: pd.DataFrame, col: Optional[str], default: float = 0.0) -> pd.Series:
+    if df is None:
+        return pd.Series([], dtype="float64")
+    if not col or col not in df.columns:
+        return pd.Series([float(default)] * len(df), index=df.index, dtype="float64")
+    return df[col].apply(_hp_num_es).astype("float64")
+
+
+def _hp_nominal_components(df_seg: pd.DataFrame, cols: HPCorteCols) -> Dict[str, Any]:
+    """
+    Calcula producción, metros y tiempo estándar HP usando el modelo propio:
+
+        T_lote = c + piezas * (a + b * Longitud_mm)
+
+    El tipo se obtiene desde Terminal 1 / Terminal 2:
+      - Tipo 1: sin terminal
+      - Tipo 2: 1 terminal
+      - Tipo 3: 2 terminales
+    """
+    out: Dict[str, Any] = {
+        "cut": 0,
+        "planned": 0,
+        "nonconforming": 0,
+        "meters": 0.0,
+        "tnom_sec": 0.0,
+        "tcnp_sec": 0.0,
+        "avg_len_mm": 0.0,
+        "len_mix": None,
+    }
+
+    if df_seg is None or df_seg.empty:
+        return out
+
+    buenas = _hp_numeric_series(df_seg, cols.col_buenas, 0.0).clip(lower=0.0)
+    total = _hp_numeric_series(df_seg, cols.col_total, 0.0).clip(lower=0.0)
+    solic = _hp_numeric_series(df_seg, cols.col_solic, 0.0).clip(lower=0.0)
+    longmm = _hp_numeric_series(df_seg, cols.col_long_mm, 0.0).clip(lower=0.0)
+
+    out["cut"] = int(round(float(buenas.sum())))
+    out["planned"] = int(round(float(total.where(total > 0, buenas).sum())))
+    out["nonconforming"] = int(round(float(solic.sum())))
+
+    q_total = float(buenas.sum())
+    if q_total <= 0:
+        return out
+
+    valid_len = longmm > 0
+    if valid_len.any():
+        out["meters"] = float(((buenas.where(valid_len, 0.0) * longmm.where(valid_len, 0.0)) / 1000.0).sum())
+        sum_q_mm = float((buenas.where(valid_len, 0.0) * longmm.where(valid_len, 0.0)).sum())
+        if sum_q_mm > 0:
+            out["avg_len_mm"] = float(sum_q_mm / q_total)
+
+    if cols.col_terminal1 and cols.col_terminal2 and cols.col_terminal1 in df_seg.columns and cols.col_terminal2 in df_seg.columns:
+        tipos = df_seg.apply(
+            lambda r: _hp_tipo_from_terminals(r.get(cols.col_terminal1), r.get(cols.col_terminal2)),
+            axis=1,
+        )
+    else:
+        tipos = pd.Series([1] * len(df_seg), index=df_seg.index)
+
+    # Modelo propio HP calibrado por lote:
+    #   T_lote = c + piezas * (a + b * Longitud_mm)
+    # Por eso aquí NO se multiplica de nuevo por piezas; cada fila ya entrega
+    # el tiempo estándar completo del registro/lote.
+    t_lote = [
+        _hp_nominal_lote_sec(float(L), float(q), int(tp))
+        for L, q, tp in zip(longmm.tolist(), buenas.tolist(), tipos.tolist())
+    ]
+    t_lote_s = pd.Series(t_lote, index=df_seg.index, dtype="float64")
+    out["tnom_sec"] = float(t_lote_s.sum())
+    out["tcnp_sec"] = float(out["tnom_sec"] / q_total) if q_total > 0 else 0.0
+
+    w = total.where(total > 0, buenas)
+    w = w.where(w > 0, 1.0)
+    valid = longmm > 0
+    w = w.where(valid, 0.0)
+    tot_w = float(w.sum())
+    if tot_w > 0:
+        small_max = 300.0
+        med_max = 800.0
+        w_small = float(w.where(longmm <= small_max, 0.0).sum())
+        w_mid = float(w.where((longmm > small_max) & (longmm <= med_max), 0.0).sum())
+        w_long = float(w.where(longmm > med_max, 0.0).sum())
+        out["len_mix"] = {
+            "short_pct": round((w_small / tot_w) * 100.0),
+            "mid_pct": round((w_mid / tot_w) * 100.0),
+            "long_pct": round((w_long / tot_w) * 100.0),
+        }
+
+    return out
+
+
+def _clip01(x: float) -> float:
+    try:
+        n = float(x)
+    except Exception:
+        return 0.0
+    if not np.isfinite(n):
+        return 0.0
+    return float(max(0.0, min(1.0, n)))
+
+
+def _compute_hp_excel_summary_metrics(
+    *,
+    total_units: float,
+    good_units: float,
+    tpaid_sec: float,
+    teff_sec: float,
+    tc_unit_sec: float,
+    oee_expected: float = 0.70,
+) -> Dict[str, float]:
+    total_units = max(0.0, float(total_units or 0.0))
+    good_units = max(0.0, min(float(good_units or 0.0), total_units))
+    tpaid_sec = max(0.0, float(tpaid_sec or 0.0))
+    teff_sec = max(0.0, float(teff_sec or 0.0))
+    tc_unit_sec = max(0.0, float(tc_unit_sec or 0.0))
+    oee_expected = max(0.0, float(oee_expected or 0.0))
+
+    p_time_sec = total_units * tc_unit_sec
+    q_time_sec = good_units * tc_unit_sec
+
+    disponibilidad = _clip01((teff_sec / tpaid_sec) if tpaid_sec > 0 else 0.0)
+    operacional = _clip01((p_time_sec / teff_sec) if teff_sec > 0 else 0.0)
+    calidad = _clip01((q_time_sec / p_time_sec) if p_time_sec > 0 else 0.0)
+    oee = _clip01((q_time_sec / tpaid_sec) if tpaid_sec > 0 else 0.0)
+
+    vn_uph = (3600.0 / tc_unit_sec) if tc_unit_sec > 0 else 0.0
+    tp_h = tpaid_sec / 3600.0
+    produccion_planeada_calc = oee_expected * vn_uph * tp_h
+    cumplimiento_plan = (total_units / produccion_planeada_calc) if produccion_planeada_calc > 0 else 0.0
+
+    return {
+        "oee": float(oee),
+        "disponibilidad": float(disponibilidad),
+        "operacional": float(operacional),
+        "calidad": float(calidad),
+        "produccion_planeada_calc": float(produccion_planeada_calc),
+        "cumplimiento_plan": float(cumplimiento_plan),
+        "vn_uph": float(vn_uph),
+        "p_time_sec": float(p_time_sec),
+        "q_time_sec": float(q_time_sec),
+    }
+
+
+def _build_hp_oee_chart_from_buckets(buckets: List[Dict[str, Any]]) -> Dict[str, Any]:
+    labels: List[str] = []
+    oee: List[float] = []
+    operacional: List[float] = []
+    disponibilidad: List[float] = []
+    calidad: List[float] = []
+
+    for b in buckets or []:
+        label = str(b.get("hourLabel") or b.get("hour") or "").strip()
+        if not label:
+            continue
+
+        cut = float(b.get("cut", 0) or 0)
+        tnom = float(b.get("tcnpTotalSec", 0.0) or 0.0)
+        tc = float(b.get("tcnpSec", 0.0) or 0.0)
+        if tc <= 0 and cut > 0:
+            tc = tnom / cut
+
+        met = _compute_hp_excel_summary_metrics(
+            total_units=cut,
+            good_units=cut,
+            tpaid_sec=float(b.get("capacitySec", 0) or 0),
+            teff_sec=float(b.get("prodSec", 0) or 0),
+            tc_unit_sec=tc,
+            oee_expected=0.70,
+        )
+
+        labels.append(label)
+        oee.append(round(met["oee"] * 100.0, 1))
+        operacional.append(round(met["operacional"] * 100.0, 1))
+        disponibilidad.append(round(met["disponibilidad"] * 100.0, 1))
+        calidad.append(round(met["calidad"] * 100.0, 1))
+
+    return {
+        "labels": labels,
+        "oee": oee,
+        "operacional": operacional,
+        "disponibilidad": disponibilidad,
+        "calidad": calidad,
+    }
 
 
 def _resolve_hp_paradas_cols(df: pd.DataFrame) -> HPParadasCols:
@@ -1141,6 +1481,20 @@ def _compute_hourly_buckets_hp(
         if not tmp.empty:
             cut_by_hour = tmp.groupby(tmp["dt"].dt.hour)["v"].sum().to_dict()
 
+    # Métricas nominales por hora: longitud + terminales + piezas buenas.
+    metrics_by_hour: Dict[int, Dict[str, Any]] = {}
+    if df_corte is not None and not df_corte.empty:
+        tmp_nom = df_corte.copy()
+        tmp_nom["_dt_hp_nom"] = pd.to_datetime(dt_corte, errors="coerce")
+        tmp_nom = tmp_nom.dropna(subset=["_dt_hp_nom"])
+        tmp_nom = tmp_nom[(tmp_nom["_dt_hp_nom"] >= day_start) & (tmp_nom["_dt_hp_nom"] < day_end)]
+        if not tmp_nom.empty:
+            for hh, grp in tmp_nom.groupby(tmp_nom["_dt_hp_nom"].dt.hour):
+                try:
+                    metrics_by_hour[int(hh)] = _hp_nominal_components(grp, corte_cols)
+                except Exception:
+                    metrics_by_hour[int(hh)] = {}
+
     # ======================
     # Paradas (arrays ns) — CLIP a la ventana trabajada
     # ======================
@@ -1235,7 +1589,13 @@ def _compute_hourly_buckets_hp(
         # Tiempo efectivo por tarjeta:
         # prod = trabajado - (todas las paradas registradas)
         # =========
-        cut = int(cut_by_hour.get(h, 0))
+        hp_hour_met = metrics_by_hour.get(h, {}) or {}
+        cut = int(hp_hour_met.get("cut", cut_by_hour.get(h, 0)) or 0)
+        meters = float(hp_hour_met.get("meters", 0.0) or 0.0)
+        tcnp_sec = float(hp_hour_met.get("tcnp_sec", 0.0) or 0.0)
+        tnom_sec = float(hp_hour_met.get("tnom_sec", 0.0) or 0.0)
+        len_mix = hp_hour_met.get("len_mix")
+
         prod_sec = max(0, cap_work_sec - dead_rec_sec)
         if cut <= 0:
             prod_sec = 0
@@ -1333,7 +1693,11 @@ def _compute_hourly_buckets_hp(
             "prodSec": int(prod_sec),
 
             "cut": int(cut),
-            "meters": 0.0,
+            "meters": float(meters),
+            "tcnpSec": float(tcnp_sec),
+            "tcnpTotalSec": float(tnom_sec),
+            "tcnpLenMm": float(hp_hour_met.get("avg_len_mm", 0.0) or 0.0),
+            "len_mix": len_mix,
             "hadActivity": True,
 
             # ✅ Reporte de causas en tarjetas (incluye 104 + 000 si aplica)
@@ -1606,17 +1970,17 @@ def analyze_hp(
     else:
         df_corte_w = df_corte_p.copy()
 
-    # 9) KPIs Circuitos
-    planeadas = 0
-    cortados = 0
-    no_conformes = 0
+    # 9) KPIs de producción y modelo nominal desde la hoja Corte.
+    #    Esta es la parte nueva para HP: longitud + Terminal 1/2 alimentan
+    #    el mismo cálculo de tiempo de ciclo que ya usa THB.
+    hp_total_met = _hp_nominal_components(df_corte_w, corte_cols)
 
-    if corte_cols.col_total and corte_cols.col_total in df_corte_w.columns:
-        planeadas = int(pd.to_numeric(df_corte_w[corte_cols.col_total], errors="coerce").fillna(0).sum())
-    if corte_cols.col_buenas and corte_cols.col_buenas in df_corte_w.columns:
-        cortados = int(pd.to_numeric(df_corte_w[corte_cols.col_buenas], errors="coerce").fillna(0).sum())
-    if corte_cols.col_solic and corte_cols.col_solic in df_corte_w.columns:
-        no_conformes = int(pd.to_numeric(df_corte_w[corte_cols.col_solic], errors="coerce").fillna(0).sum())
+    planeadas = int(hp_total_met.get("planned", 0) or 0)
+    cortados = int(hp_total_met.get("cut", 0) or 0)
+    no_conformes = int(hp_total_met.get("nonconforming", 0) or 0)
+    metros_cortados = float(hp_total_met.get("meters", 0.0) or 0.0)
+    tnom_total_sec = float(hp_total_met.get("tnom_sec", 0.0) or 0.0)
+    tcnp_sec_period = float(hp_total_met.get("tcnp_sec", 0.0) or 0.0)
 
     # 10) Defaults (si NO hay buckets)
     dead_total_sec = 0
@@ -1801,8 +2165,36 @@ def analyze_hp(
         # debug (000 por tarjetas)
         "no_registrado_from_buckets_sec": int(no_reg_sec_from_buckets),
 
+        # ✅ Modelo nominal HP tomado desde hoja Corte
+        "metros_cortados": float(metros_cortados),
+        "tnom_total_sec": float(tnom_total_sec),
+        "tnom_total_hhmm": _seconds_to_hhmm(float(tnom_total_sec)),
+        "tcnp_sec": float(tcnp_sec_period),
+        "velocidad_nominal_uph": float((3600.0 / tcnp_sec_period) if tcnp_sec_period > 0 else 0.0),
+        "oee_esperado": 0.70,
+
         "hourly_buckets": buckets,
     }
+
+    good_units = max(0.0, float(cortados) - float(no_conformes))
+    if no_conformes <= 0:
+        good_units = float(cortados)
+
+    hp_excel_met = _compute_hp_excel_summary_metrics(
+        total_units=float(cortados),
+        good_units=good_units,
+        tpaid_sec=float(hd_sec),
+        teff_sec=float(prod_sec),
+        tc_unit_sec=float(tcnp_sec_period),
+        oee_expected=0.70,
+    )
+
+    kpis["oee"] = float(hp_excel_met["oee"])
+    kpis["oee_calidad"] = float(hp_excel_met["calidad"])
+    kpis["oee_disponibilidad"] = float(hp_excel_met["disponibilidad"])
+    kpis["oee_rendimiento"] = float(hp_excel_met["operacional"])
+    kpis["produccion_planeada_calc"] = float(hp_excel_met["produccion_planeada_calc"])
+    kpis["cumplimiento_plan"] = float(hp_excel_met["cumplimiento_plan"])
 
     ui = {
         "Circuitos Cortados": f"{cortados:,}".replace(",", "."),
@@ -1823,9 +2215,23 @@ def analyze_hp(
 
         "Tiempo Trabajado": f"{kpis['tiempo_efectivo_hhmm']} ({pct_eff_s})",
 
+        # ✅ Indicadores nominales HP, equivalentes al modelo THB
+        "OEE": (
+            f"{(kpis.get('oee', 0.0) * 100):.1f}%||"
+            f"Indice de Eficiencia Operacional: {(kpis.get('oee_rendimiento', 0.0) * 100):.1f}% | "
+            f"Indice de Disponibilidad: {(kpis.get('oee_disponibilidad', 0.0) * 100):.1f}% | "
+            f"Indice de Calidad: {(kpis.get('oee_calidad', 0.0) * 100):.1f}%"
+        ),
+        "Cumplimiento del plan": f"{(kpis.get('cumplimiento_plan', 0.0) * 100):.1f}%",
+        "Metros Cortados": f"{kpis.get('metros_cortados', 0.0):,.1f} m".replace(",", "X").replace(".", ",").replace("X", "."),
+        "Tiempo De Corte": kpis.get("tnom_total_hhmm", "00:00"),
+        "Tiempo de Ciclo": f"{kpis.get('tcnp_sec', 0.0):.4f} s/pz",
+        "Velocidad Nominal": f"{int(round(kpis.get('velocidad_nominal_uph', 0.0))):,} unid/h".replace(",", "."),
+
     }
 
     pareto = _pareto_paradas_hp(df_par_work, top_n=25)
+    oee_chart = _build_hp_oee_chart_from_buckets(buckets) if p == "day" else {"labels": [], "oee": [], "operacional": [], "disponibilidad": [], "calidad": []}
 
     return {
         "status": "ok",
@@ -1841,6 +2247,7 @@ def analyze_hp(
         "kpis": kpis,
         "kpis_ui": ui,
         "pareto": pareto,
+        "oee_chart": oee_chart,
     }
 
 

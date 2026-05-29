@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import io
 import time
 import re  # ✅ parse robusto fechas/periodos
 import threading
@@ -44,22 +45,61 @@ _GSHEET_HP_CACHE: dict[tuple[str, int], tuple[float, pd.DataFrame]] = {}
 
 def load_gsheet_tab_csv_smart(sheet_id: str, gid: int, ttl_s: int) -> pd.DataFrame:
     """
-    Lee una pestaña de Google Sheets (CSV) pero soporta header desplazado (0/1/2),
-    igual que _read_excel_smart para HP.
-    Descarga 1 vez (header=None) y luego prueba fila 0/1/2 como encabezado.
-    Cachea por TTL para no golpear el Sheet en cada request.
+    Lee una pestaña de Google Sheets (CSV) soportando encabezado desplazado.
+
+    IMPORTANTE:
+    - No se agrega cache_bust (_=timestamp) al endpoint export, porque Google
+      puede responder HTTP 400 en algunos Sheets/GID.
+    - Prueba export CSV normal y luego gviz CSV como respaldo.
+    - Cachea por (sheet_id, gid) durante ttl_s.
     """
     ttl = int(ttl_s or 10)
-    key = (str(sheet_id), int(gid))
+    sid = str(sheet_id or "").strip()
+    gid_i = int(gid or 0)
+    key = (sid, gid_i)
     now = time.time()
 
     hit = _GSHEET_HP_CACHE.get(key)
     if hit and (now - hit[0]) < ttl:
         return hit[1].copy()
 
-    # Descarga raw 1 sola vez
-    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={int(gid)}&_={int(now)}"
-    raw = pd.read_csv(url, header=None)
+    if not sid or not gid_i:
+        raise RuntimeError("Faltan sheet_id/gid para cargar Google Sheets.")
+
+    urls = [
+        # ✅ sin cache_bust: evita HTTP 400 en export CSV
+        f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={gid_i}",
+        # ✅ fallback alternativo que suele funcionar cuando export falla
+        f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&gid={gid_i}",
+        f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&single=true&gid={gid_i}",
+    ]
+
+    last_exc = None
+    raw = None
+    for url in urls:
+        try:
+            raw = pd.read_csv(url, header=None)
+            break
+        except Exception as e:
+            last_exc = e
+
+            # segundo intento con requests + User-Agent; ayuda en algunas redes/proxies
+            try:
+                resp = requests.get(
+                    url,
+                    timeout=25,
+                    headers={"User-Agent": "Mozilla/5.0 PlataformaMaquinas/1.0"},
+                )
+                resp.raise_for_status()
+                raw = pd.read_csv(io.StringIO(resp.text), header=None)
+                break
+            except Exception as e2:
+                last_exc = e2
+                continue
+
+    if raw is None:
+        raise RuntimeError(f"No se pudo leer Google Sheets CSV sheet_id={sid} gid={gid_i}: {last_exc}")
+
     raw = raw.dropna(how="all").reset_index(drop=True)
 
     def _make_unique(cols):
@@ -83,7 +123,7 @@ def load_gsheet_tab_csv_smart(sheet_id: str, gid: int, ttl_s: int) -> pd.DataFra
             continue
 
         cols = _make_unique(raw.iloc[h].tolist())
-        df = raw.iloc[h+1:].copy()
+        df = raw.iloc[h + 1:].copy()
         df.columns = cols
 
         cols_norm = [str(c).strip().lower() for c in df.columns]
@@ -92,8 +132,11 @@ def load_gsheet_tab_csv_smart(sheet_id: str, gid: int, ttl_s: int) -> pd.DataFra
             break
 
     if best_df is None:
-        # fallback: usa header normal del loader base
-        best_df = load_gsheet_tab_csv(sheet_id, int(gid), ttl_s=ttl)
+        # fallback conservador: primera fila como encabezado
+        cols = _make_unique(raw.iloc[0].tolist()) if len(raw) else []
+        best_df = raw.iloc[1:].copy() if len(raw) else pd.DataFrame()
+        if len(cols) == len(best_df.columns):
+            best_df.columns = cols
 
     _GSHEET_HP_CACHE[key] = (now, best_df.copy())
     return best_df.copy()
@@ -1725,7 +1768,12 @@ from analyses.corte_thb import (
     _normalize_period_value as _thb_normalize_period_value,
     _period_bounds as _thb_period_bounds,
 )
-from analyses.corte_hp import analyze_hp
+from analyses.corte_hp import (
+    analyze_hp,
+    _resolve_hp_corte_cols,
+    _build_dt as _hp_build_dt,
+    _range_from_period as _hp_range_from_period,
+)
 
 
 import io
@@ -1752,44 +1800,74 @@ _CICLO_UNION_CACHE = {"ts": 0.0, "df": None}
 # cache simple (evita pegarle al sheet en cada request)
 _UNION_RAW_CACHE: dict[tuple[str, int], tuple[float, pd.DataFrame]] = {}
 
-def _load_union_pulsos_4books() -> pd.DataFrame:
+def _load_union_pulsos_4books_core(ttl_s: int | None = None) -> pd.DataFrame:
     """
-    UNION (4 libros):
-    - Suma Pulsos (col D normalmente) desde la fila 3.
-    - Toma Terminal (col E normalmente).
-    - Pero: detecta por headers 'Pulsos' y 'Terminal' para soportar hojas con columnas movidas.
-    Devuelve DF: terminal, pulsos, src
+    CICLO/APLICADORES - Uniones.
+
+    Compatibilidad:
+    - Libros viejos: hoja/resumen con columnas Terminal y Pulsos.
+    - Libros nuevos UNION 1/2: UNION*_Resumen_Hora, donde el GID de resumen
+      está en GSHEET_GID_APLICACION3 / GSHEET_GID_APLICACION4 y las paradas
+      quedan en GSHEET_GID_UNION3 / GSHEET_GID_UNION4.
+
+    Nunca usa una hoja de paradas si no encuentra explícitamente encabezados
+    'Terminal' y 'Pulsos'. Así se evita sumar columnas equivocadas.
     """
     import pandas as pd
     import time
     import re
 
-    ttl = int(getattr(config, "GSHEET_TTL_S", 10) or 10)
+    ttl = int(getattr(config, "GSHEET_TTL_S", 10) or 10) if ttl_s is None else int(ttl_s)
     now = time.time()
 
+    hit = _CICLO_UNION_CACHE.get("df")
+    if hit is not None and (now - float(_CICLO_UNION_CACHE.get("ts", 0.0))) < ttl:
+        return hit.copy()
+
+    def _gid_list(*values):
+        out = []
+        for v in values:
+            try:
+                gi = int(v or 0)
+            except Exception:
+                gi = 0
+            if gi > 0 and gi not in out:
+                out.append(gi)
+        return out
+
     def _download_gid(sheet_id: str, gid: int) -> pd.DataFrame:
-        url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={int(gid)}&_={int(now)}"
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "text/csv,text/plain;q=0.9,*/*;q=0.8",
-        }
+        sid = str(sheet_id or "").strip()
+        gid_i = int(gid or 0)
+        if not sid or not gid_i:
+            return pd.DataFrame()
 
-        r = requests.get(url, headers=headers, timeout=25)
-        r.raise_for_status()
+        urls = [
+            f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={gid_i}",
+            f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&gid={gid_i}",
+        ]
+        last = None
+        for url in urls:
+            try:
+                r = requests.get(
+                    url,
+                    headers={"User-Agent": "Mozilla/5.0 PlataformaMaquinas/1.0"},
+                    timeout=25,
+                )
+                r.raise_for_status()
+                raw = pd.read_csv(io.StringIO(r.text), header=None)
+                return raw.dropna(how="all").reset_index(drop=True)
+            except Exception as e:
+                last = e
+                continue
+        raise RuntimeError(f"No se pudo leer UNION CSV gid={gid_i}: {last}")
 
-        raw = pd.read_csv(io.StringIO(r.text), header=None)
-
-        return raw.dropna(how="all").reset_index(drop=True)
-
-    def _find_header_row(raw: pd.DataFrame, max_scan: int = 15) -> int:
-        # busca una fila que contenga 'pulsos' y 'terminal'
+    def _find_header_row(raw: pd.DataFrame, max_scan: int = 15) -> int | None:
         n = min(max_scan, len(raw))
         for i in range(n):
             row = raw.iloc[i].astype(str).str.strip().str.lower().tolist()
             if any("puls" in c for c in row) and any("terminal" in c for c in row):
                 return i
-        # fallback: header en fila 2 (index 1) o lo típico
-        return 1 if len(raw) > 1 else 0
+        return None
 
     def _col_idx_by_name(header_row: list[str], key: str) -> int | None:
         k = (key or "").strip().lower()
@@ -1801,80 +1879,87 @@ def _load_union_pulsos_4books() -> pd.DataFrame:
 
     def _parse_pulses(x) -> int:
         s = str(x or "").strip().replace("\u00a0", "").replace(" ", "")
-        if not s:
+        if not s or s.upper() in ("#VALUE!", "#REF!", "#DIV/0!", "#N/A", "N/A", "NA"):
             return 0
-
-        # limpia típicos errores de Sheets
-        if s.upper() in ("#VALUE!", "#REF!", "#DIV/0!", "#N/A", "N/A", "NA"):
-            return 0
-
-        # 75.155 (miles con punto) / 75,155 (miles con coma)
         if re.match(r"^\d{1,3}(\.\d{3})+(,\d+)?$", s):
             s = s.replace(".", "").replace(",", ".")
         elif re.match(r"^\d{1,3}(,\d{3})+(\.\d+)?$", s):
             s = s.replace(",", "")
         else:
             s = s.replace(",", ".")
-
         try:
             return int(round(float(s)))
         except Exception:
             return 0
 
     books = [
-        ("U1", getattr(config, "GSHEET_ID", None),  getattr(config, "GSHEET_GID_UNION", None)),
-        ("U2", getattr(config, "GSHEET_ID2", None), getattr(config, "GSHEET_GID_UNION2", None)),
-        ("U3", getattr(config, "GSHEET_ID3", None), getattr(config, "GSHEET_GID_UNION3", None)),
-        ("U4", getattr(config, "GSHEET_ID4", None), getattr(config, "GSHEET_GID_UNION4", None)),
+        # U1/U2 conservan compatibilidad con el tab viejo de Unión.
+        ("U1", getattr(config, "GSHEET_ID", None),  _gid_list(getattr(config, "GSHEET_GID_UNION", None),  getattr(config, "GSHEET_GID_APLICACION", None))),
+        ("U2", getattr(config, "GSHEET_ID2", None), _gid_list(getattr(config, "GSHEET_GID_UNION2", None), getattr(config, "GSHEET_GID_APLICACION2", None))),
+        # U3/U4 son las máquinas de Unión nuevas: primero Resumen_Hora, luego paradas como respaldo.
+        ("U3", getattr(config, "GSHEET_ID3", None), _gid_list(getattr(config, "GSHEET_GID_APLICACION3", None), getattr(config, "GSHEET_GID_UNION3", None))),
+        ("U4", getattr(config, "GSHEET_ID4", None), _gid_list(getattr(config, "GSHEET_GID_APLICACION4", None), getattr(config, "GSHEET_GID_UNION4", None))),
     ]
 
-    frames = []
+    frames: list[pd.DataFrame] = []
 
-    for tag, sid, gid in books:
-        if not sid or gid is None:
+    for tag, sid, gids in books:
+        if not sid or not gids:
             continue
 
-        raw = _download_gid(str(sid), int(gid))
-        if raw.empty:
+        selected = None
+        for gid in gids:
+            try:
+                raw = _download_gid(str(sid), int(gid))
+            except Exception:
+                continue
+            if raw.empty:
+                continue
+
+            h = _find_header_row(raw)
+            if h is None:
+                continue
+
+            header = raw.iloc[h].astype(str).str.strip().tolist()
+            col_pulsos = _col_idx_by_name(header, "puls")
+            col_term = _col_idx_by_name(header, "terminal")
+            if col_pulsos is None or col_term is None:
+                continue
+
+            selected = (raw, h, col_pulsos, col_term, gid)
+            break
+
+        if selected is None:
             continue
 
-        h = _find_header_row(raw)
-        header = raw.iloc[h].astype(str).str.strip().tolist()
-
-        col_pulsos = _col_idx_by_name(header, "puls")
-        col_term = _col_idx_by_name(header, "terminal")
-
-        # ✅ fallback si no encontró (tu estructura típica: Pulsos=D=3, Terminal=E=4)
-        if col_pulsos is None:
-            col_pulsos = 3
-        if col_term is None:
-            col_term = 4
-
-        df0 = raw.iloc[h + 1 :].copy().reset_index(drop=True)
-
-        # safety
+        raw, h, col_pulsos, col_term, gid_used = selected
+        df0 = raw.iloc[h + 1:].copy().reset_index(drop=True)
         if df0.shape[1] <= max(col_pulsos, col_term):
             continue
 
         pulsos = df0.iloc[:, col_pulsos].apply(_parse_pulses).astype("int64")
         terminal = df0.iloc[:, col_term].astype(str).str.strip()
-
-        # limpia terminal
         terminal = terminal.replace({"nan": "", "None": "", "#VALUE!": "", "#N/A": "", "#REF!": ""})
-        terminal = terminal.str.replace(r"\.0$", "", regex=True)  # por si viene "1026308.0"
-        terminal = terminal.str.strip()
+        terminal = terminal.str.replace(r"\.0$", "", regex=True).str.strip()
 
         tmp = pd.DataFrame({"terminal": terminal, "pulsos": pulsos})
         tmp["src"] = tag
+        tmp["gid"] = int(gid_used)
         tmp = tmp[tmp["terminal"].ne("")]
+        tmp = tmp[~tmp["terminal"].str.lower().isin(["total", "totales"])]
+        tmp = tmp[tmp["terminal"].str.match(r"^\d+$", na=False)]
+        tmp = tmp[tmp["pulsos"] > 0]
+        if not tmp.empty:
+            frames.append(tmp)
 
-        frames.append(tmp)
+    out = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["terminal", "pulsos", "src", "gid"])
+    _CICLO_UNION_CACHE["ts"] = now
+    _CICLO_UNION_CACHE["df"] = out.copy()
+    return out.copy()
 
-    if not frames:
-        return pd.DataFrame(columns=["terminal", "pulsos", "src"])
 
-    return pd.concat(frames, ignore_index=True)
-
+def _load_union_pulsos_4books() -> pd.DataFrame:
+    return _load_union_pulsos_4books_core()
 
 
 
@@ -1940,6 +2025,212 @@ def _load_thb_data_for_export(filename: str) -> tuple[pd.DataFrame, pd.DataFrame
 
     return df_verif, df_paradas
 
+
+
+# =========================
+# EXPORT HP -> Excel por día / semana / mes
+# =========================
+def _load_hp_data_for_export(filename: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Carga SOLO las hojas persistentes de HP para exportar:
+      - Corte
+      - Verificación de Medidas / Verificacion de Medidas
+      - Paradas
+      - Duración / Duracion (opcional en Excel local)
+
+    Importante: NO usa la hoja temporal "HP".
+    """
+    if filename == GSHEET_HP_TOKEN:
+        sheet_id = getattr(config, "HP_SHEET_ID", "") or ""
+        gid_corte = int(getattr(config, "HP_GID_CORTE", 0) or 0)
+        gid_verif = int(getattr(config, "HP_GID_VERIF", 0) or 0)
+        gid_par = int(getattr(config, "HP_GID_PARADAS", 0) or 0)
+        ttl = int(getattr(config, "GSHEET_TTL_S", 10) or 10)
+
+        if not sheet_id or not gid_corte or not gid_verif or not gid_par:
+            raise RuntimeError("Falta config HP en config.py (HP_SHEET_ID/HP_GID_*).")
+
+        df_corte = load_gsheet_tab_csv_smart(sheet_id, gid_corte, ttl_s=ttl).copy()
+        df_verif = load_gsheet_tab_csv_smart(sheet_id, gid_verif, ttl_s=ttl).copy()
+        df_paradas = load_gsheet_tab_csv_smart(sheet_id, gid_par, ttl_s=ttl).copy()
+        df_paradas = _normalize_gsheet_paradas_duration_to_seconds(df_paradas)
+        df_paradas = _hp_gsheet_fix_paradas_duration(df_paradas)
+        df_duracion = pd.DataFrame()
+        return df_corte, df_verif, df_paradas, df_duracion
+
+    path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"No existe el archivo: {filename}")
+
+    df_corte = _read_excel_smart(path, "Corte").copy()
+
+    try:
+        df_verif = _read_excel_smart(path, "Verificación de Medidas").copy()
+    except Exception:
+        df_verif = _read_excel_smart(path, "Verificacion de Medidas").copy()
+
+    df_paradas = _read_excel_smart(path, "Paradas").copy()
+
+    try:
+        df_duracion = pd.read_excel(path, sheet_name="Duración", header=None, engine="openpyxl")
+    except Exception:
+        try:
+            df_duracion = pd.read_excel(path, sheet_name="Duracion", header=None, engine="openpyxl")
+        except Exception:
+            df_duracion = pd.DataFrame()
+
+    return df_corte, df_verif, df_paradas, df_duracion
+
+
+def _hp_days_for_period_export(df_corte: pd.DataFrame, period: str, period_value: str) -> list[pd.Timestamp]:
+    cols = _resolve_hp_corte_cols(df_corte)
+    if not cols.col_fecha:
+        return []
+
+    dt = _hp_build_dt(df_corte, cols.col_fecha, cols.col_hora)
+    fallback = None
+    if dt is not None and not pd.to_datetime(dt, errors="coerce").dropna().empty:
+        fallback = pd.Timestamp(pd.to_datetime(dt, errors="coerce").dropna().min()).normalize()
+
+    r0, r1 = _hp_range_from_period(period, period_value, fallback)
+    if r0 is None or r1 is None:
+        return []
+
+    m = pd.to_datetime(dt, errors="coerce").notna() & (pd.to_datetime(dt, errors="coerce") >= r0) & (pd.to_datetime(dt, errors="coerce") <= r1)
+    days = (
+        pd.to_datetime(dt.loc[m], errors="coerce")
+        .dropna()
+        .dt.normalize()
+        .drop_duplicates()
+        .sort_values()
+        .tolist()
+    )
+    return [pd.Timestamp(d) for d in days]
+
+
+def _hp_export_rows_for_day(
+    df_corte: pd.DataFrame,
+    day: pd.Timestamp,
+    buckets: list[dict],
+    operator: str = "",
+) -> list[dict]:
+    cols = _resolve_hp_corte_cols(df_corte)
+    if not cols.col_fecha:
+        return []
+
+    dt = _hp_build_dt(df_corte, cols.col_fecha, cols.col_hora)
+    day0 = pd.Timestamp(day).normalize()
+    day1 = day0 + pd.Timedelta(days=1)
+
+    m = pd.to_datetime(dt, errors="coerce").notna() & (pd.to_datetime(dt, errors="coerce") >= day0) & (pd.to_datetime(dt, errors="coerce") < day1)
+    sub = df_corte.loc[m].copy()
+    dt_sub = pd.to_datetime(dt.loc[m], errors="coerce").copy()
+
+    bucket_by_hour: dict[int, dict] = {}
+    for b in (buckets or []):
+        try:
+            hh = int(str(b.get("hour") or "0"))
+        except Exception:
+            continue
+        bucket_by_hour[hh] = b
+
+    hours = sorted(bucket_by_hour.keys())
+    if not hours and not sub.empty:
+        hours = sorted(pd.to_datetime(dt_sub, errors="coerce").dropna().dt.hour.unique().tolist())
+
+    def _num_series(df: pd.DataFrame, col: str | None) -> pd.Series:
+        if not col or col not in df.columns:
+            return pd.Series([], dtype="float64")
+        return pd.to_numeric(
+            df[col].astype(str)
+            .str.replace("\u00a0", "", regex=False)
+            .str.replace(" ", "", regex=False)
+            .str.replace(r"^(\d{1,3})\.(\d{3})(,\d+)?$", lambda m: m.group(1) + m.group(2) + (m.group(3) or ""), regex=True)
+            .str.replace(",", ".", regex=False),
+            errors="coerce"
+        ).fillna(0.0).astype(float)
+
+    rows: list[dict] = []
+    op_fixed = (operator or "").strip()
+    op_export = op_fixed if (op_fixed and op_fixed.lower() != "general") else "General"
+
+    for hh in hours:
+        h0 = day0 + pd.Timedelta(hours=int(hh))
+        h1 = h0 + pd.Timedelta(hours=1)
+
+        in_hour = dt_sub.notna() & (dt_sub >= h0) & (dt_sub < h1)
+        hour_df = sub.loc[in_hour].copy()
+
+        buenas = _num_series(hour_df, cols.col_buenas)
+        total = _num_series(hour_df, cols.col_total)
+        solic = _num_series(hour_df, cols.col_solic)
+
+        if not buenas.empty:
+            cut = int(round(float(buenas.sum())))
+        elif not total.empty:
+            cut = int(round(float(total.sum())))
+        else:
+            cut = 0
+
+        if not total.empty:
+            if not buenas.empty:
+                planned_calc = int(round(float(total.where(total > 0, buenas).sum())))
+            else:
+                planned_calc = int(round(float(total.sum())))
+        else:
+            planned_calc = cut
+
+        reject = int(round(float(solic.sum()))) if not solic.empty else max(0, int(cut) - int(planned_calc))
+
+        referencias = []
+        c_ref = cols.col_ref_cable
+        if c_ref and c_ref in hour_df.columns and not hour_df.empty:
+            vals = hour_df[c_ref].dropna().astype(str).str.strip()
+            vals = vals[vals.ne("") & ~vals.str.lower().isin(["nan", "none"])]
+            seen = set()
+            for raw in vals.tolist():
+                ref = str(raw).strip()
+                key = ref.upper()
+                if key in seen:
+                    continue
+                seen.add(key)
+                referencias.append(ref)
+                if len(referencias) >= 5:
+                    break
+
+        b = bucket_by_hour.get(int(hh), {})
+        meal_sec = int(b.get("mealSec", 0) or 0)
+        tx_sec = int(b.get("otherDeadSec", b.get("otherRecordedSec", 0)) or 0)
+
+        # Misma regla del modelo usado para THB: desayuno/almuerzo no pagados.
+        meal_fixed_sec = 0
+        if int(hh) == 8:
+            meal_fixed_sec = 15 * 60
+        elif int(hh) == 13:
+            meal_fixed_sec = 30 * 60
+
+        meal_applied_sec = max(meal_fixed_sec, meal_sec) if meal_fixed_sec > 0 else 0
+        meal_applied_sec = max(0, min(3600, meal_applied_sec))
+        tp_h_excel = round((3600 - meal_applied_sec) / 3600.0, 3)
+
+        tcnp_sec = float(b.get("tcnpSec", 0.0) or 0.0)
+
+        rows.append({
+            "fecha": day0.to_pydatetime(),
+            "referencia": ", ".join(referencias),
+            "equipo": "HP",
+            "operario": op_export,
+            "inicio": h0.to_pydatetime(),
+            "fin": h1.to_pydatetime(),
+            "pp": None,
+            "pn": int(cut),
+            "rx": int(max(0, reject)),
+            "tp_h": float(tp_h_excel),
+            "tx_h": round(max(0, tx_sec) / 3600.0, 3),
+            "tc_h_uni": (tcnp_sec / 3600.0) if tcnp_sec > 0 else None,
+        })
+
+    return rows
 
 
 def _safe_xlsx_sheet_title(title: str) -> str:
@@ -2449,6 +2740,16 @@ def _build_thb_export_workbook(day_exports: list[dict], period: str) -> io.Bytes
         for c in range(7, 23):
             ws.cell(total_row, c).border = Border(top=thin_black, bottom=thin_black)
 
+        # ✅ UNIÓN 2: dejar visibles solo PB, RX (defectos), TP, TW y VN.
+        # Se ocultan las demás columnas de indicadores (no se borran).
+        # Visibles: A-F (contexto) + I(RX) J(PB) K(TP) M(TW) O(VN).
+        # Ocultas:  G(PP) H(PN) L(TX) N(TC) P(TCN) Q(TCE) R(ID) S(IEO) T(IC) U(OEE) V(PA).
+        if item.get("hide_extra_cols"):
+            from openpyxl.utils import get_column_letter
+            cols_ocultar = [7, 8, 12, 14, 16, 17, 18, 19, 20, 21, 22]
+            for c in cols_ocultar:
+                ws.column_dimensions[get_column_letter(c)].hidden = True
+
     # borrar hoja maestra original
     base_wb.remove(master_ws)
 
@@ -2539,6 +2840,89 @@ def export_thb_excel():
     except Exception as e:
         app.logger.exception("export_thb_excel failed")
         return jsonify({"ok": False, "error": f"Error exportando Excel THB: {e}"}), 500
+
+
+@app.get("/export_hp_excel")
+def export_hp_excel():
+    try:
+        filename = (request.args.get("filename") or "").strip()
+        machine = (request.args.get("machine") or "HP").strip().upper()
+        period = (request.args.get("period") or "day").strip().lower()
+        period_value = (request.args.get("period_value") or "").strip()
+        operator = (request.args.get("operator") or "").strip()
+
+        if machine != "HP":
+            return jsonify({"ok": False, "error": "Esta exportación solo aplica para HP."}), 400
+        if not filename:
+            return jsonify({"ok": False, "error": "Falta filename."}), 400
+        if not period_value:
+            return jsonify({"ok": False, "error": "Falta period_value."}), 400
+
+        df_corte, df_verif, df_paradas, df_duracion = _load_hp_data_for_export(filename)
+        days = _hp_days_for_period_export(df_corte, period, period_value)
+
+        if not days:
+            return jsonify({"ok": False, "error": "No se encontraron días con datos de Corte para exportar."}), 404
+
+        day_exports = []
+        for day in days:
+            result_day = analyze_hp(
+                df_corte,
+                df_verif,
+                period="day",
+                period_value=day.strftime("%Y-%m-%d"),
+                machine="HP",
+                operator=operator,
+                time_start="",
+                time_end="",
+                time_apply=False,
+                df_paradas=df_paradas,
+                df_duracion=df_duracion,
+            )
+
+            if not isinstance(result_day, dict) or result_day.get("status") != "ok":
+                continue
+
+            rows = _hp_export_rows_for_day(
+                df_corte=df_corte,
+                day=day,
+                buckets=result_day.get("kpis", {}).get("hourly_buckets", []),
+                operator=operator,
+            )
+            if not rows:
+                continue
+
+            day_exports.append({
+                "sheet_title": day.strftime("%Y-%m-%d"),
+                "rows": rows,
+            })
+
+        if not day_exports:
+            return jsonify({"ok": False, "error": "No hubo datos exportables para los días seleccionados."}), 404
+
+        period_tag = {
+            "day": period_value,
+            "week": period_value.replace("/", "-"),
+            "month": period_value,
+        }.get(period, period_value)
+
+        download_name = f"HP_{period}_{period_tag}.xlsx".replace("/", "-").replace("\\", "-")
+        payload = _build_thb_export_workbook(day_exports, period)
+
+        resp = send_file(
+            payload,
+            as_attachment=True,
+            download_name=download_name,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        return resp
+
+    except Exception as e:
+        app.logger.exception("export_hp_excel failed")
+        return jsonify({"ok": False, "error": f"Error exportando Excel HP: {e}"}), 500
 
 
 @app.get("/export_crimpado_excel")
@@ -2806,116 +3190,7 @@ def run_analysis_api():
         return pd.Series([pd.NaT] * len(df), dtype="datetime64[ns]")
 
     def _load_union_pulsos_4books(ttl_s: int | None = None) -> pd.DataFrame:
-        import pandas as pd
-        import time
-        import re
-
-        global _CICLO_UNION_CACHE
-        try:
-            _CICLO_UNION_CACHE
-        except NameError:
-            _CICLO_UNION_CACHE = {"ts": 0.0, "df": None}
-
-        ttl = int(getattr(config, "GSHEET_TTL_S", 10) or 10) if ttl_s is None else int(ttl_s)
-        now = time.time()
-
-        hit = _CICLO_UNION_CACHE.get("df")
-        if hit is not None and (now - float(_CICLO_UNION_CACHE.get("ts", 0.0))) < ttl:
-            return hit.copy()
-
-        def _download_gid(sheet_id: str, gid: int) -> pd.DataFrame:
-            url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={int(gid)}&_={int(now)}"
-            raw = pd.read_csv(url, header=None)
-            return raw.dropna(how="all").reset_index(drop=True)
-
-        def _find_header_row(raw: pd.DataFrame, max_scan: int = 15) -> int:
-            n = min(max_scan, len(raw))
-            for i in range(n):
-                row = raw.iloc[i].astype(str).str.strip().str.lower().tolist()
-                if any("puls" in c for c in row) and any("terminal" in c for c in row):
-                    return i
-            return 1 if len(raw) > 1 else 0
-
-        def _col_idx_by_name(header_row: list[str], key: str) -> int | None:
-            k = (key or "").strip().lower()
-            for idx, cell in enumerate(header_row):
-                s = str(cell).strip().lower()
-                if k in s:
-                    return idx
-            return None
-
-        def _parse_pulses(x) -> int:
-            s = str(x or "").strip().replace("\u00a0", "").replace(" ", "")
-            if not s:
-                return 0
-            if s.upper() in ("#VALUE!", "#REF!", "#DIV/0!", "#N/A", "N/A", "NA"):
-                return 0
-
-            if re.match(r"^\d{1,3}(\.\d{3})+(,\d+)?$", s):
-                s = s.replace(".", "").replace(",", ".")
-            elif re.match(r"^\d{1,3}(,\d{3})+(\.\d+)?$", s):
-                s = s.replace(",", "")
-            else:
-                s = s.replace(",", ".")
-
-            try:
-                return int(round(float(s)))
-            except Exception:
-                return 0
-
-        books = [
-            ("U1", getattr(config, "GSHEET_ID", None), getattr(config, "GSHEET_GID_UNION", None)),
-            ("U2", getattr(config, "GSHEET_ID2", None), getattr(config, "GSHEET_GID_UNION2", None)),
-            ("U3", getattr(config, "GSHEET_ID3", None), getattr(config, "GSHEET_GID_UNION3", None)),
-            ("U4", getattr(config, "GSHEET_ID4", None), getattr(config, "GSHEET_GID_UNION4", None)),
-        ]
-
-        frames: list[pd.DataFrame] = []
-
-        for tag, sid, gid in books:
-            if not sid or gid is None:
-                continue
-
-            raw = _download_gid(str(sid), int(gid))
-            if raw.empty:
-                continue
-
-            h = _find_header_row(raw)
-            header = raw.iloc[h].astype(str).str.strip().tolist()
-
-            col_pulsos = _col_idx_by_name(header, "puls")
-            col_term = _col_idx_by_name(header, "terminal")
-
-            if col_pulsos is None:
-                col_pulsos = 3
-            if col_term is None:
-                col_term = 4
-
-            df0 = raw.iloc[h + 1:].copy().reset_index(drop=True)
-
-            if df0.shape[1] <= max(col_pulsos, col_term):
-                continue
-
-            pulsos = df0.iloc[:, col_pulsos].apply(_parse_pulses).astype("int64")
-            terminal = df0.iloc[:, col_term].astype(str).str.strip()
-
-            terminal = terminal.replace({"nan": "", "None": "", "#VALUE!": "", "#N/A": "", "#REF!": ""})
-            terminal = terminal.str.replace(r"\.0$", "", regex=True)
-            terminal = terminal.str.strip()
-
-            tmp = pd.DataFrame({"terminal": terminal, "pulsos": pulsos})
-            tmp["src"] = tag
-
-            tmp = tmp[tmp["terminal"].ne("")]
-            tmp = tmp[~tmp["terminal"].str.lower().isin(["total", "totales"])]
-            tmp = tmp[tmp["terminal"].str.match(r"^\d+$", na=False)]
-
-            frames.append(tmp)
-
-        out = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["terminal", "pulsos", "src"])
-        _CICLO_UNION_CACHE["ts"] = now
-        _CICLO_UNION_CACHE["df"] = out.copy()
-        return out.copy()
+        return _load_union_pulsos_4books_core(ttl_s=ttl_s)
 
     # =========================================================
     # ✅ NUEVO: Continuidad (Buses/Motos) por Google Sheets
@@ -3411,7 +3686,7 @@ def run_analysis_api():
             df = _load_union_pulsos_4books()
 
             if df.empty:
-                return _nocache_json({"ok": False, "error": "No hay datos en UNION (col D desde fila 3)."}, 400)
+                return _nocache_json({"ok": False, "error": "No hay datos válidos en UNION (se requieren columnas Terminal y Pulsos en el resumen)."}, 400)
 
             grp = df.groupby("terminal", dropna=True)["pulsos"].sum().sort_values(ascending=False)
 
@@ -3435,7 +3710,7 @@ def run_analysis_api():
                     "otros": [0] * len(totals),
                     "total": totals,
                 },
-                "note": "UNION: suma col D desde fila 3 en 4 libros (GSHEET_GID_UNION..GSHEET_GID_UNION4).",
+                "note": "UNION: suma la columna Pulsos por Terminal. Para Unión 1/2 usa UNION*_Resumen_Hora cuando el GID esté configurado.",
             }
             return _nocache_json({"ok": True, "result": result}, 200)
 

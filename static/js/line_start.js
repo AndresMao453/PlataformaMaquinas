@@ -465,7 +465,7 @@ function renderThbOeeChart(result){
     const disponibilidad = Array.isArray(chart?.disponibilidad) ? chart.disponibilidad.map(x => Number(x) || 0) : [];
     const calidad = Array.isArray(chart?.calidad) ? chart.calidad.map(x => Number(x) || 0) : [];
 
-    const isOeeModel = (machine === "THB" || machine === "APLICACION" || machine === "UNION" || machine === "BUSES" || machine === "MOTOS");
+    const isOeeModel = (machine === "THB" || machine === "HP" || machine === "APLICACION" || machine === "UNION" || machine === "BUSES" || machine === "MOTOS");
     if(!isOeeModel || !labels.length){
       destroyThbOeeChart();
       return;
@@ -1927,6 +1927,37 @@ function renderTerminalUsage(result){
 // =========================
 // ✅ Pareto Aplicación/Unión (usa result.pareto.items)
 // =========================
+function _parseParetoItemForLegend(it){
+  const label = String(it?.label ?? "").trim();
+
+  let code = "";
+  let desc = label;
+
+  const m = label.match(/^\s*(\d+)\s*-\s*(.+)\s*$/);
+  if(m){
+    code = m[1];
+    desc = m[2];
+  }else{
+    const m2 = label.match(/^\s*(\d+)\s*$/);
+    if(m2){
+      code = m2[1];
+      desc = STOP_CODE_DESC[code] || label;
+    }else{
+      code = "";
+      desc = label || "TX sin detalle";
+    }
+  }
+
+  return {
+    code,
+    desc,
+    chartLabel: code || desc || "TX sin detalle",
+  };
+}
+
+// ✅ Pareto Aplicación/Unión con el MISMO formato visual de THB/HP.
+// Mantiene la fuente de datos de crimpado (result.pareto.items), pero renderiza
+// título, subtítulo, tabla, tamaño del gráfico, ejes y tooltip igual que THB.
 function renderParetoAplicacion(result){
   try{
     const pareto = result?.pareto || null;
@@ -1936,55 +1967,57 @@ function renderParetoAplicacion(result){
     const canvas = document.getElementById("paretoChart");
     if(!titleEl || !wrap || !canvas) return;
 
-    const items = pareto?.items || [];
-    if(!Array.isArray(items) || items.length === 0){
+    const rawItems = pareto?.items || [];
+    if(!Array.isArray(rawItems) || rawItems.length === 0){
       destroyPareto();
       return;
     }
 
-    titleEl.textContent = "Pareto de Tiempos Perdidos TX";
-    titleEl.style.display = "block";
-    wrap.style.display = "block";
+    const items = rawItems
+      .map(it => {
+        const sec = Number(it?.seconds ?? 0) || 0;
+        const pct = Number(it?.pct ?? 0) || 0;
+        const cum = Number(it?.cum_pct ?? 0) || 0;
+        const meta = _parseParetoItemForLegend(it);
+        return {
+          ...meta,
+          sec,
+          pct,
+          cum,
+          hhmm: String(it?.hhmm ?? secToHHMM(sec)),
+        };
+      })
+      .filter(it => it.sec > 0);
 
+    if(items.length === 0){
+      destroyPareto();
+      return;
+    }
+
+    titleEl.textContent = paretoTitle(String(result?.period || ""));
+    titleEl.style.display = "block";
+
+    const paretoSub = _ensureChartSubtitle(titleEl, "paretoChartSub");
+    if(paretoSub){
+      const txt = _chartPrettyPeriod(result);
+      _setChartSubtitleEdgeToEdge(paretoSub, txt);
+    }
+
+    // Tabla estilo THB/HP: Código | Descripción | Duración | % Acum.
     const legendWrap = document.getElementById("paretoLegendWrap");
     const tbody = document.getElementById("paretoLegendBody");
     if(legendWrap && tbody){
       tbody.innerHTML = "";
-
-      items.forEach(it=>{
-        const label = String(it.label ?? "").trim();
-
-        let code = "";
-        let desc = label;
-
-        const m = label.match(/^\s*(\d+)\s*-\s*(.+)\s*$/);
-        if(m){
-          code = m[1];
-          desc = m[2];
-        }else{
-          const m2 = label.match(/^\s*(\d+)\s*$/);
-          if(m2){
-            code = m2[1];
-            desc = STOP_CODE_DESC[code] || label;
-          }else{
-            code = "";
-            desc = label;
-          }
-        }
-
-        const dur = String(it.hhmm ?? secToHHMM(it.seconds ?? 0));
-        const cum = (typeof it.cum_pct === "number") ? it.cum_pct : 0;
-
+      items.forEach(it => {
         const tr = document.createElement("tr");
         tr.innerHTML = `
-          <td style="width:120px;">${escHtml(code)}</td>
-          <td>${escHtml(desc)}</td>
-          <td style="width:120px; text-align:right;"><b>${escHtml(dur)}</b></td>
-          <td style="width:90px; text-align:right;"><b>${escHtml(cum.toFixed(1))}</b>%</td>
+          <td><b>${escHtml(it.code || "—")}</b></td>
+          <td>${escHtml(it.desc || "—")}</td>
+          <td style="text-align:right;"><b>${escHtml(secToHHMM(it.sec))}</b></td>
+          <td style="text-align:right;"><b>${escHtml(_round2(it.cum))}</b>%</td>
         `;
         tbody.appendChild(tr);
       });
-
       legendWrap.style.display = "block";
     }
 
@@ -1993,12 +2026,21 @@ function renderParetoAplicacion(result){
       return;
     }
 
+    wrap.style.display = "block";
+    wrap.style.height = "390px";
+    wrap.style.minHeight = "390px";
+    wrap.style.maxHeight = "390px";
+
+    canvas.style.width = "100%";
+    canvas.style.height = "320px";
+    canvas.style.maxHeight = "320px";
+
     _destroyParetoChartOnly();
 
-    const labels = items.map(it => String(it.label ?? ""));
-    const durSec = items.map(it => Number(it.seconds ?? 0) || 0);
+    const labels = items.map(it => it.chartLabel);
+    const durSec = items.map(it => Number(it.sec) || 0);
     const durMin = durSec.map(s => s / 60.0);
-    const cumPct = items.map(it => Number(it.cum_pct ?? 0) || 0);
+    const cumPct = items.map(it => Number(it.cum) || 0);
 
     _paretoChart = new Chart(canvas.getContext("2d"), {
       data: {
@@ -2010,6 +2052,7 @@ function renderParetoAplicacion(result){
       },
       options: {
         responsive: true,
+        maintainAspectRatio: false,
         plugins: {
           legend: { display: true },
           tooltip: {
@@ -2025,10 +2068,35 @@ function renderParetoAplicacion(result){
           }
         },
         scales: {
-          y:  { beginAtZero: true, title: { display: true, text: "Duración (min)" } },
-          y1: { beginAtZero: true, min: 0, max: 100, position: "right",
-                grid: { drawOnChartArea: false },
-                title: { display: true, text: "Acumulado (%)" } }
+          y: {
+            beginAtZero: true,
+            title: {
+              display: true,
+              text: "Duración (min)"
+            }
+          },
+          y1: {
+            beginAtZero: true,
+            min: 0,
+            max: 100,
+            position: "right",
+            grid: {
+              drawOnChartArea: false
+            },
+            title: {
+              display: true,
+              text: "Acumulado (%)"
+            }
+          },
+          x: {
+            grid: {
+              display: false
+            },
+            title: {
+              display: true,
+              text: "Causa de parada"
+            }
+          }
         }
       }
     });
@@ -2305,6 +2373,44 @@ function _causeLabel(c){
   return String(c.label ?? c.cause ?? c.name ?? "").trim();
 }
 
+function _prodHourFirstNameFromText(value){
+  const raw = String(value ?? "").trim();
+  if(!raw) return "";
+
+  const cleaned = raw
+    .replace(/\s+/g, " ")
+    .replace(/^[\-–—]+|[\-–—]+$/g, "")
+    .trim();
+
+  if(!cleaned) return "";
+
+  const low = cleaned.toLowerCase();
+  if(low === "general" || low === "nan" || low === "none" || low === "null" || low === "—") return "";
+
+  // Solo primer nombre, tomado del resultado del backend/Excel.
+  // Ej: "Neixler Domínguez" -> "NEIXLER".
+  const first = cleaned.split(" ")[0].replace(/[.,;:]+$/g, "").trim();
+  return first ? first.toUpperCase() : "";
+}
+
+function _prodHourTitleOperatorName(result){
+  const values = [
+    result?.productivity_operator_first_name,
+    result?.productivity_operator_name,
+    result?.current_operator_first_name,
+    result?.current_operator_name,
+    result?.operator_first_name,
+    result?.operator,
+    document.getElementById("operatorSelect")?.value
+  ];
+
+  for(const v of values){
+    const first = _prodHourFirstNameFromText(v);
+    if(first) return first;
+  }
+  return "";
+}
+
 
 
 function renderProdHour(result){
@@ -2325,10 +2431,10 @@ function renderProdHour(result){
     ""
   ).trim();
 
-  if(machineTitleU === "UNION" && machineId === "1"){
-    title.textContent = "Productividad por hora - VIVIANA B.";
-  }else if(machineTitleU === "APLICACION" && machineId === "1"){
-    title.textContent = "Productividad por hora - ELIZABETH C.";
+  const prodOperatorFirstName = _prodHourTitleOperatorName(result);
+
+  if(prodOperatorFirstName){
+    title.textContent = `Productividad por hora - ${prodOperatorFirstName}`;
   }else if(machineTitleU === "THB"){
     title.textContent = "Productividad por hora THB";
   }else{
@@ -2366,7 +2472,7 @@ function renderProdHour(result){
   const isAplic = (machineU === "APLICACION" || machineU === "UNION");
   const isCont = (machineU === "BUSES" || machineU === "MOTOS");
   const showLenMix = (!isAplic) && (!isCont) && (machineU !== "HP") && (machineU !== "THB");
-  const showMeters = (!isAplic) && (!isCont) && (machineU !== "HP");
+  const showMeters = (!isAplic) && (!isCont);
 
   // OEE esperado visual por hora.
   // IMPORTANTE:
@@ -2384,7 +2490,7 @@ function renderProdHour(result){
   const oeeEsperadoBackend = Number(result?.kpis?.oee_esperado);
   const OEE_ESPERADO_HORA = (__isCrimpadoForOee && Number.isFinite(oeeEsperadoBackend) && oeeEsperadoBackend > 0)
     ? oeeEsperadoBackend
-    : (machineU === "THB"
+    : ((machineU === "THB" || machineU === "HP")
       ? OEE_ESPERADO_THB_HORA
       : ((machineU === "UNION" && machineId === "1") ? OEE_ESPERADO_UNION1_HORA : OEE_ESPERADO_CRIMPADO_BASE_HORA));
 
@@ -2625,23 +2731,37 @@ function renderProdHour(result){
 
     const isCrimpadoMachine = (machineU === "APLICACION" || machineU === "UNION");
 
-    const tcnpHtml = (tcnpSec > 0 && (machineU === "THB" || isCrimpadoMachine))
-      ? `<div class="ph-tcnp">${machineU === "THB" ? "T. Ciclo" : "T. Estándar"}: ${escHtml(tcnpSec.toFixed(4))} ${machineU === "THB" ? "s/pz" : "s/terminal"}</div>`
+    const tcnpHtml = (tcnpSec > 0 && (machineU === "THB" || machineU === "HP" || isCrimpadoMachine))
+      ? `<div class="ph-tcnp">${(machineU === "THB" || machineU === "HP") ? "T. Ciclo" : "T. Estándar"}: ${escHtml(tcnpSec.toFixed(4))} ${(machineU === "THB" || machineU === "HP") ? "s/pz" : "s/terminal"}</div>`
       : ``;
 
     const vnUph = (tcnpSec > 0) ? (3600 / tcnpSec) : 0;
     const vnTxt = escHtml(fmtIntEs(Math.round(vnUph)));
 
-    const vnHtml = (tcnpSec > 0 && (machineU === "THB" || isCrimpadoMachine))
+    const vnHtml = (tcnpSec > 0 && (machineU === "THB" || machineU === "HP" || isCrimpadoMachine))
       ? `<div class="ph-tcnp">Vel Nom: ${vnTxt} unid/h</div>`
       : ``;
 
-    const tnomHtml = (machineU === "THB" && tnomSec > 0)
+    const tnomHtml = ((machineU === "THB" || machineU === "HP") && tnomSec > 0)
       ? `<div class="ph-tnom">T. Corte: ${escHtml(secToHHMMSS(Math.round(tnomSec)))}</div>`
       : ``;
 
     const bucketHourKey = _normHourKey(hourStart);
-    const oeeHoraPct = Number(oeeByHour.get(bucketHourKey) ?? 0) || 0;
+
+    function _numOrNull(v){
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    // Aplicación/Unión: usar primero los valores que vienen del backend,
+    // porque son los mismos que se calculan para el Excel descargable.
+    const oeePctBackend = _numOrNull(b.oeePct ?? b.oee_pct);
+    const oeeRatioBackend = _numOrNull(b.oee);
+    const oeeHoraPct = (oeePctBackend !== null)
+      ? oeePctBackend
+      : ((oeeRatioBackend !== null && oeeRatioBackend <= 1.5)
+        ? oeeRatioBackend * 100
+        : (Number(oeeByHour.get(bucketHourKey) ?? 0) || 0));
 
     const vnHoraUph = (tcnpSec > 0) ? (3600 / tcnpSec) : 0;
 
@@ -2670,15 +2790,30 @@ function renderProdHour(result){
       ? backendPlanUnits
       : planHoraUnits;
 
-    const cumplimientoHoraPct = (planForPctUnits > 0)
+    const cumplimientoCalcPct = (planForPctUnits > 0)
       ? ((circuits / planForPctUnits) * 100)
       : 0;
+
+    const paPctBackend = _numOrNull(b.paPct ?? b.pa_pct);
+    const paRatioBackend = _numOrNull(b.pa);
+    const cumplimientoHoraPct = (paPctBackend !== null)
+      ? paPctBackend
+      : ((paRatioBackend !== null && paRatioBackend <= 1.5) ? paRatioBackend * 100 : cumplimientoCalcPct);
+
+    const tpExcelSec = (_numOrNull(b.tpH) !== null) ? Math.max(0, Number(b.tpH) * 3600) : Math.max(0, Number(b.capacitySec) || 0);
+    const twExcelSec = (_numOrNull(b.twH) !== null) ? Math.max(0, Number(b.twH) * 3600) : Math.max(0, Number(prodSec) || 0);
+    const txExcelSec = (_numOrNull(b.txH) !== null) ? Math.max(0, Number(b.txH) * 3600) : Math.max(0, Number(otherDeadSecFinal) || 0);
+    const idExcelPct = (_numOrNull(b.idPct) !== null)
+      ? Number(b.idPct)
+      : ((tpExcelSec > 0) ? (twExcelSec / tpExcelSec) * 100 : 0);
+    const txExcelPct = (tpExcelSec > 0) ? (txExcelSec / tpExcelSec) * 100 : 0;
 
     const hasMeal = (Number(mealSec) || 0) > 0;
 
     // ✅ THB + CRIMPADO: mostrar OEE / PA / TW / TX en tarjetas por hora
     const showHourMiniKpis = (
       machineU === "THB" ||
+      machineU === "HP" ||
       machineU === "APLICACION" ||
       machineU === "UNION"
     );
@@ -2694,11 +2829,11 @@ function renderProdHour(result){
         </div>
 
         <div class="ph-mini-kpi ph-mini-kpi-work">
-          TW: ${escHtml(fmtParts.prodStr)} &nbsp; ${escHtml(pct.prodPct)}
+          TW: ${escHtml(_fmtHourDecFromSec(twExcelSec))} &nbsp; ${escHtml(idExcelPct.toFixed(1))}%
         </div>
 
         <div class="ph-mini-kpi ph-mini-kpi-loss ph-otro-btn" role="button" tabindex="0" title="Ver causas de paro">
-          TX: ${escHtml(fmtParts.otherStr)} &nbsp; ${escHtml(pct.otherPct)}
+          TX: ${escHtml(_fmtHourDecFromSec(txExcelSec))} &nbsp; ${escHtml(txExcelPct.toFixed(1))}%
         </div>
       </div>
     ` : ``;
@@ -2709,7 +2844,7 @@ function renderProdHour(result){
     // - Si no existe, queda 0.
     let planExcelUnits = 0;
 
-    if(machineU === "THB"){
+    if(machineU === "THB" || machineU === "HP"){
       planExcelUnits = Math.round(Number(planHoraUnits) || 0);
     }
 
@@ -2719,6 +2854,7 @@ function renderProdHour(result){
 
     const showRealVsPlan = (
       machineU === "THB" ||
+      machineU === "HP" ||
       machineU === "APLICACION" ||
       machineU === "UNION"
     );
@@ -2744,7 +2880,7 @@ function renderProdHour(result){
       ${metersHtml}
       ${hourlyMiniKpisHtml}
 
-      ${((machineU === "THB" || isCrimpadoMachine) && (tcnpHtml || vnHtml || tnomHtml)) ? `
+      ${(((machineU === "THB" || machineU === "HP") || isCrimpadoMachine) && (tcnpHtml || vnHtml || tnomHtml)) ? `
         <div class="ph-nom-box">
           ${tcnpHtml}
           ${vnHtml}
@@ -2851,6 +2987,23 @@ function buildThbExportUrl(result){
   return `${URLS.export_thb_excel}?${p.toString()}`;
 }
 
+function buildHpExportUrl(result){
+  const exportUrl = URLS.export_hp_excel || "/export_hp_excel";
+
+  const p = new URLSearchParams();
+  p.set("filename", _cfgStr(CFG.filename));
+  p.set("machine", "HP");
+  p.set("period", String(result?.period || document.getElementById("periodInput")?.value || "day"));
+  p.set("period_value", String(result?.period_value || getPeriodValue() || ""));
+
+  const op = String(document.getElementById("operatorSelect")?.value || result?.operator || "General").trim();
+  if(op) p.set("operator", op);
+
+  p.set("_", String(Date.now()));
+  return `${exportUrl}?${p.toString()}`;
+}
+
+
 function buildCrimpadoExportUrl(result){
   const exportUrl = URLS.export_crimpado_excel || "/export_crimpado_excel";
 
@@ -2886,12 +3039,23 @@ function updateThbExportAction(result){
 
   const machineU = String(result?.machine || "").toUpperCase();
   const isThb = machineU === "THB";
+  const isHp = machineU === "HP";
   const isCrimpado = (machineU === "APLICACION" || machineU === "UNION");
 
   if(isThb && URLS.export_thb_excel){
     const url = buildThbExportUrl(result);
     box.innerHTML = `
       <a class="btn thb-download-callout-link" href="${escHtml(url)}">Descargar Excel THB</a>
+    `;
+    box.style.display = "flex";
+    if(callout) callout.style.display = "block";
+    return;
+  }
+
+  if(isHp){
+    const url = buildHpExportUrl(result);
+    box.innerHTML = `
+      <a class="btn thb-download-callout-link" href="${escHtml(url)}">Descargar Excel HP</a>
     `;
     box.style.display = "flex";
     if(callout) callout.style.display = "block";
@@ -2981,13 +3145,9 @@ function renderInlineKPIs(result){
 
   if(m === "HP"){
     order = [
-      { key: "Circuitos Cortados",     cls: "kpi-green",  span: "kpi-row-3" },
-      { key: "Circuitos Planeados",    cls: "kpi-cyan",   span: "kpi-row-3" },
-      { key: "Circuitos No Conformes", cls: "kpi-red",    span: "kpi-row-3" },
-
-      { key: "Horas Disponibles",      cls: "",           span: "kpi-row-4" },
-      { key: "Tiempos Perdidos",       cls: "kpi-blue",   span: "kpi-row-2" },
-      { key: "Tiempo Trabajado",       cls: "kpi-green2", span: "kpi-row-4" },
+      { key: "OEE",                   cls: "kpi-blue",                  span: "kpi-row-2" },
+      { key: "Cumplimiento del plan", cls: "kpi-green",                 span: "kpi-row-4" },
+      { key: "Metros Cortados",       cls: "kpi-cyan2 kpi-thb-metros",  span: "kpi-row-4" },
     ];
   }
 
@@ -3015,25 +3175,26 @@ function renderInlineKPIs(result){
     }
   });
 
+  const crimpadoDetailKeys = [
+    "Producción Buena",
+    "Producción con Defectos",
+    "Tiempo Pagado",
+    "Tiempos Perdidos",
+    "Tiempo Trabajado",
+    "Velocidad Nominal",
+  ];
+
   const hiddenKpis = Object.entries(ui).filter(([kk]) => {
     const isOrdered = order.some(o => o.key === kk);
     if(isOrdered) return false;
 
-    // ✅ THB: ocultar completamente estos dos KPIs
-    if(m === "THB" && (kk === "Metros Planeados" || kk === "Metros Extras")){
-      return false;
+    // ✅ Aplicación/Unión: en el detalle solo quedan los indicadores pedidos.
+    if(m === "APLICACION" || m === "UNION"){
+      return crimpadoDetailKeys.includes(kk);
     }
 
-    // ✅ Crimpado: no mostrar estos KPIs ni en detalle
-    if((m === "APLICACION" || m === "UNION") && (
-      kk === "Crimpados" ||
-      kk === "Producción Buena" ||
-      kk === "Producción con Defectos" ||
-      kk === "Tiempo De Corte" ||
-      kk === "Tiempo de Corte" ||
-      kk === "Metros Extras" ||
-      kk === "Metros Planeados"
-    )){
+    // ✅ THB: ocultar completamente estos dos KPIs
+    if(m === "THB" && (kk === "Metros Planeados" || kk === "Metros Extras")){
       return false;
     }
 
@@ -3067,7 +3228,14 @@ function renderInlineKPIs(result){
     extraGrid.style.display = "none";
     extraGrid.style.marginTop = "12px";
 
-    const detailOrder = [
+    const detailOrder = (m === "APLICACION" || m === "UNION") ? [
+      { key: "Producción Buena",        cls: "kpi-green",  span: "kpi-row-4" },
+      { key: "Producción con Defectos", cls: "kpi-red",    span: "kpi-row-4" },
+      { key: "Tiempo Pagado",           cls: "kpi-blue",   span: "kpi-row-4" },
+      { key: "Tiempos Perdidos",        cls: "kpi-purple", span: "kpi-row-4" },
+      { key: "Tiempo Trabajado",        cls: "kpi-green2", span: "kpi-row-4" },
+      { key: "Velocidad Nominal",       cls: "kpi-blue2",  span: "kpi-row-4" },
+    ] : [
       // fila 1
       { key: "Producción Buena",        cls: "kpi-green",  span: "kpi-row-4" },
       { key: "Producción Total",        cls: "kpi-cyan",   span: "kpi-row-4" },
@@ -3079,10 +3247,6 @@ function renderInlineKPIs(result){
       { key: "Tiempos Perdidos",        cls: "kpi-purple", span: "kpi-row-2" },
       { key: "Tiempo Trabajado",        cls: "kpi-green2", span: "kpi-row-4" },
       { key: "Tiempo De Corte",         cls: "kpi-cyan2",  span: "kpi-row-4" },
-
-        // ✅ CRIMPADO: colorcitos en detalle
-      { key: "Crimpados Carrete",       cls: "kpi-green",  span: "kpi-row-4" },
-      { key: "Crimpados Manual",        cls: "kpi-red",    span: "kpi-row-4" },
 
       { key: "Tiempo de Corte",         cls: "kpi-cyan2",  span: "kpi-row-4" },
       { key: "Tiempo de Ciclo",         cls: "kpi-cyan2",  span: "kpi-row-4" },
@@ -3109,9 +3273,8 @@ function renderInlineKPIs(result){
 
     Object.entries(ui).forEach(([kk, vv]) => {
 
-      // ✅ SOLO CRIMPADO: no mostrar Producción Total en indicadores ocultos
-      if((m === "APLICACION" || m === "UNION") &&
-         (kk === "Producción Total" || kk === "Produccion Total")){
+      // ✅ Aplicación/Unión: no agregar indicadores extra fuera de la lista solicitada.
+      if((m === "APLICACION" || m === "UNION") && !crimpadoDetailKeys.includes(kk)){
         return;
       }
 
