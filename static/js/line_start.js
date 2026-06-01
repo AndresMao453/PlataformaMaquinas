@@ -3232,12 +3232,16 @@ function renderInlineKPIs(result){
     extraGrid.style.marginTop = "12px";
 
     const detailOrder = (m === "APLICACION" || m === "UNION") ? [
+      // fila 1: indicadores simples (tarjetas estrechas)
       { key: "Producción Buena",        cls: "kpi-green",  span: "kpi-row-4" },
       { key: "Producción con Defectos", cls: "kpi-red",    span: "kpi-row-4" },
       { key: "Tiempo Pagado",           cls: "kpi-blue",   span: "kpi-row-4" },
-      { key: "Tiempos Perdidos",        cls: "kpi-purple", span: "kpi-row-4" },
-      { key: "Tiempo Trabajado",        cls: "kpi-green2", span: "kpi-row-4" },
       { key: "Velocidad Nominal",       cls: "kpi-blue2",  span: "kpi-row-4" },
+
+      // fila 2: igual que THB -> "Tiempos Perdidos" como tarjeta ancha con
+      // desglose (105 / No registrado / 104) + "Tiempo Trabajado" ancha.
+      { key: "Tiempos Perdidos",        cls: "kpi-purple", span: "kpi-row-2" },
+      { key: "Tiempo Trabajado",        cls: "kpi-green2", span: "kpi-row-2" },
     ] : [
       // fila 1
       { key: "Producción Buena",        cls: "kpi-green",  span: "kpi-row-4" },
@@ -4573,4 +4577,3 @@ document.addEventListener("DOMContentLoaded", () => {
     setupTvAutoModePreservado();
   }, 350);
 });
-

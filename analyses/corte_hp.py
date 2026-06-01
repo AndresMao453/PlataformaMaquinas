@@ -107,6 +107,25 @@ def _hp_nominal_sec(L_mm: float, tipo: int, *, model: str = "calc") -> float:
 ANALYSIS_KEY = "corte_hp"
 ANALYSIS_TITLE = "Análisis Línea de Corte (HP)"
 
+# ============================================================
+# Reglas de turno CORTE
+# ============================================================
+# Entrada operativa: 07:15 todos los días.
+# La franja 07:00-08:00 tiene 45 minutos pagados.
+# El lunes se descuenta además mantenimiento preventivo de 30 minutos
+# de la capacidad usada para planeación, sin inflar TW/TX.
+HP_SHIFT_START_SEC = (7 * 3600) + (15 * 60)
+HP_MONDAY_MAINTENANCE_SEC = 30 * 60
+
+
+def _hp_clamp_start_to_shift(s0: int) -> int:
+    """No permite iniciar capacidad antes de 07:15 en corte HP."""
+    try:
+        x = int(s0)
+    except Exception:
+        x = HP_SHIFT_START_SEC
+    return max(int(HP_SHIFT_START_SEC), x)
+
 def _sec_to_ui_hours_2(sec: int) -> float:
     """Convierte segundos a horas en decimal redondeado a 2 decimales (como el UI)."""
     try:
@@ -1211,6 +1230,13 @@ def _cap_bounds_for_day(
     s0 = _parse_hhmm_to_seconds(time_start)
     s1 = _parse_hhmm_to_seconds(time_end)
 
+    # Entrada real de corte: nunca contar capacidad antes de 07:15.
+    if s1 < int(HP_SHIFT_START_SEC):
+        return None
+    s0 = _hp_clamp_start_to_shift(s0)
+    if s1 < s0:
+        s1 = s0
+
     # si llega raro (end <= start), al menos 1 minuto
     if s1 <= s0:
         s1 = s0
@@ -1252,6 +1278,10 @@ def _capacity_seconds_for_range_hp(
 
     s0 = _parse_hhmm_to_seconds(time_start)
     s1 = _parse_hhmm_to_seconds(time_end)
+    # Entrada real de corte: nunca contar capacidad antes de 07:15.
+    if s1 < int(HP_SHIFT_START_SEC):
+        return 0
+    s0 = _hp_clamp_start_to_shift(s0)
     if s1 <= s0:
         s1 = s0
 
@@ -1477,7 +1507,7 @@ def _compute_hourly_buckets_hp(
             {"dt": dt_corte, "v": pd.to_numeric(df_corte[c_buenas], errors="coerce").fillna(0)}
         )
         tmp = tmp.dropna(subset=["dt"])
-        tmp = tmp[(tmp["dt"] >= day_start) & (tmp["dt"] < day_end)]
+        tmp = tmp[(tmp["dt"] >= cap_start) & (tmp["dt"] < cap_end)]
         if not tmp.empty:
             cut_by_hour = tmp.groupby(tmp["dt"].dt.hour)["v"].sum().to_dict()
 
@@ -1487,7 +1517,7 @@ def _compute_hourly_buckets_hp(
         tmp_nom = df_corte.copy()
         tmp_nom["_dt_hp_nom"] = pd.to_datetime(dt_corte, errors="coerce")
         tmp_nom = tmp_nom.dropna(subset=["_dt_hp_nom"])
-        tmp_nom = tmp_nom[(tmp_nom["_dt_hp_nom"] >= day_start) & (tmp_nom["_dt_hp_nom"] < day_end)]
+        tmp_nom = tmp_nom[(tmp_nom["_dt_hp_nom"] >= cap_start) & (tmp_nom["_dt_hp_nom"] < cap_end)]
         if not tmp_nom.empty:
             for hh, grp in tmp_nom.groupby(tmp_nom["_dt_hp_nom"].dt.hour):
                 try:
@@ -1542,6 +1572,12 @@ def _compute_hourly_buckets_hp(
 
     buckets: List[Dict[str, Any]] = []
 
+    try:
+        is_monday_preventive = pd.Timestamp(selected_day).weekday() == 0  # lunes = 0
+    except Exception:
+        is_monday_preventive = False
+    first_active_hour: Optional[int] = None
+
     for h in range(24):
         h0 = day_start + pd.Timedelta(hours=h)
         h1 = h0 + pd.Timedelta(hours=1)
@@ -1556,6 +1592,16 @@ def _compute_hourly_buckets_hp(
 
         # ✅ CAMBIO: redondeo ns->sec (evita 3599s y el 0.99)
         cap_work_sec = int(round(work_ns / NS))
+
+        if first_active_hour is None:
+            first_active_hour = int(h)
+
+        planned_maintenance_sec = 0
+        if is_monday_preventive and int(h) == int(first_active_hour):
+            planned_maintenance_sec = int(HP_MONDAY_MAINTENANCE_SEC)
+
+        # capacitySec queda como capacidad de planeación; tpH conserva el TP real de la franja.
+        cap_plan_sec = max(0, int(cap_work_sec) - int(planned_maintenance_sec))
 
         # capacidad full (60 min) para el "No registrado" por tarjeta
         cap_full_sec = 3600
@@ -1673,8 +1719,12 @@ def _compute_hourly_buckets_hp(
             "hourLabel": f"{h:02d}:00",
             "hour": f"{h:02d}",
 
-            # para KPI (trabajado real)
-            "capacitySec": int(cap_work_sec),
+            # para KPI/planeación (capacidad disponible descontando mantenimiento preventivo si aplica)
+            "capacitySec": int(cap_plan_sec),
+            "tpH": float(cap_work_sec / 3600.0),
+            "twH": float(prod_sec / 3600.0),
+            "txH": float(other_card_rec_sec / 3600.0),
+            "plannedMaintenanceSec": int(planned_maintenance_sec),
 
             # para tarjetas
             "deadSec": int(dead_show_sec),

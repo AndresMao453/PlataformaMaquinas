@@ -22,14 +22,14 @@ APP_CACHE_MAX_ITEMS = 120
 # =========================
 GSHEET_ID2 = "1-He6-tg5l5N1ayf4bDQz1aHAgMcmm12bOIjbXGrJ05I"
 GSHEET_GID_APLICACION2 = 1876028636
-GSHEET_GID_UNION2 = 1075855140
+GSHEET_GID_UNION2 = 536757828
 
 # =========================
 # APLICACIÓN/UNIÓN — Unión Máquina 1
 # =========================
-GSHEET_ID3 = "1_SZr-f-Zyu9d2PQnDzsdKoT2wyoq5y0OxJI594RI-_k"
-GSHEET_GID_APLICACION3 = 1547813117
-GSHEET_GID_UNION3 = 95090116
+GSHEET_ID3 = "1Xb7-K0mmaDNDb4k1jx3TYKJKmJbpMy_EqGcxuffP_cw"
+GSHEET_GID_APLICACION3 = 93019910
+GSHEET_GID_UNION3 = 1190305223
 
 # Opcional: si existe una pestaña RESUMEN_TIEMPOS en Unión M1, coloca aquí su GID.
 # Si se deja en 0, Unión M1 usa el TC histórico y evita descargar el XLSX completo.
@@ -37,8 +37,8 @@ GSHEET_GID_RESUMEN_TIEMPOS3 = 0
 
 # UNION - Máquina 2
 GSHEET_ID4 = "1-He6-tg5l5N1ayf4bDQz1aHAgMcmm12bOIjbXGrJ05I"
-GSHEET_GID_APLICACION4 = 1075855140
-GSHEET_GID_UNION4 = 87676947
+GSHEET_GID_APLICACION4 = 1876028636
+GSHEET_GID_UNION4 = 536757828
 
 # ===== Aliases compat (aplicacion_excel.py viejo) =====
 APLICACION_SHEET_ID = GSHEET_ID

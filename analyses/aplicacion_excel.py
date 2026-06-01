@@ -219,12 +219,19 @@ def _norm_machine_id(machine_id: Any) -> str:
 # Base para Aplicación M1/M2 y Unión M2.
 OEE_ESPERADO_CRIMPADO_BASE = 0.90
 
-# Cambia SOLO este valor para Unión - Máquina 1.
-# Ejemplos: 0.95 = 95%, 0.90 = 90%, 0.85 = 85%.
-OEE_ESPERADO_UNION1 = 0.95
+# OEE esperado independiente para Unión - Máquina 1.
+# Unión 1 usa la MISMA lógica de cálculo que Unión 2, pero con su propio
+# parámetro, de modo que ambas máquinas quedan totalmente independientes.
+OEE_ESPERADO_UNION1 = 0.80
 
 # OEE esperado independiente para Unión - Máquina 2.
 OEE_ESPERADO_UNION2 = 0.80
+
+# Hora de entrada del turno de Unión 1 (formato decimal de hora).
+# 7.25 = 7:15 am. La primera hora del turno paga solo la fracción trabajada
+# (p. ej. 7:15→8:00 = 45 min => TP = 0.75 en la franja de las 7).
+# Independiente de Unión 2.
+UNION1_HORA_ENTRADA = 7.25
 
 # Hora de entrada del turno de Unión 2 (formato decimal de hora).
 # 7.25 = 7:15 am. La primera hora del turno paga solo la fracción trabajada
@@ -237,10 +244,46 @@ def _crimpado_oee_esperado(machine: str = "", machine_id: str = "") -> float:
     m = str(machine or "").strip().upper()
     mid = str(machine_id or "").strip()
     if m == "UNION" and mid == "1":
-        return float(OEE_ESPERADO_UNION1)
+        return float(getattr(config, "OEE_ESPERADO_UNION1", OEE_ESPERADO_UNION1) or OEE_ESPERADO_UNION1)
     if m == "UNION" and mid == "2":
         return float(getattr(config, "OEE_ESPERADO_UNION2", OEE_ESPERADO_UNION2) or OEE_ESPERADO_UNION2)
     return float(OEE_ESPERADO_CRIMPADO_BASE)
+
+
+def _crimpado_union1_tp_fijo_h(hour: Any) -> float:
+    """
+    Tiempo Pagado (TP) fijo por hora para UNIÓN 1, en horas.
+    Gemela e INDEPENDIENTE de _crimpado_union2_tp_fijo_h (usa su propia
+    constante UNION1_HORA_ENTRADA):
+      - Hora de comida 8:00  -> 1.00 − 15min = 0.75
+      - Hora de comida 13:00 -> 1.00 − 30min = 0.50
+      - Hora de entrada (7:15 por defecto) -> solo la fracción trabajada (0.75)
+      - Cualquier otra hora -> 1.00 (SIEMPRE pagada completa)
+    Las demás paradas NO reducen TP: van a TX.
+    """
+    try:
+        h = int(hour)
+    except Exception:
+        return 1.0
+
+    # Comida (no pagada) descuenta del TP.
+    if h == 8:
+        return 1.0 - (15.0 / 60.0)   # 0.75
+    if h == 13:
+        return 1.0 - (30.0 / 60.0)   # 0.50
+
+    # Hora de entrada parcial del turno.
+    entrada = float(getattr(config, "UNION1_HORA_ENTRADA", UNION1_HORA_ENTRADA) or UNION1_HORA_ENTRADA)
+    h_ent = int(entrada)
+    frac_ent = entrada - h_ent
+    if h == h_ent and frac_ent > 0:
+        return max(0.0, 1.0 - frac_ent)   # 7:15 => 0.75
+
+    # Horas antes de la entrada: no hay turno.
+    if h < h_ent:
+        return 0.0
+
+    return 1.0
 
 
 def _crimpado_union2_tp_fijo_h(hour: Any) -> float:
@@ -280,17 +323,18 @@ def _crimpado_union2_tp_fijo_h(hour: Any) -> float:
 # ============================================================
 # Factor adicional de meta crimpado
 # ============================================================
-# Cambia SOLO este valor si quieres subir/bajar la meta de Unión - Máquina 1.
-# Ejemplos: 1.15 = sube 15%, 1.10 = sube 10%, 1.00 = sin ajuste.
-FACTOR_META_UNION1 = 1.25
+# Unión 1 ahora usa la MISMA lógica que Unión 2: la meta se obtiene del
+# mejor ciclo por referencia (hoja UNION1_Metas_Ref), no de un factor fijo.
+# Por eso el factor de meta de Unión 1 queda en 1.00, igual que Unión 2.
+# Se conserva la constante por compatibilidad, pero ya no se aplica.
+FACTOR_META_UNION1 = 1.0
 
 
 def _crimpado_meta_factor(machine: str = "", machine_id: str = "") -> float:
-    """Devuelve el factor de meta. Solo Unión M1 tiene ajuste independiente."""
-    m = str(machine or "").strip().upper()
-    mid = str(machine_id or "").strip()
-    if m == "UNION" and mid == "1":
-        return float(FACTOR_META_UNION1)
+    """
+    Devuelve el factor de meta. Ni Unión 1 ni Unión 2 aplican factor extra:
+    la meta sale del mejor ciclo por referencia, así que ambas devuelven 1.0.
+    """
     return 1.0
 
 
@@ -298,13 +342,10 @@ def _crimpado_meta_plan_time_h(tp_h: float, tw_h: float, machine: str = "", mach
     """
     Tiempo base para calcular la producción planeada del dashboard.
 
-    Debe coincidir con el Excel descargado:
-    - Aplicación y Unión M2 usan TP (Tiempo Pagado).
-    - Unión M1 usa TW (Tiempo Trabajado), porque en la plantilla Excel la
-      producción planeada toma la columna M para UNION M1.
+    - Aplicación, Unión M1 y Unión M2 usan TP (Tiempo Pagado).
+      Unión 1 y Unión 2 comparten la misma lógica e usan TP de forma
+      independiente cada una.
     """
-    if _crimpado_is_union1(machine, machine_id):
-        return max(0.0, float(tw_h or 0.0))
     return max(0.0, float(tp_h or 0.0))
 
 
@@ -1934,18 +1975,22 @@ def run_aplicacion_analysis(
     except Exception:
         tc_lookup, tc_default_h_uni = {}, None
 
-    # ✅ Nuevo modelo Unión 1: estándares dinámicos por mezcla
-    # Moto + Masa + Cantidad de cables.
-    # IMPORTANTE: se aplica SOLO a UNION - Máquina 1.
-    # UNION - Máquina 2 queda separada y conserva su propio cálculo/estándar.
+    # ✅ Unión 1 y Unión 2 usan la MISMA lógica de estándar por referencia
+    # (Moto + Masa + Cantidad de cables), pero cada una con sus propias
+    # funciones y parámetros para quedar TOTALMENTE independientes.
+    # Por defecto usan la META (mejor ciclo) como TC de cada referencia,
+    # configurable en config.UNION1_TC_MODO / config.UNION2_TC_MODO.
     try:
         if _crimpado_is_union1(machine, machine_id):
-            mix_tc_lookup, mix_tc_default_h_uni, mix_standards_table = _crimpado_build_dynamic_mix_tc_lookup(
+            # ✅ UNIÓN 1: estándar por referencia AISLADO (hoja UNION1_Metas_Ref).
+            mix_tc_lookup, mix_tc_default_h_uni = _crimpado_build_mix_lookup_union1(
                 res_df=res_df,
                 machine=machine,
                 machine_id=machine_id,
                 operator=operator,
+                modo=str(getattr(config, "UNION1_TC_MODO", "meta") or "meta"),
             )
+            mix_standards_table = []
             if mix_tc_lookup:
                 tc_lookup.update(mix_tc_lookup)
             if (tc_default_h_uni is None or float(tc_default_h_uni or 0.0) <= 0.0) and mix_tc_default_h_uni:
@@ -1971,19 +2016,6 @@ def run_aplicacion_analysis(
             mix_tc_lookup, mix_tc_default_h_uni, mix_standards_table = {}, None, []
     except Exception:
         mix_tc_lookup, mix_tc_default_h_uni, mix_standards_table = {}, None, []
-
-    # Unión 1 no siempre tiene RESUMEN_TIEMPOS. En ese caso se calcula un
-    # tiempo estándar nominal histórico único para la terminal de esa máquina:
-    # TC_nom_UNION1 = SUM(TW_h) / SUM(PN_h).
-    tc_nominal_history_h_uni = _crimpado_estimate_tc_nominal_from_history(
-        res_df=res_df,
-        par_df=par_df,
-        machine=machine,
-        machine_id=machine_id,
-        operator=operator,
-    )
-    if (tc_default_h_uni is None or float(tc_default_h_uni or 0.0) <= 0.0) and tc_nominal_history_h_uni:
-        tc_default_h_uni = float(tc_nominal_history_h_uni)
 
     def _crimpado_dashboard_rows_for_day(day_value: Any, buckets_day: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Arma filas equivalentes al Excel, pero usando el res_f/par_f ya filtrado."""
@@ -2032,7 +2064,8 @@ def run_aplicacion_analysis(
                 mask_h = dt_local.notna() & (dt_local >= h0) & (dt_local < h1)
                 hour_df = res_day.loc[mask_h].copy()
 
-            mix_summary = _crimpado_mix_summary_for_hour(hour_df) if _crimpado_is_union1(machine, machine_id) else {"label": "", "items": []}
+            # Unión 1 y Unión 2 ya no usan el resumen de mix ponderado por pulsos.
+            mix_summary = {"label": "", "items": []}
 
             meal_sec = max(0.0, min(3600.0, meal_sec))
             other_sec = max(0.0, min(3600.0, other_sec))
@@ -2040,7 +2073,15 @@ def run_aplicacion_analysis(
                 dead_sec, meal_sec, other_sec, hh, machine=machine, machine_id=machine_id
             )
 
-            if _crimpado_is_union2(machine, machine_id):
+            if _crimpado_is_union1(machine, machine_id):
+                # ✅ UNIÓN 1: misma regla de TP que Unión 2, con su propia función.
+                # TP SIEMPRE 1.00 salvo comida (8/13) y entrada parcial (7:15).
+                # Las demás paradas van a TX, no reducen TP.
+                tp_h = _crimpado_union1_tp_fijo_h(hh)
+                tx_h = max(0.0, other_sec / 3600.0)
+                tx_h = min(tx_h, tp_h)
+                tw_h = max(0.0, tp_h - tx_h)
+            elif _crimpado_is_union2(machine, machine_id):
                 # ✅ UNIÓN 2: el Tiempo Pagado SIEMPRE es 1.00, salvo las horas de
                 # comida (8 y 13) y la hora de entrada parcial (7:15). Ninguna otra
                 # parada reduce TP: todas las paradas reales van a TX.
@@ -2055,7 +2096,14 @@ def run_aplicacion_analysis(
                 tx_h = max(0.0, other_sec / 3600.0)
                 tw_h = max(0.0, tp_h - tx_h)
 
-            if _crimpado_is_union2(machine, machine_id):
+            if _crimpado_is_union1(machine, machine_id):
+                # ✅ UNIÓN 1: TC de la hora = duración total ÷ planeado (sin totazo).
+                tc_h_uni = _crimpado_tc_hora_union1(
+                    hour_df,
+                    tc_lookup=tc_lookup,
+                    tc_default_h_uni=tc_default_h_uni,
+                )
+            elif _crimpado_is_union2(machine, machine_id):
                 # ✅ UNIÓN 2: TC de la hora = duración total ÷ planeado (sin totazo).
                 tc_h_uni = _crimpado_tc_hora_union2(
                     hour_df,
@@ -2433,8 +2481,8 @@ def run_aplicacion_analysis(
             "other_causes": other_causes,
             "crimpado_summary": crimpado_summary,
             "crimpado_rows": crimpado_rows,
-            "tc_nominal_history_h_uni": float(tc_nominal_history_h_uni or 0.0),
-            "tc_nominal_history_sec": float(tc_nominal_history_h_uni or 0.0) * 3600.0,
+            "tc_nominal_history_h_uni": float(mix_tc_default_h_uni or 0.0),
+            "tc_nominal_history_sec": float(mix_tc_default_h_uni or 0.0) * 3600.0,
             "oee_esperado": float(OEE_ESPERADO),
             "oee_esperado_pct": float(OEE_ESPERADO) * 100.0,
             "meta_factor": float(_crimpado_meta_factor(machine, machine_id)),
@@ -2875,158 +2923,6 @@ def _crimpado_mix_tc_from_lookup(row_or_dict: Any, tc_lookup: Optional[Dict[str,
     return None
 
 
-def _crimpado_build_dynamic_mix_tc_lookup(
-    res_df: pd.DataFrame,
-    machine: str = "",
-    machine_id: str = "",
-    operator: str = "",
-) -> Tuple[Dict[str, float], Optional[float], List[Dict[str, Any]]]:
-    """
-    Genera estándares automáticos por combinación:
-      Moto + Masa + Cantidad de cables.
-
-    Fórmula principal:
-      TC ponderado = SUM(Duración_s) / SUM(Pulsos)
-
-    Esta lógica queda AISLADA para UNION - Máquina 1, porque las
-    combinaciones actuales corresponden solo a Unión 1. Unión 2 no comparte
-    estos ponderados y conserva su propio cálculo.
-
-    Los datos se actualizan solos cada vez que cambia la hoja. Para no contaminar
-    el estándar, descarta filas sin pulsos/duración y ciclos extremos.
-    """
-    if not _crimpado_is_union1(machine, machine_id):
-        return {}, None, []
-    if res_df is None or res_df.empty:
-        return {}, None, []
-    required = {"Moto", "Masa", "Cantidad de cables", "Duracion_s", "Pulsos"}
-    if not required.issubset(set(res_df.columns)):
-        return {}, None, []
-
-    df = res_df.copy()
-    op = str(operator or "").strip()
-    if op and op.lower() != "general" and "Nombre" in df.columns:
-        df = df[df["Nombre"].astype(str).str.strip().eq(op)].copy()
-
-    if df.empty:
-        return {}, None, []
-
-    df["__pulsos"] = pd.to_numeric(df["Pulsos"], errors="coerce").fillna(0.0).astype(float)
-    df["__dur_s"] = pd.to_numeric(df["Duracion_s"], errors="coerce").fillna(0.0).astype(float)
-    df["__moto"] = df["Moto"].map(_crimpado_mix_value)
-    df["__masa"] = df["Masa"].map(_crimpado_mix_value)
-    df["__cables"] = df["Cantidad de cables"].map(_crimpado_mix_cables_value)
-
-    df = df[(df["__pulsos"] > 0) & (df["__dur_s"] > 0)].copy()
-    df = df[(df["__moto"] != "") & (df["__masa"] != "") & (df["__cables"] != "")].copy()
-    if df.empty:
-        return {}, None, []
-
-    df["__tc_s"] = df["__dur_s"] / df["__pulsos"]
-    min_tc_s = float(getattr(config, "CRIMPADO_MIX_TC_MIN_S", 3.0) or 3.0)
-    max_tc_s = float(getattr(config, "CRIMPADO_MIX_TC_MAX_S", 180.0) or 180.0)
-    df = df[(df["__tc_s"] >= min_tc_s) & (df["__tc_s"] <= max_tc_s)].copy()
-    if df.empty:
-        return {}, None, []
-
-    min_rows = int(getattr(config, "CRIMPADO_MIX_MIN_REGISTROS", 5) or 5)
-    min_pulses = int(getattr(config, "CRIMPADO_MIX_MIN_PULSOS", 50) or 50)
-
-    lookup: Dict[str, float] = {}
-    table: List[Dict[str, Any]] = []
-
-    def _add_group(keys: List[str], key_builder, table_level: bool = False) -> None:
-        if not keys:
-            return
-        g = (
-            df.groupby(keys, dropna=False)
-              .agg(registros=("__pulsos", "size"), pulsos=("__pulsos", "sum"), duracion_s=("__dur_s", "sum"))
-              .reset_index()
-        )
-        for _, r in g.iterrows():
-            regs = int(r.get("registros", 0) or 0)
-            pulsos = float(r.get("pulsos", 0.0) or 0.0)
-            dur_s = float(r.get("duracion_s", 0.0) or 0.0)
-            if dur_s <= 0 or pulsos <= 0:
-                continue
-            # Para la combinación completa sí se guarda desde el primer dato
-            # como estándar provisional; así el ponderado se actualiza siempre.
-            # Para llaves parciales exigimos datos suficientes, evitando que una
-            # combinación nueva y rara defina toda una familia.
-            if (regs < min_rows and pulsos < min_pulses) and not table_level:
-                continue
-            tc_s = dur_s / pulsos
-            tc_h = tc_s / 3600.0
-            key = key_builder(r)
-            if key:
-                lookup[key] = tc_h
-            if table_level:
-                table.append({
-                    "moto": str(r.get("__moto", "")),
-                    "masa": str(r.get("__masa", "")),
-                    "cables": str(r.get("__cables", "")),
-                    "label": _crimpado_mix_label(r.get("__moto", ""), r.get("__masa", ""), r.get("__cables", "")),
-                    "registros": regs,
-                    "pulsos": int(round(pulsos)),
-                    "duracion_s": dur_s,
-                    "tc_s": tc_s,
-                    "tc_h": tc_h,
-                    "confiable": bool(regs >= min_rows or pulsos >= min_pulses),
-                })
-
-    _add_group(
-        ["__moto", "__masa", "__cables"],
-        lambda r: f"MIX::{r['__moto']}::{r['__masa']}::{r['__cables']}",
-        table_level=True,
-    )
-    _add_group(["__moto", "__masa"], lambda r: f"MIX_MOTO_MASA::{r['__moto']}::{r['__masa']}")
-    _add_group(["__moto", "__cables"], lambda r: f"MIX_MOTO_CABLES::{r['__moto']}::{r['__cables']}")
-    _add_group(["__masa", "__cables"], lambda r: f"MIX_MASA_CABLES::{r['__masa']}::{r['__cables']}")
-    _add_group(["__moto"], lambda r: f"MIX_MOTO::{r['__moto']}")
-    _add_group(["__masa"], lambda r: f"MIX_MASA::{r['__masa']}")
-    _add_group(["__cables"], lambda r: f"MIX_CABLES::{r['__cables']}")
-
-    default_tc_s = float(df["__dur_s"].sum()) / float(df["__pulsos"].sum()) if float(df["__pulsos"].sum()) > 0 else 0.0
-    default_h = (default_tc_s / 3600.0) if default_tc_s > 0 else None
-    if default_h:
-        lookup["MIX_GLOBAL"] = float(default_h)
-
-    table = sorted(table, key=lambda x: (int(x.get("pulsos", 0) or 0), int(x.get("registros", 0) or 0)), reverse=True)
-    return lookup, default_h, table
-
-
-def _crimpado_mix_summary_for_hour(hour_df: pd.DataFrame) -> Dict[str, Any]:
-    """Resumen del mix de la hora para enviarlo al frontend sin cambiar el diseño base."""
-    if hour_df is None or hour_df.empty:
-        return {"label": "", "items": []}
-    needed = {"Moto", "Masa", "Cantidad de cables"}
-    if not needed.issubset(set(hour_df.columns)):
-        return {"label": "", "items": []}
-
-    df = hour_df.copy()
-    df["__label"] = df.apply(lambda r: _crimpado_mix_label(r.get("Moto"), r.get("Masa"), r.get("Cantidad de cables")), axis=1)
-    df["__pulsos"] = pd.to_numeric(df.get("Pulsos", 0), errors="coerce").fillna(0.0).astype(float)
-    if "Duracion_s" in df.columns:
-        df["__dur_s"] = pd.to_numeric(df["Duracion_s"], errors="coerce").fillna(0.0).astype(float)
-    else:
-        df["__dur_s"] = 0.0
-    df = df[df["__label"].astype(str).str.strip().ne("")].copy()
-    if df.empty:
-        return {"label": "", "items": []}
-
-    g = df.groupby("__label", dropna=False).agg(pulsos=("__pulsos", "sum"), duracion_s=("__dur_s", "sum"), registros=("__label", "size"))
-    g = g.sort_values(["pulsos", "duracion_s", "registros"], ascending=False)
-    items: List[Dict[str, Any]] = []
-    for label, r in g.head(8).iterrows():
-        items.append({
-            "label": str(label),
-            "pulsos": int(round(float(r.get("pulsos", 0.0) or 0.0))),
-            "duracion_s": float(r.get("duracion_s", 0.0) or 0.0),
-            "registros": int(r.get("registros", 0) or 0),
-        })
-    return {"label": items[0]["label"] if items else "", "items": items}
-
-
 def _crimpado_build_tc_lookup(
     resumen_tiempos_df: pd.DataFrame,
 ) -> Tuple[Dict[str, float], Optional[float]]:
@@ -3162,7 +3058,12 @@ def _crimpado_tc_from_resumen_for_hour(
 
 
 def _crimpado_is_union1(machine: str = "", machine_id: str = "") -> bool:
-    """Modelo nominal fijo solicitado únicamente para Unión - Máquina 1."""
+    """
+    Identifica UNIÓN - Máquina 1. Usa la MISMA lógica que Unión 2
+    (estándar por referencia + TC por hora = duración total ÷ planeado),
+    pero con parámetros y funciones propias para mantener ambas máquinas
+    completamente independientes.
+    """
     return (str(machine or "").strip().upper() == "UNION") and (str(machine_id or "").strip() == "1")
 
 
@@ -3334,6 +3235,163 @@ def _crimpado_tc_hora_union2(
     return tc_default_h_uni if (tc_default_h_uni and tc_default_h_uni > 0) else None
 
 
+def _crimpado_build_mix_lookup_union1(
+    res_df: pd.DataFrame,
+    machine: str = "",
+    machine_id: str = "",
+    operator: str = "",
+    modo: str = "meta",
+) -> Tuple[Dict[str, float], Optional[float]]:
+    """
+    Estándar de TC por referencia (Moto + Masa + Cantidad de cables) para UNIÓN 1.
+
+    Gemela e INDEPENDIENTE de _crimpado_build_mix_lookup_union2. Misma lógica:
+      - "meta"     (por defecto): el MEJOR ciclo observado de esa referencia
+                   = MIN(Duración_s / Pulsos) entre sus ciclos. Es la meta:
+                   un ritmo ya demostrado como alcanzable.
+      - "promedio": el promedio ponderado histórico
+                   = SUM(Duración_s) / SUM(Pulsos).
+
+    En ambos casos el valor se guarda en h/uni y con las mismas llaves MIX::...
+    que _crimpado_mix_tc_from_lookup ya sabe consultar, por lo que el cálculo
+    del TC por hora (duración ÷ planeado, por referencia) es idéntico al de
+    Unión 2.
+
+    AISLADO para Unión 1: no afecta a Unión 2 ni a ninguna otra máquina.
+    Devuelve (lookup, tc_global_h_uni).
+    """
+    if not _crimpado_is_union1(machine, machine_id):
+        return {}, None
+    if res_df is None or res_df.empty:
+        return {}, None
+    required = {"Moto", "Masa", "Cantidad de cables", "Duracion_s", "Pulsos"}
+    if not required.issubset(set(res_df.columns)):
+        return {}, None
+
+    df = res_df.copy()
+    op = str(operator or "").strip()
+    if op and op.lower() != "general" and "Nombre" in df.columns:
+        df = df[df["Nombre"].astype(str).str.strip().eq(op)].copy()
+    if df.empty:
+        return {}, None
+
+    df["__pulsos"] = pd.to_numeric(df["Pulsos"], errors="coerce").fillna(0.0).astype(float)
+    df["__dur_s"] = pd.to_numeric(df["Duracion_s"], errors="coerce").fillna(0.0).astype(float)
+    df["__moto"] = df["Moto"].map(_crimpado_mix_value)
+    df["__masa"] = df["Masa"].map(_crimpado_mix_value)
+    df["__cables"] = df["Cantidad de cables"].map(_crimpado_mix_cables_value)
+
+    df = df[(df["__pulsos"] > 0) & (df["__dur_s"] > 0)].copy()
+    df = df[(df["__moto"] != "") & (df["__masa"] != "") & (df["__cables"] != "")].copy()
+    if df.empty:
+        return {}, None
+
+    # TC por ciclo + filtro de ciclos extremos (evita ensuciar el estándar/meta).
+    df["__tc_s"] = df["__dur_s"] / df["__pulsos"]
+    min_tc_s = float(getattr(config, "CRIMPADO_MIX_TC_MIN_S", 3.0) or 3.0)
+    max_tc_s = float(getattr(config, "CRIMPADO_MIX_TC_MAX_S", 180.0) or 180.0)
+    df = df[(df["__tc_s"] >= min_tc_s) & (df["__tc_s"] <= max_tc_s)].copy()
+    if df.empty:
+        return {}, None
+
+    usar_meta = str(modo or "meta").strip().lower() == "meta"
+    lookup: Dict[str, float] = {}
+
+    def _add_group(keys: List[str], key_builder) -> None:
+        g = (
+            df.groupby(keys, dropna=False)
+              .agg(
+                  pulsos=("__pulsos", "sum"),
+                  duracion_s=("__dur_s", "sum"),
+                  mejor_tc_s=("__tc_s", "min"),
+              )
+              .reset_index()
+        )
+        for _, r in g.iterrows():
+            pulsos = float(r.get("pulsos", 0.0) or 0.0)
+            dur_s = float(r.get("duracion_s", 0.0) or 0.0)
+            mejor_tc_s = float(r.get("mejor_tc_s", 0.0) or 0.0)
+            if dur_s <= 0 or pulsos <= 0:
+                continue
+            if usar_meta:
+                tc_s = mejor_tc_s                 # META: mejor ciclo observado
+            else:
+                tc_s = dur_s / pulsos             # PROMEDIO ponderado histórico
+            if tc_s <= 0:
+                continue
+            key = key_builder(r)
+            if key:
+                lookup[key] = tc_s / 3600.0
+
+    # Combinación completa y llaves parciales (mismo orden que Unión 2).
+    _add_group(["__moto", "__masa", "__cables"], lambda r: f"MIX::{r['__moto']}::{r['__masa']}::{r['__cables']}")
+    _add_group(["__moto", "__masa"], lambda r: f"MIX_MOTO_MASA::{r['__moto']}::{r['__masa']}")
+    _add_group(["__moto", "__cables"], lambda r: f"MIX_MOTO_CABLES::{r['__moto']}::{r['__cables']}")
+    _add_group(["__masa", "__cables"], lambda r: f"MIX_MASA_CABLES::{r['__masa']}::{r['__cables']}")
+    _add_group(["__moto"], lambda r: f"MIX_MOTO::{r['__moto']}")
+    _add_group(["__masa"], lambda r: f"MIX_MASA::{r['__masa']}")
+    _add_group(["__cables"], lambda r: f"MIX_CABLES::{r['__cables']}")
+
+    if usar_meta:
+        default_h = (float(df["__tc_s"].min()) / 3600.0) if not df.empty else None
+    else:
+        tot_p = float(df["__pulsos"].sum())
+        tot_d = float(df["__dur_s"].sum())
+        default_h = ((tot_d / tot_p) / 3600.0) if tot_p > 0 else None
+    if default_h:
+        lookup["MIX_GLOBAL"] = float(default_h)
+
+    return lookup, default_h
+
+
+def _crimpado_tc_hora_union1(
+    hour_df: pd.DataFrame,
+    tc_lookup: Optional[Dict[str, float]] = None,
+    tc_default_h_uni: Optional[float] = None,
+) -> Optional[float]:
+    """
+    TIEMPO DE CICLO POR HORA — UNIÓN 1 (gemela de _crimpado_tc_hora_union2).
+
+        Planeado de la hora [uni] = SUM_bloques( Duración_s_bloque / TC_ref_bloque[s] )
+        TC de la hora [h/uni]     = ( SUM Duración_s de la hora / Planeado ) / 3600
+
+    Cada bloque se mide contra el TC estándar de SU propia referencia
+    (Moto+Masa+Cables), nunca contra un totazo de la hora. El resultado queda
+    ponderado por el TIEMPO que ocupó cada referencia, no por sus pulsos.
+
+    Devuelve TC en horas/unidad o None.
+    """
+    tc_lookup = tc_lookup or {}
+    if hour_df is None or hour_df.empty:
+        return tc_default_h_uni if (tc_default_h_uni and tc_default_h_uni > 0) else None
+    if "Duracion_s" not in hour_df.columns:
+        return tc_default_h_uni if (tc_default_h_uni and tc_default_h_uni > 0) else None
+
+    total_dur_s = 0.0
+    planeado_u = 0.0
+
+    for _, r in hour_df.iterrows():
+        dur_s = _crimpado_num_float(r.get("Duracion_s", 0.0)) or 0.0
+        if dur_s <= 0:
+            continue
+
+        # TC estándar de la referencia del bloque (en horas/uni -> a segundos).
+        tc_h = _crimpado_mix_tc_from_lookup(r, tc_lookup)
+        if (tc_h is None or tc_h <= 0):
+            tc_h = tc_default_h_uni
+        if tc_h is None or tc_h <= 0:
+            # Sin estándar de la referencia, el bloque no aporta planeado.
+            continue
+
+        tc_s = float(tc_h) * 3600.0
+        total_dur_s += dur_s
+        planeado_u += dur_s / tc_s
+
+    if planeado_u > 0 and total_dur_s > 0:
+        return (total_dur_s / planeado_u) / 3600.0
+    return tc_default_h_uni if (tc_default_h_uni and tc_default_h_uni > 0) else None
+
+
 def _crimpado_fixed_non_paid_sec_for_hour(hour: Any, machine: str = "", machine_id: str = "") -> float:
     """
     Tiempo no pago fijo para Unión 1 y Unión 2.
@@ -3424,143 +3482,6 @@ def _crimpado_paradas_with_downtime(par_df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _crimpado_estimate_tc_nominal_from_history(
-    res_df: pd.DataFrame,
-    par_df: pd.DataFrame,
-    machine: str = "APLICACION",
-    machine_id: str = "",
-    operator: str = "",
-) -> Optional[float]:
-    """
-    Calcula el tiempo estándar nominal para Unión 1 cuando no existe RESUMEN_TIEMPOS.
-
-    Modelo solicitado para una sola terminal:
-      TC_nom_UNION1 = SUM(TW_h) / SUM(PN_h)
-      TW_h = 3600 - TNP_h - TX_h
-
-    Retorna horas/unidad. Internamente calcula segundos/terminal y divide entre 3600.
-    """
-    if not _crimpado_is_union1(machine, machine_id):
-        return None
-    if res_df is None or res_df.empty or "Pulsos" not in res_df.columns:
-        return None
-    if "Fecha" not in res_df.columns or "Hora" not in res_df.columns:
-        return None
-
-    op = str(operator or "").strip()
-
-    # UNION M1 calcula este TC con todo el historial; cachearlo evita repetir
-    # el barrido completo en cada análisis del mismo periodo.
-    cache_key = (
-        "tc_nominal_history_union1",
-        str(machine or "").strip().upper(),
-        str(machine_id or "").strip(),
-        op.lower(),
-        int(len(res_df)),
-        int(len(par_df)) if isinstance(par_df, pd.DataFrame) else 0,
-    )
-    cached = _app_cache_get(_APP_SCALAR_CACHE, cache_key, _APP_ANALYSIS_TTL_S)
-    if cached is not _CACHE_MISS:
-        return cached
-
-    res = res_df.copy()
-    if op and op.lower() != "general" and "Nombre" in res.columns:
-        res = res[res["Nombre"].astype(str).str.strip().eq(op)].copy()
-
-    if res.empty:
-        return None
-
-    tmp = res.dropna(subset=["Fecha", "Hora"]).copy()
-    tmp["Fecha_d"] = pd.to_datetime(tmp["Fecha"], errors="coerce", dayfirst=True).dt.date
-    tmp["Hora_h"] = tmp["Hora"].apply(lambda t: int(t.hour) if hasattr(t, "hour") else np.nan)
-    tmp["Pulsos"] = pd.to_numeric(tmp["Pulsos"], errors="coerce").fillna(0).astype(float)
-    tmp = tmp.dropna(subset=["Fecha_d", "Hora_h"]).copy()
-    tmp["Hora_h"] = tmp["Hora_h"].astype(int)
-    tmp = tmp[tmp["Pulsos"] > 0].copy()
-    if tmp.empty:
-        return None
-
-    pulses_by_slot = tmp.groupby(["Fecha_d", "Hora_h"], dropna=False)["Pulsos"].sum().to_dict()
-    productive_by_slot: Dict[Tuple[Any, int], float] = {}
-    if "Duracion_s" in tmp.columns:
-        tmp["Duracion_s"] = pd.to_numeric(tmp["Duracion_s"], errors="coerce").fillna(0.0).clip(lower=0.0)
-        productive_by_slot = tmp.groupby(["Fecha_d", "Hora_h"], dropna=False)["Duracion_s"].sum().to_dict()
-
-    downtime_by_slot: Dict[Tuple[Any, int], float] = {}
-    meal_by_slot: Dict[Tuple[Any, int], float] = {}
-
-    ptmp = _crimpado_paradas_with_downtime(par_df)
-    if ptmp is not None and not ptmp.empty and "Fecha" in ptmp.columns and "Hora de Inicio" in ptmp.columns:
-        if op and op.lower() != "general" and "Nombre" in ptmp.columns:
-            ptmp = ptmp[ptmp["Nombre"].astype(str).str.strip().eq(op)].copy()
-
-        if "Tipo de Intervalo" in ptmp.columns:
-            ptmp = ptmp[~ptmp["Tipo de Intervalo"].astype(str).str.contains("marcador", case=False, na=False)].copy()
-
-        ptmp["Fecha0"] = pd.to_datetime(ptmp["Fecha"], errors="coerce", dayfirst=True).dt.normalize()
-        sec0 = ptmp["Hora de Inicio"].apply(_timeobj_to_seconds)
-        sec0 = pd.to_numeric(sec0, errors="coerce").fillna(0).astype(int)
-        start_dt = ptmp["Fecha0"] + pd.to_timedelta(sec0, unit="s")
-        dur_s = pd.to_numeric(ptmp.get("downtime_s", 0.0), errors="coerce").fillna(0.0).astype(float)
-        end_dt = start_dt + pd.to_timedelta(dur_s, unit="s")
-
-        for s0, e0, cc in zip(start_dt.tolist(), end_dt.tolist(), ptmp.get("CausaCode", pd.Series([np.nan] * len(ptmp))).tolist()):
-            if pd.isna(s0) or pd.isna(e0) or e0 <= s0:
-                continue
-            try:
-                code_int = int(cc) if not pd.isna(cc) else None
-            except Exception:
-                code_int = None
-
-            cur = s0
-            while cur < e0:
-                hour_start = cur.replace(minute=0, second=0, microsecond=0)
-                next_hour = hour_start + pd.Timedelta(hours=1)
-                overlap_end = e0 if e0 < next_hour else next_hour
-                secs = float((overlap_end - cur).total_seconds())
-                slot = (hour_start.date(), int(hour_start.hour))
-                downtime_by_slot[slot] = downtime_by_slot.get(slot, 0.0) + secs
-                if code_int == 105:
-                    meal_by_slot[slot] = meal_by_slot.get(slot, 0.0) + secs
-                cur = overlap_end
-
-    total_tw_s = 0.0
-    total_pn = 0.0
-
-    for (d, h), pn in pulses_by_slot.items():
-        pn = float(pn or 0.0)
-        if pn <= 0:
-            continue
-
-        dead = float(downtime_by_slot.get((d, h), 0.0) or 0.0)
-        meal = float(meal_by_slot.get((d, h), 0.0) or 0.0)
-        other = max(0.0, dead - meal)
-        _dead, _meal, other, prod = _crimpado_apply_fixed_non_paid_to_parts(
-            dead, meal, other, h, machine=machine, machine_id=machine_id
-        )
-        prod_real = float(productive_by_slot.get((d, h), 0.0) or 0.0)
-        tw_s = max(0.0, min(3600.0, prod_real)) if prod_real > 0 else max(0.0, prod)
-
-        # Filtro suave para evitar horas corruptas o extremadamente pequeñas.
-        if tw_s <= 0 or pn < 5:
-            continue
-
-        tc_s = tw_s / pn
-        if not (1.0 <= tc_s <= 180.0):
-            continue
-
-        total_tw_s += tw_s
-        total_pn += pn
-
-    if total_tw_s <= 0 or total_pn <= 0:
-        return _app_cache_set(_APP_SCALAR_CACHE, cache_key, None)
-
-    tc_sec = total_tw_s / total_pn
-    if tc_sec <= 0 or not np.isfinite(tc_sec):
-        return _app_cache_set(_APP_SCALAR_CACHE, cache_key, None)
-    return _app_cache_set(_APP_SCALAR_CACHE, cache_key, float(tc_sec) / 3600.0)
-
-
 def _crimpado_hour_int_from_bucket(b: Dict[str, Any]) -> Optional[int]:
     raw = str(b.get("hourLabel") or b.get("hour") or "").strip()
     m = re.search(r"(\d{1,2})", raw)
@@ -3633,7 +3554,8 @@ def _crimpado_rows_for_day(
             mask_h = dt_local.notna() & (dt_local >= h0) & (dt_local < h1)
             hour_df = res_day.loc[mask_h].copy()
 
-        mix_summary = _crimpado_mix_summary_for_hour(hour_df) if _crimpado_is_union1(machine, machine_id) else {"label": "", "items": []}
+        # Unión 1 y Unión 2 ya no usan el resumen de mix ponderado por pulsos.
+        mix_summary = {"label": "", "items": []}
         referencia = _crimpado_terminales_for_hour(hour_df)
         if not referencia and mix_summary.get("label"):
             referencia = str(mix_summary.get("label") or "")
@@ -3645,7 +3567,13 @@ def _crimpado_rows_for_day(
             dead_sec, meal_sec, other_sec, hh, machine=machine, machine_id=machine_id
         )
 
-        if _crimpado_is_union2(machine, machine_id):
+        if _crimpado_is_union1(machine, machine_id):
+            # ✅ UNIÓN 1 (exportación): misma regla de TP que Unión 2, función propia.
+            tp_h = _crimpado_union1_tp_fijo_h(hh)
+            tx_h = max(0.0, other_sec / 3600.0)
+            tx_h = min(tx_h, tp_h)
+            tw_h = max(0.0, tp_h - tx_h)
+        elif _crimpado_is_union2(machine, machine_id):
             # ✅ UNIÓN 2: TP SIEMPRE 1.00 salvo comida (8/13) y entrada parcial (7:15).
             # Las demás paradas van a TX, no reducen TP.
             tp_h = _crimpado_union2_tp_fijo_h(hh)
@@ -3661,7 +3589,14 @@ def _crimpado_rows_for_day(
         # TC = tiempo de ciclo nominal por terminal desde RESUMEN_TIEMPOS.
         # La hoja trae Promedio (segundos); se convierte a horas decimales (h/uni).
         # Si hay varias terminales en la misma hora, se usa promedio ponderado por Pulsos.
-        if _crimpado_is_union2(machine, machine_id):
+        if _crimpado_is_union1(machine, machine_id):
+            # ✅ UNIÓN 1 (exportación): TC de la hora = duración total ÷ planeado.
+            tc_h_uni = _crimpado_tc_hora_union1(
+                hour_df,
+                tc_lookup=tc_lookup,
+                tc_default_h_uni=tc_default_h_uni,
+            )
+        elif _crimpado_is_union2(machine, machine_id):
             # ✅ UNIÓN 2 (exportación): TC de la hora = duración total ÷ planeado.
             tc_h_uni = _crimpado_tc_hora_union2(
                 hour_df,
@@ -3740,15 +3675,19 @@ def get_crimpado_export_day_exports(
     resumen_tiempos_df = load_resumen_tiempos(path, machine=m, machine_id=mid)
     tc_lookup, tc_default_h_uni = _crimpado_build_tc_lookup(resumen_tiempos_df)
 
-    # ✅ Exportación: estándares dinámicos por Moto + Masa + Cables
-    # SOLO para UNION - Máquina 1. Unión 2 no reutiliza estos ponderados.
+    # ✅ Exportación: estándar por referencia (Moto + Masa + Cables).
+    # Unión 1 y Unión 2 usan la misma lógica, cada una con su función y modo
+    # propios, para que el Excel descargado coincida con el dashboard.
     try:
         if _crimpado_is_union1(m, mid):
-            mix_tc_lookup, mix_tc_default_h_uni, _mix_table = _crimpado_build_dynamic_mix_tc_lookup(
+            # ✅ UNIÓN 1 (exportación): estándar por referencia aislado.
+            # Usa META por defecto (config.UNION1_TC_MODO), igual que en vivo.
+            mix_tc_lookup, mix_tc_default_h_uni = _crimpado_build_mix_lookup_union1(
                 res_df=res_df,
                 machine=m,
                 machine_id=mid,
                 operator=op,
+                modo=str(getattr(config, "UNION1_TC_MODO", "meta") or "meta"),
             )
             if mix_tc_lookup:
                 tc_lookup.update(mix_tc_lookup)
@@ -3771,18 +3710,6 @@ def get_crimpado_export_day_exports(
                 tc_default_h_uni = float(mix_tc_default_h_uni)
     except Exception:
         pass
-
-    # Si no hay RESUMEN_TIEMPOS, Unión 1 usa un TC nominal histórico constante:
-    # TC_nom_UNION1 = SUM(TW_h) / SUM(PN_h).
-    tc_nominal_history_h_uni = _crimpado_estimate_tc_nominal_from_history(
-        res_df=res_df,
-        par_df=par_df,
-        machine=m,
-        machine_id=mid,
-        operator=op,
-    )
-    if (tc_default_h_uni is None or float(tc_default_h_uni or 0.0) <= 0.0) and tc_nominal_history_h_uni:
-        tc_default_h_uni = float(tc_nominal_history_h_uni)
 
     days = _app_days_for_period_export(res_df, par_df, period, period_value, operator=op)
     if not days:

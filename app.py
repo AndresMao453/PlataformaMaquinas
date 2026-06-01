@@ -1496,6 +1496,23 @@ def thb_filter_options():
         mm = (s % 3600) // 60
         return f"{hh:02d}:{mm:02d}"
 
+    CORTE_ENTRY_START_SEC = (7 * 3600) + (15 * 60)
+
+    def _corte_time_bounds_response(min_s: int, max_s: int) -> tuple[str, str]:
+        """Fuerza inicio operativo de corte a 07:15 todos los días."""
+        try:
+            mn = int(min_s)
+        except Exception:
+            mn = CORTE_ENTRY_START_SEC
+        try:
+            mx = int(max_s)
+        except Exception:
+            mx = CORTE_ENTRY_START_SEC
+
+        mn = max(CORTE_ENTRY_START_SEC, mn)
+        mx = max(mn, mx)
+        return _sec_to_hhmm(mn), _sec_to_hhmm(mx)
+
     def _filter_dt_by_period(dt: pd.Series, period: str, pv: str) -> pd.Series:
         m = dt.notna()
         if not pv:
@@ -1611,7 +1628,8 @@ def thb_filter_options():
         tod = (dt2 - dt2.dt.normalize()).dt.total_seconds()
         min_s = int(tod.min())
         max_s = int(tod.max())
-        return jsonify({"operators": ops, "min_time": _sec_to_hhmm(min_s), "max_time": _sec_to_hhmm(max_s)})
+        min_txt, max_txt = _corte_time_bounds_response(min_s, max_s)
+        return jsonify({"operators": ops, "min_time": min_txt, "max_time": max_txt})
 
     # =========================================================
     # ✅ 4) HP: min/max hora desde Corte (+ Paradas si existe)
@@ -1685,7 +1703,8 @@ def thb_filter_options():
         tod = (dtc2 - dtc2.dt.normalize()).dt.total_seconds()
         min_s = int(tod.min())
         max_s = int(tod.max())
-        return jsonify({"operators": ops, "min_time": _sec_to_hhmm(min_s), "max_time": _sec_to_hhmm(max_s)})
+        min_txt, max_txt = _corte_time_bounds_response(min_s, max_s)
+        return jsonify({"operators": ops, "min_time": min_txt, "max_time": max_txt})
 
     # fallback
     return jsonify({"operators": ops, "min_time": "00:00", "max_time": "23:59"})
@@ -2674,15 +2693,16 @@ def _build_thb_export_workbook(day_exports: list[dict], period: str) -> io.Bytes
             ws.cell(idx, 6).value = row["fin"]
 
             # Producción Planeada = OEE esperado * VN * tiempo base * factor de meta
-            # Unión M1 usa TW (columna M) para que las paradas TX reduzcan la meta;
-            # las demás máquinas conservan TP (columna K).
+            # Unión 1 y Unión 2 usan la misma lógica: tiempo base = TP (columna K).
+            # El factor de meta llega en 1.0 desde el backend para ambas Uniones,
+            # porque la meta ya viene del mejor ciclo por referencia.
             try:
                 meta_factor = float(row.get("meta_factor", item.get("meta_factor", 1.0)) or 1.0)
             except Exception:
                 meta_factor = 1.0
 
             equipo_txt = str(row.get("equipo", "") or "").upper().replace(" ", "")
-            plan_time_col = "M" if ("UNION" in equipo_txt and "M1" in equipo_txt) else "K"
+            plan_time_col = "K"
             ws.cell(idx, 7).value = f'=IFERROR($G$2*O{idx}*{plan_time_col}{idx}*{meta_factor},"")'
 
             ws.cell(idx, 8).value = row["pn"]
