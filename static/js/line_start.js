@@ -2847,8 +2847,15 @@ function renderProdHour(result){
     // - Si no existe, queda 0.
     let planExcelUnits = 0;
 
-    if(machineU === "THB" || machineU === "HP"){
+    if(machineU === "THB"){
       planExcelUnits = Math.round(Number(planHoraUnits) || 0);
+    }
+
+    // HP: mostrar exactamente la Producción Planeada que ya viene del backend/Excel.
+    // Esto evita que las horas con TP especial (07:00, 08:00 y 13:00) muestren
+    // un planeado recalculado diferente al del Excel descargable.
+    if(machineU === "HP"){
+      planExcelUnits = Math.round(backendPlanUnits || planHoraUnits || 0);
     }
 
     if(machineU === "APLICACION" || machineU === "UNION"){
@@ -3147,6 +3154,8 @@ function renderInlineKPIs(result){
   }
 
   if(m === "HP"){
+    // ✅ Mismo modelo de KPIs que THB:
+    // OEE (con sus 3 índices) + Cumplimiento del plan + Metros Cortados.
     order = [
       { key: "OEE",                   cls: "kpi-blue",                  span: "kpi-row-2" },
       { key: "Cumplimiento del plan", cls: "kpi-green",                 span: "kpi-row-4" },
@@ -3191,8 +3200,8 @@ function renderInlineKPIs(result){
     const isOrdered = order.some(o => o.key === kk);
     if(isOrdered) return false;
 
-    // ✅ Aplicación/Unión: en el detalle solo quedan los indicadores pedidos.
-    if(m === "APLICACION" || m === "UNION"){
+    // ✅ Aplicación/Unión y HP: en el detalle solo quedan los indicadores pedidos.
+    if(m === "APLICACION" || m === "UNION" || m === "HP"){
       return crimpadoDetailKeys.includes(kk);
     }
 
@@ -3231,7 +3240,7 @@ function renderInlineKPIs(result){
     extraGrid.style.display = "none";
     extraGrid.style.marginTop = "12px";
 
-    const detailOrder = (m === "APLICACION" || m === "UNION") ? [
+    const detailOrder = (m === "APLICACION" || m === "UNION" || m === "HP") ? [
       // fila 1: indicadores simples (tarjetas estrechas)
       { key: "Producción Buena",        cls: "kpi-green",  span: "kpi-row-4" },
       { key: "Producción con Defectos", cls: "kpi-red",    span: "kpi-row-4" },
@@ -3266,8 +3275,8 @@ function renderInlineKPIs(result){
 
     detailOrder.forEach(item => {
 
-      // ✅ SOLO CRIMPADO: no mostrar Producción Total en indicadores ocultos
-      if((m === "APLICACION" || m === "UNION") &&
+      // ✅ Crimpado y HP: no mostrar Producción Total en indicadores ocultos
+      if((m === "APLICACION" || m === "UNION" || m === "HP") &&
          (item.key === "Producción Total" || item.key === "Produccion Total")){
         return;
       }
@@ -3280,8 +3289,8 @@ function renderInlineKPIs(result){
 
     Object.entries(ui).forEach(([kk, vv]) => {
 
-      // ✅ Aplicación/Unión: no agregar indicadores extra fuera de la lista solicitada.
-      if((m === "APLICACION" || m === "UNION") && !crimpadoDetailKeys.includes(kk)){
+      // ✅ Crimpado y HP: no agregar indicadores extra fuera de la lista solicitada.
+      if((m === "APLICACION" || m === "UNION" || m === "HP") && !crimpadoDetailKeys.includes(kk)){
         return;
       }
 

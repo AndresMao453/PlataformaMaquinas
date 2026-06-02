@@ -861,13 +861,24 @@ def _quantize_hour_parts_to_60min(prod_sec: float, meal_sec: float, other_sec: f
 def _thb_paid_seconds_for_hour(hour_int: int) -> int:
     """
     Tiempo pagado por franja horaria THB.
-    Reglas actuales de corte:
-      - Entrada todos los días: 07:15 => 07:00–08:00 paga 45 min.
-      - 08:00–09:00 descuenta 15 min de desayuno => 45 min pagados.
-      - 13:00–14:00 descuenta 30 min de almuerzo => 30 min pagados.
-      - resto del turno => 60 min pagados.
+    Reglas solicitadas:
+      - 07:00–08:00 => 45 min pagados (entrada 07:15)
+      - 08:00–09:00 => 45 min pagados
+      - 13:00–14:00 => 30 min pagados
+      - resto => 60 min pagados
     """
-    return int(_thb_paid_base_seconds_for_hour(int(hour_int)))
+    h = int(hour_int)
+
+    if h == 7:
+        return 45 * 60   # 07:15–08:00 = 0.75 h
+
+    if h == 8:
+        return 45 * 60   # 0.75 h
+
+    if h == 13:
+        return 30 * 60  # 13:00–14:00 = 0.50 h
+
+    return 60 * 60
 
 # ============================================================
 #  Overlap helpers
@@ -1074,61 +1085,21 @@ def _attach_other_causes_to_buckets_thb(
             if int(ev.get("seconds") or 0) > 0
         ]
 
-
-# ============================================================
-#  Reglas de turno CORTE
-# ============================================================
-# Entrada operativa: 07:15 todos los días.
-# La franja 07:00-08:00 tiene 45 minutos pagados.
-# El lunes se descuenta además mantenimiento preventivo de 30 minutos
-# de la capacidad usada para planeación, sin inflar TW/TX.
-THB_SHIFT_START_SEC = (7 * 3600) + (15 * 60)
-THB_MONDAY_MAINTENANCE_SEC = 30 * 60
-
-
-def _thb_entry_unpaid_seconds_for_hour(hour_int: int) -> int:
-    """Tiempo fuera de turno dentro de la hora por entrada 07:15."""
-    h = int(hour_int)
-    if h < 7:
-        return 3600
-    if h == 7:
-        return 15 * 60
-    return 0
-
-
-def _thb_paid_base_seconds_for_hour(hour_int: int) -> int:
-    """Tiempo pagado base por hora, considerando entrada 07:15 y comidas."""
-    h = int(hour_int)
-    if h < 7:
-        return 0
-    entry_unpaid = _thb_entry_unpaid_seconds_for_hour(h)
-    meal_unpaid = _thb_default_unpaid_break_seconds_for_hour(h)
-    return int(max(0, 3600 - entry_unpaid - meal_unpaid))
-
-
-def _thb_work_bounds_for_hour(day: pd.Timestamp, hour_int: int) -> Tuple[pd.Timestamp, pd.Timestamp]:
-    """Ventana real programada dentro de una hora."""
-    day = pd.Timestamp(day).normalize()
-    h = int(hour_int)
-    h0 = day + pd.Timedelta(hours=h)
-    h1 = h0 + pd.Timedelta(hours=1)
-    if h < 7:
-        return h1, h1
-    if h == 7:
-        return h0 + pd.Timedelta(minutes=15), h1
-    return h0, h1
-
 # ============================================================
 #  Productividad por hora
 # ============================================================
 def _thb_default_unpaid_break_seconds_for_hour(hour_int: int) -> int:
     """
     Tiempo NO pago base por hora:
+      - 07:00–08:00 => 15 min (entrada 07:15)
       - 08:00–09:00 => 15 min desayuno
       - 13:00–14:00 => 30 min almuerzo
       - resto => 0
     """
     h = int(hour_int)
+
+    if h == 7:
+        return 15 * 60
 
     if h == 8:
         return 15 * 60
@@ -1221,19 +1192,12 @@ def _compute_hourly_buckets(
     for h in range(24):
         h0 = pd.Timestamp(f"{day_iso} {h:02d}:00:00")
         h1 = h0 + pd.Timedelta(hours=1)
-        work_h0, work_h1 = _thb_work_bounds_for_hour(selected_day, h)
-        entry_unpaid_sec = int(_thb_entry_unpaid_seconds_for_hour(h))
-        scheduled_paid_sec = int(_thb_paid_base_seconds_for_hour(h))
-
-        # Fuera del turno de corte no se crea tarjeta ni se cuenta producción/paradas.
-        if scheduled_paid_sec <= 0:
-            continue
 
         # --------------------------------------------------------
-        # Producción registrada en esa hora, recortada por entrada 07:15
+        # Producción registrada en esa hora
         # --------------------------------------------------------
         if dt_verif is not None and len(dtc_all):
-            in_hour = dtc_all.notna() & (dtc_all >= work_h0) & (dtc_all < work_h1)
+            in_hour = dtc_all.notna() & (dtc_all >= h0) & (dtc_all < h1)
         else:
             in_hour = pd.Series([], dtype=bool)
 
@@ -1332,7 +1296,7 @@ def _compute_hourly_buckets(
         had_parada = False
 
         for (s, e, code) in stop_intervals:
-            olap = _overlap_seconds(work_h0, work_h1, s, e)
+            olap = _overlap_seconds(h0, h1, s, e)
             if olap <= 0:
                 continue
 
@@ -1356,21 +1320,19 @@ def _compute_hourly_buckets(
         # --------------------------------------------------------
         default_unpaid_sec = float(_thb_default_unpaid_break_seconds_for_hour(h))
 
-        # Comida NO paga por esa hora.
-        # La entrada 07:15 NO se marca como comida; simplemente reduce el TP de 07:00-08:00.
+        # Comida NO paga por esa hora
         meal_raw = max(default_unpaid_sec, float(stop_105_raw))
-        meal_raw = max(0.0, min(3600.0 - float(entry_unpaid_sec), meal_raw))
+        meal_raw = max(0.0, min(3600.0, meal_raw))
 
-        # TP de la franja: entrada 07:15 + comida 105/default.
-        # Si la parada 105 real supera el descanso base, también reduce el TP de esa hora.
-        paid_raw = max(0.0, 3600.0 - float(entry_unpaid_sec) - float(meal_raw))
-
-        # TX = SOLO paradas distintas de 105, con corte real por hora y sin exceder TP.
+        # TX = SOLO paradas distintas de 105, con corte real por hora
         tx_raw = max(0.0, float(stop_total_raw) - float(stop_105_raw))
+
+        # No puede exceder el tiempo pagable de la hora
+        paid_raw = max(0.0, 3600.0 - meal_raw)
         tx_raw = min(tx_raw, paid_raw)
 
-        # TW = lo que queda del TP después de TX.
-        tw_raw = max(0.0, paid_raw - tx_raw)
+        # TW = lo que queda de la hora después de TX y Comida
+        tw_raw = max(0.0, 3600.0 - meal_raw - tx_raw)
 
         # --------------------------------------------------------
         # Cuantización a minutos para visualización estable
@@ -1379,38 +1341,30 @@ def _compute_hourly_buckets(
         mm = max(0, min(60, mm))
 
         om = int(round(tx_raw / 60.0))
-        paid_m = int(round(paid_raw / 60.0))
-        paid_m = max(0, min(60, paid_m))
-        om = max(0, min(paid_m, om))
+        om = max(0, min(60 - mm, om))
 
-        pm = max(0, paid_m - om)
+        pm = max(0, 60 - mm - om)
 
         meal_q = mm * 60
         other_q = om * 60
         prod_q = pm * 60
-        paid_q = paid_m * 60
 
         # --------------------------------------------------------
         # Capacidad usada para planeación por hora
         # --------------------------------------------------------
         # Lunes: descontar 30 min de mantenimiento preventivo únicamente
         # en la primera hora real que aparece en Productividad por hora.
-        # Este descuento baja el planeado, pero NO infla el porcentaje TW/TX.
         planned_maintenance_sec = 0
         if is_monday_preventive and first_active_hour is not None and int(h) == int(first_active_hour):
-            planned_maintenance_sec = int(THB_MONDAY_MAINTENANCE_SEC)
+            planned_maintenance_sec = 30 * 60
 
-        capacity_q = max(0, paid_q - planned_maintenance_sec)
+        capacity_q = max(0, 3600 - meal_q - planned_maintenance_sec)
 
         bucket = {
             "hourLabel": f"{h:02d}:00",
             "hour": f"{h:02d}",
             "capacitySec": int(capacity_q),
-            "tpH": float(paid_q / 3600.0),
-            "twH": float(prod_q / 3600.0),
-            "txH": float(other_q / 3600.0),
             "plannedMaintenanceSec": int(planned_maintenance_sec),
-            "entryUnpaidSec": int(entry_unpaid_sec),
             "prodSec": int(prod_q),
             "mealSec": int(meal_q),
             "otherDeadSec": int(other_q),
@@ -2952,16 +2906,20 @@ period=period,
 def _thb_net_shift_seconds_for_day(day: pd.Timestamp) -> int:
     """
     Retorna segundos netos por operaria según tu calendario THB.
-    Lun-Jue: 07:00-17:00 menos (30 almuerzo + 15 desayuno + 7 pausas) = 9h08m
-    Vie:     07:00-14:15 menos (15 desayuno + 7 pausas) = 6h53m
+    ✅ Entrada del turno: 07:15 (la salida sigue fija: 17:00 L-J / 14:15 Vie),
+       por lo que el turno se acorta 15 min frente al horario anterior (07:00).
+    Lun-Jue: 07:15-17:00 menos (30 almuerzo + 15 desayuno + 7 pausas) = 8h53m
+    Vie:     07:15-14:15 menos (15 desayuno + 7 pausas) = 6h38m
     """
     d = pd.Timestamp(day).normalize()
     wd = int(d.weekday())  # 0=lun ... 4=vie ... 6=dom
 
     if wd in (0, 1, 2, 3):
-        return 10 * 3600 - (30 + 15 + 7) * 60  # 32880 sec = 9:08
+        # 07:15-17:00 = 9h45m brutas; menos (30+15+7) min = 8h53m
+        return (9 * 3600 + 45 * 60) - (30 + 15 + 7) * 60  # 31980 sec = 8:53
     if wd == 4:
-        return (7 * 3600 + 15 * 60) - (15 + 7) * 60  # 24780 sec = 6:53
+        # 07:15-14:15 = 7h brutas; menos (15+7) min = 6h38m
+        return (7 * 3600) - (15 + 7) * 60  # 23880 sec = 6:38
     return 0  # sábado/domingo (sin jornada definida)
 
 
@@ -2981,7 +2939,7 @@ def _compute_horas_hombre_thb(
     """
     Tiempo Pagado (Horas/Hombre) THB.
 
-    - Si operator == General: usa regla de turno por # tarjetas (9.25 / 10.25 / 11.25 ...).
+    - Si operator == General: usa regla de turno por # tarjetas (9.00 / 10.00 / 11.00 ... con entrada 07:15).
     - Si operator != General:
         - Si en el día hubo >=2 operarias: paga por horas trabajadas de esa operaria (cards * 1h)
           y descuenta Parada 105 SOLO en ventanas fijas:
@@ -3076,9 +3034,9 @@ def _compute_horas_hombre_thb(
     # timeline "all ops" (sin filtrar operaria) para contar operarias del día
     dt_all_ops = pd.to_datetime(dt_verif_all_ops, errors="coerce") if dt_verif_all_ops is not None else None
 
-    # ✅ Base General
-    BASE_LJ_SEC = int(round(9.25 * 3600))  # Lun-Jue
-    BASE_VS_SEC = (6 * 3600) + (53 * 60)  # Sábado (y si quieres usarlo también para viernes NO, ya lo separamos)        # Vie/Sáb
+    # ✅ Base General (entrada 07:15: cada base se acorta 15 min vs 07:00)
+    BASE_LJ_SEC = int(round(9.00 * 3600))  # Lun-Jue (antes 9.25h)
+    BASE_VS_SEC = (6 * 3600) + (38 * 60)  # Sábado 6:38 (antes 6:53)
 
     op = (operator or "").strip()
     is_general = _is_general_operator(op)
@@ -3160,8 +3118,6 @@ def _compute_horas_hombre_thb(
             disc_105 += _sum_overlap_105_in_window(df_p, w4_0, w4_1)
 
             hh_day = max(0, hh_day - int(disc_105))
-            if int(day.dayofweek) == 0:
-                hh_day = max(0, hh_day - int(THB_MONDAY_MAINTENANCE_SEC))
             total_hh += hh_day
             continue
 
@@ -3172,13 +3128,11 @@ def _compute_horas_hombre_thb(
 
         if wd in (0, 1, 2, 3):
             extra_h = max(0, int(cards) - 10)
-            hh_day = int(BASE_LJ_SEC + extra_h * 3600)
-            if wd == 0:
-                hh_day = max(0, hh_day - int(THB_MONDAY_MAINTENANCE_SEC))
-            total_hh += int(hh_day)
+            total_hh += int(BASE_LJ_SEC + extra_h * 3600)
         elif wd == 4:
-            # ✅ VIERNES: base 7h. Si hay horas extra (cards>7), sumar extras pero restar 45 min (30+15) una sola vez.
-            BASE_FRI_SEC = 7 * 3600
+            # ✅ VIERNES: base 6h45m (entrada 07:15, salida 14:15 fija).
+            #    Si hay horas extra (cards>7), sumar extras pero restar 45 min (30+15) una sola vez.
+            BASE_FRI_SEC = (6 * 3600) + (45 * 60)
             extra_h = max(0, int(cards) - 7)
             hh_day = int(BASE_FRI_SEC + extra_h * 3600)
 
