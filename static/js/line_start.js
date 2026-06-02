@@ -2433,10 +2433,12 @@ function renderProdHour(result){
 
   const prodOperatorFirstName = _prodHourTitleOperatorName(result);
 
-  if(prodOperatorFirstName){
+  if(machineTitleU === "THB"){
+    title.textContent = prodOperatorFirstName
+      ? `Productividad por hora THB - ${prodOperatorFirstName}`
+      : "Productividad por hora THB";
+  }else if(prodOperatorFirstName){
     title.textContent = `Productividad por hora - ${prodOperatorFirstName}`;
-  }else if(machineTitleU === "THB"){
-    title.textContent = "Productividad por hora THB";
   }else{
     title.textContent = "Productividad por hora";
   }
@@ -2786,7 +2788,11 @@ function renderProdHour(result){
       0
     ) || 0;
 
-    const planForPctUnits = (isCrimpadoMachine && backendPlanUnits > 0)
+    // ✅ SOLO THB + Crimpado: si el backend manda el plan del Excel, usarlo.
+    // HP conserva su cálculo actual; Unión/Aplicación conservan la lógica que ya venía.
+    const useBackendPlanUnits = ((machineU === "THB") || isCrimpadoMachine) && backendPlanUnits > 0;
+
+    const planForPctUnits = useBackendPlanUnits
       ? backendPlanUnits
       : planHoraUnits;
 
@@ -2848,14 +2854,13 @@ function renderProdHour(result){
     let planExcelUnits = 0;
 
     if(machineU === "THB"){
-      planExcelUnits = Math.round(Number(planHoraUnits) || 0);
+      // ✅ THB: mostrar exactamente el planeado que viene del Excel THB cuando exista.
+      planExcelUnits = Math.round(backendPlanUnits || planHoraUnits || 0);
     }
 
-    // HP: mostrar exactamente la Producción Planeada que ya viene del backend/Excel.
-    // Esto evita que las horas con TP especial (07:00, 08:00 y 13:00) muestren
-    // un planeado recalculado diferente al del Excel descargable.
     if(machineU === "HP"){
-      planExcelUnits = Math.round(backendPlanUnits || planHoraUnits || 0);
+      // HP queda tal cual venía.
+      planExcelUnits = Math.round(Number(planHoraUnits) || 0);
     }
 
     if(machineU === "APLICACION" || machineU === "UNION"){

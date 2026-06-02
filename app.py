@@ -2763,6 +2763,7 @@ def _thb_export_rows_for_day(
         day: pd.Timestamp,
         buckets: list[dict],
         operator: str = "",
+        df_paradas: pd.DataFrame | None = None,
 ) -> list[dict]:
     cols = _resolve_thb_cols(df_verif)
     if not cols.col_fecha:
@@ -2793,6 +2794,154 @@ def _thb_export_rows_for_day(
         except Exception:
             continue
         bucket_by_hour[hh] = b
+
+    def _thb_clean_stop_code(x: object) -> str:
+        s = str(x or "").strip()
+        if not s:
+            return ""
+        m_code = re.search(r"\d+", s)
+        if not m_code:
+            return ""
+        try:
+            return str(int(m_code.group(0)))
+        except Exception:
+            return m_code.group(0)
+
+    def _thb_bucket_has_stop_108(bucket: dict) -> bool:
+        if not isinstance(bucket, dict):
+            return False
+
+        # Soporta diferentes nombres si el bucket ya trae el 108 separado.
+        for k in ("maint108Sec", "tpDiscount108Sec", "parada108Sec", "stop108Sec", "p108Sec", "108Sec"):
+            try:
+                if float(bucket.get(k, 0) or 0) > 0:
+                    return True
+            except Exception:
+                pass
+
+        # Soporta detalle visual de paradas: other_causes / causes / paradas / stops.
+        for list_key in ("other_causes", "causes", "paradas", "stops", "items"):
+            items = bucket.get(list_key, [])
+            if not isinstance(items, list):
+                continue
+
+            for item in items:
+                if isinstance(item, dict):
+                    code = (
+                        item.get("code") or item.get("codigo") or item.get("código") or
+                        item.get("causa") or item.get("label") or item.get("id")
+                    )
+                else:
+                    code = item
+
+                if _thb_clean_stop_code(code) == "108":
+                    return True
+
+        return False
+
+    def _thb_duration_to_seconds_local(values: pd.Series) -> pd.Series:
+        if values is None:
+            return pd.Series([], dtype="float64")
+
+        if pd.api.types.is_numeric_dtype(values):
+            x = pd.to_numeric(values, errors="coerce").fillna(0.0).astype(float)
+            nz = x[x > 0].dropna()
+            if nz.empty:
+                return x
+
+            mx = float(nz.max())
+            med = float(nz.median())
+
+            # Fracción de día Excel.
+            if mx <= 2.0:
+                return x * 86400.0
+
+            # En Sheets suele venir en minutos cuando todos los valores son pequeños.
+            if mx <= 240.0 and med <= 60.0:
+                return x * 60.0
+
+            return x
+
+        ss = values.astype(str).str.replace("\u00a0", " ", regex=False).str.strip()
+        td = pd.to_timedelta(ss, errors="coerce")
+        sec = td.dt.total_seconds()
+
+        m = sec.isna()
+        if m.any():
+            nums = pd.to_numeric(ss.where(m).str.replace(",", ".", regex=False), errors="coerce")
+            if nums.notna().any():
+                sec = sec.fillna(_thb_duration_to_seconds_local(nums))
+
+        return pd.to_numeric(sec, errors="coerce").fillna(0.0).clip(lower=0.0).astype(float)
+
+    def _thb_registered_108_hours_for_day(df_paradas_src: pd.DataFrame | None) -> set[int]:
+        hours_108: set[int] = set()
+        if df_paradas_src is None or not isinstance(df_paradas_src, pd.DataFrame) or df_paradas_src.empty:
+            return hours_108
+
+        dfp = df_paradas_src.copy()
+        c_fecha_p = _find_col(dfp, "fecha")
+        c_hora_p = _find_col(dfp, "hora")
+        c_codigo_p = (
+            _find_col(dfp, "código") or _find_col(dfp, "codigo") or
+            _find_col(dfp, "cod") or _find_col(dfp, "causa") or
+            _find_col(dfp, "parada") or _find_col(dfp, "motivo")
+        )
+
+        if not c_fecha_p or not c_hora_p or not c_codigo_p or c_codigo_p not in dfp.columns:
+            return hours_108
+
+        dt_end_p = pd.to_datetime(_build_dt_from_fecha_hora(dfp, c_fecha_p, c_hora_p), errors="coerce")
+        codes_p = dfp[c_codigo_p].apply(_thb_clean_stop_code)
+        m108 = codes_p.eq("108") & dt_end_p.notna()
+        if not m108.any():
+            return hours_108
+
+        dt_108 = dt_end_p.loc[m108]
+        m_day_108 = dt_108.dt.normalize().eq(day0)
+        dt_108 = dt_108.loc[m_day_108]
+        if dt_108.empty:
+            return hours_108
+
+        # Fallback: si la parada 108 quedó registrada con Hora dentro de la franja.
+        for h in dt_108.dt.hour.dropna().astype(int).tolist():
+            if 0 <= int(h) <= 23:
+                hours_108.add(int(h))
+
+        # Si hay Duración, también se marca cualquier hora con la que la parada se solape.
+        c_dur_p = None
+        for c in dfp.columns:
+            k = str(c or "").strip().lower()
+            if any(tok in k for tok in ("dur", "tiempo", "min", "seg", "sec")):
+                if c not in (c_fecha_p, c_hora_p, c_codigo_p):
+                    c_dur_p = c
+                    break
+
+        if c_dur_p and c_dur_p in dfp.columns:
+            dur_sec = _thb_duration_to_seconds_local(dfp.loc[m108, c_dur_p])
+            dur_sec = dur_sec.loc[dt_108.index].fillna(0.0).clip(lower=0.0)
+            dt_start_p = dt_108 - pd.to_timedelta(dur_sec, unit="s")
+
+            for start_p, end_p in zip(dt_start_p.tolist(), dt_108.tolist()):
+                try:
+                    if pd.isna(start_p) or pd.isna(end_p):
+                        continue
+                    start_p = pd.Timestamp(start_p)
+                    end_p = pd.Timestamp(end_p)
+                    if end_p <= start_p:
+                        continue
+
+                    for hh2 in range(24):
+                        h0_2 = day0 + pd.Timedelta(hours=hh2)
+                        h1_2 = h0_2 + pd.Timedelta(hours=1)
+                        if min(end_p, h1_2) > max(start_p, h0_2):
+                            hours_108.add(hh2)
+                except Exception:
+                    continue
+
+        return hours_108
+
+    thb_108_hours = _thb_registered_108_hours_for_day(df_paradas)
 
     hours = sorted(bucket_by_hour.keys())
     if not hours and not sub.empty:
@@ -2869,6 +3018,19 @@ def _thb_export_rows_for_day(
         # si hay 105 mayor al fijo, se descuenta la real;
         # si es menor, se conserva el fijo
         meal_applied_sec = max(meal_fixed_sec, meal_sec) if meal_fixed_sec > 0 else 0
+
+        # THB - Descargar Excel:
+        # Los lunes, SOLO en 07:00-08:00, si la parada 108 existe registrada,
+        # se descuentan 30 minutos adicionales del Tiempo Pagado.
+        # El TX permanece igual: conserva las paradas registradas normales.
+        has_thb_108_lunes_7 = (
+            int(hh) == 7
+            and int(day0.weekday()) == 0
+            and ((7 in thb_108_hours) or _thb_bucket_has_stop_108(b))
+        )
+        if has_thb_108_lunes_7:
+            meal_applied_sec += 30 * 60
+
         meal_applied_sec = max(0, min(3600, meal_applied_sec))
 
         # TP del Excel:
@@ -2930,6 +3092,334 @@ def _thb_export_rows_for_day(
 
     return rows
 
+
+
+# =========================================================
+# THB: métricas EXACTAS tipo Excel exportado
+# =========================================================
+def _thb_export_float(x: Any, default: float = 0.0) -> float:
+    try:
+        v = float(x if x is not None else default)
+        if np.isfinite(v):
+            return v
+    except Exception:
+        pass
+    return float(default)
+
+
+def _thb_export_ratio(num: float, den: float) -> float:
+    den = _thb_export_float(den)
+    if abs(den) <= 1e-12:
+        return 0.0
+    return _thb_export_float(num) / den
+
+
+def _thb_export_h_to_hhmm(h: float) -> str:
+    sign = "-" if _thb_export_float(h) < 0 else ""
+    sec = int(round(abs(_thb_export_float(h)) * 3600.0))
+    return sign + _seconds_to_hhmm(float(sec))
+
+
+def _thb_export_pct_text(ratio: float) -> str:
+    return f"{(_thb_export_float(ratio) * 100.0):.1f}%"
+
+
+def _thb_export_oee_expected(default: float = 0.70) -> float:
+    """
+    Lee el OEE esperado que usa el modelo Excel THB (celda G2).
+    Si no puede leerlo, conserva 70%, que es el valor histórico usado por THB.
+    """
+    try:
+        from openpyxl import load_workbook
+
+        template_path = _get_thb_export_template_path()
+        wb = load_workbook(template_path, read_only=True, data_only=True)
+        ws = wb["Por hora"] if "Por hora" in wb.sheetnames else wb.active
+        raw = ws["G2"].value
+        wb.close()
+
+        val = _thb_export_float(raw, default)
+        if val > 1.5 and val <= 100.0:
+            val = val / 100.0
+        if val > 0:
+            return float(val)
+    except Exception:
+        pass
+    return float(default)
+
+
+def _thb_export_row_metrics(row: dict, *, oee_expected: float = 0.70) -> dict:
+    """
+    Replica las fórmulas de la plantilla Excel OEE para una fila THB:
+      G PP  = OEE esperado * VN * TP
+      J PB  = PN - RX
+      M TW  = TP - TX
+      O VN  = 1 / TC
+      P TCN = PN * TC
+      Q TCE = PB * TC
+      R ID  = TW / TP
+      S IEO = TCN / TW
+      T IC  = TCE / TCN
+      U OEE = TCE / TP
+      V PA  = PN / PP
+    """
+    pn = _thb_export_float(row.get("pn"), 0.0)
+    rx = _thb_export_float(row.get("rx"), 0.0)
+    pb = pn - rx
+
+    tp_h = _thb_export_float(row.get("tp_h"), 0.0)
+    tx_h = _thb_export_float(row.get("tx_h"), 0.0)
+    tw_h = tp_h - tx_h
+
+    tc_h = max(0.0, _thb_export_float(row.get("tc_h_uni"), 0.0))
+    vn = (1.0 / tc_h) if tc_h > 0 else 0.0
+
+    try:
+        meta_factor = float(row.get("meta_factor", 1.0) or 1.0)
+    except Exception:
+        meta_factor = 1.0
+    if not np.isfinite(meta_factor) or meta_factor <= 0:
+        meta_factor = 1.0
+
+    pp = max(0.0, _thb_export_float(oee_expected, 0.70) * vn * tp_h * meta_factor)
+    tcn_h = pn * tc_h
+    tce_h = pb * tc_h
+
+    return {
+        "pp": float(pp),
+        "pn": float(pn),
+        "rx": float(rx),
+        "pb": float(pb),
+        "tp_h": float(tp_h),
+        "tx_h": float(tx_h),
+        "tw_h": float(tw_h),
+        "tc_h": float(tc_h),
+        "vn": float(vn),
+        "tcn_h": float(tcn_h),
+        "tce_h": float(tce_h),
+        "id": _thb_export_ratio(tw_h, tp_h),
+        "ieo": _thb_export_ratio(tcn_h, tw_h),
+        "ic": _thb_export_ratio(tce_h, tcn_h),
+        "oee": _thb_export_ratio(tce_h, tp_h),
+        "pa": _thb_export_ratio(pn, pp),
+    }
+
+
+def _thb_export_summary_metrics(rows: list[dict], *, oee_expected: float = 0.70) -> dict:
+    mets = [_thb_export_row_metrics(r, oee_expected=oee_expected) for r in (rows or [])]
+
+    def total(k: str) -> float:
+        return float(sum(_thb_export_float(m.get(k), 0.0) for m in mets))
+
+    out = {
+        "pp": total("pp"),
+        "pn": total("pn"),
+        "rx": total("rx"),
+        "pb": total("pb"),
+        "tp_h": total("tp_h"),
+        "tx_h": total("tx_h"),
+        "tw_h": total("tw_h"),
+        "tc_h_sum": total("tc_h"),
+        "tcn_h": total("tcn_h"),
+        "tce_h": total("tce_h"),
+    }
+
+    out["id"] = _thb_export_ratio(out["tw_h"], out["tp_h"])
+    out["ieo"] = _thb_export_ratio(out["tcn_h"], out["tw_h"])
+    out["ic"] = _thb_export_ratio(out["tce_h"], out["tcn_h"])
+    out["oee"] = _thb_export_ratio(out["tce_h"], out["tp_h"])
+    out["pa"] = _thb_export_ratio(out["pn"], out["pp"])
+    return out
+
+
+def _thb_oee_chart_from_export_rows(rows: list[dict], *, oee_expected: float = 0.70) -> dict:
+    labels, oee, operacional, disponibilidad, calidad = [], [], [], [], []
+    for row in rows or []:
+        try:
+            ts = pd.Timestamp(row.get("inicio"))
+            label = f"{int(ts.hour):02d}:00"
+        except Exception:
+            label = str(row.get("inicio") or "").strip()
+        if not label:
+            continue
+
+        m = _thb_export_row_metrics(row, oee_expected=oee_expected)
+        labels.append(label)
+        oee.append(round(m["oee"] * 100.0, 1))
+        operacional.append(round(m["ieo"] * 100.0, 1))
+        disponibilidad.append(round(m["id"] * 100.0, 1))
+        calidad.append(round(m["ic"] * 100.0, 1))
+
+    return {
+        "labels": labels,
+        "oee": oee,
+        "operacional": operacional,
+        "disponibilidad": disponibilidad,
+        "calidad": calidad,
+    }
+
+
+def _build_thb_export_day_exports(
+        *,
+        df_verif: pd.DataFrame,
+        df_paradas: pd.DataFrame,
+        period: str,
+        period_value: str,
+        operator: str = "",
+        base_result: Optional[dict] = None,
+) -> list[dict]:
+    """
+    Construye las mismas filas que se envían al Excel THB.
+    Se usa para que el dashboard THB pueda reflejar exactamente el Excel descargable.
+    """
+    days = _thb_days_for_period_export(df_verif, period, period_value, operator=operator)
+    if not days:
+        return []
+
+    day_exports: list[dict] = []
+    p = str(period or "day").strip().lower()
+    base_day = None
+    try:
+        if p == "day" and base_result and base_result.get("status") == "ok":
+            base_day = pd.Timestamp(period_value).normalize()
+    except Exception:
+        base_day = None
+
+    for day in days:
+        day = pd.Timestamp(day).normalize()
+
+        if base_day is not None and day == base_day:
+            result_day = base_result
+        else:
+            result_day = analyze_thb(
+                df_verif,
+                period="day",
+                period_value=day.strftime("%Y-%m-%d"),
+                machine="THB",
+                operator=operator,
+                time_start="",
+                time_end="",
+                df_paradas=df_paradas,
+            )
+
+        if not isinstance(result_day, dict) or result_day.get("status") != "ok":
+            continue
+
+        buckets = result_day.get("kpis", {}).get("hourly_buckets", [])
+        rows = _thb_export_rows_for_day(
+            df_verif=df_verif,
+            day=day,
+            buckets=buckets,
+            operator=operator,
+        )
+        if not rows:
+            continue
+
+        day_exports.append({
+            "sheet_title": day.strftime("%Y-%m-%d"),
+            "rows": rows,
+            "buckets": buckets,
+        })
+
+    return day_exports
+
+
+def _thb_apply_excel_metrics_to_result(result: dict, day_exports: list[dict], *, oee_expected: float = 0.70) -> dict:
+    """Hace que los KPIs y tarjetas THB sean los mismos totales del Excel descargable."""
+    if not isinstance(result, dict):
+        return result
+
+    all_rows: list[dict] = []
+    for item in day_exports or []:
+        all_rows.extend(item.get("rows", []) or [])
+    if not all_rows:
+        return result
+
+    summary = _thb_export_summary_metrics(all_rows, oee_expected=oee_expected)
+
+    kpis = result.setdefault("kpis", {})
+    ui = result.setdefault("kpis_ui", {})
+
+    # Totales equivalentes a la fila TOTAL del Excel.
+    kpis["thb_excel_summary"] = summary
+    kpis["oee_esperado"] = float(oee_expected)
+    kpis["produccion_planeada_calc"] = float(summary["pp"])
+    kpis["cumplimiento_plan"] = float(summary["pa"])
+    kpis["oee"] = float(summary["oee"])
+    kpis["oee_rendimiento"] = float(summary["ieo"])
+    kpis["oee_disponibilidad"] = float(summary["id"])
+    kpis["oee_calidad"] = float(summary["ic"])
+
+    kpis["circuitos_cortados"] = int(round(summary["pn"]))
+    kpis["circuitos_planeados"] = int(round(summary["pb"]))
+    kpis["circuitos_no_conformes"] = int(round(summary["rx"]))
+
+    kpis["horas_hombre_sec"] = int(round(summary["tp_h"] * 3600.0))
+    kpis["otro_tiempo_sec"] = int(round(summary["tx_h"] * 3600.0))
+    kpis["tiempo_efectivo_sec"] = int(round(summary["tw_h"] * 3600.0))
+
+    kpis["horas_hombre_hhmm"] = _thb_export_h_to_hhmm(summary["tp_h"])
+    kpis["otro_tiempo_hhmm"] = _thb_export_h_to_hhmm(summary["tx_h"])
+    kpis["tiempo_efectivo_hhmm"] = _thb_export_h_to_hhmm(summary["tw_h"])
+
+    ui["Producción Total"] = f"{int(round(summary['pn'])):,}".replace(",", ".")
+    ui["Producción Buena"] = f"{int(round(summary['pb'])):,}".replace(",", ".")
+    ui["Producción con Defectos"] = f"{int(round(summary['rx'])):,}".replace(",", ".")
+    ui["Cumplimiento del plan"] = _thb_export_pct_text(summary["pa"])
+    ui["Tiempo Pagado"] = _thb_export_h_to_hhmm(summary["tp_h"])
+    ui["Tiempo Trabajado"] = f"{_thb_export_h_to_hhmm(summary['tw_h'])} ({_thb_export_pct_text(summary['id'])})"
+
+    # Mantener el desglose visual existente, pero hacer que el total sea el TX del Excel.
+    old_lost = str(ui.get("Tiempo Perdido") or ui.get("Tiempos Perdidos") or "")
+    detail = ""
+    if "||" in old_lost:
+        detail = "||" + old_lost.split("||", 1)[1]
+    ui["Tiempo Perdido"] = f"{_thb_export_h_to_hhmm(summary['tx_h'])}{detail}"
+    ui["Tiempos Perdidos"] = ui["Tiempo Perdido"]
+
+    ui["OEE"] = (
+        f"{_thb_export_pct_text(summary['oee'])}||"
+        f"Indice de Disponibilidad: {_thb_export_pct_text(summary['id'])} | "
+        f"Indice de Eficiencia Operacional: {_thb_export_pct_text(summary['ieo'])} | "
+        f"Indice de Calidad: {_thb_export_pct_text(summary['ic'])}"
+    )
+
+    # Enriquecer tarjetas por hora con los mismos datos de cada fila del Excel.
+    row_by_hour: dict[str, dict] = {}
+    for row in all_rows:
+        try:
+            hkey = f"{int(pd.Timestamp(row.get('inicio')).hour):02d}"
+        except Exception:
+            continue
+        row_by_hour[hkey] = row
+
+    buckets = kpis.get("hourly_buckets")
+    if isinstance(buckets, list) and buckets:
+        for b in buckets:
+            raw_h = str(b.get("hour") or b.get("hourLabel") or "").strip()
+            m_h = re.search(r"\d{1,2}", raw_h)
+            hkey = f"{int(m_h.group(0)):02d}" if m_h else ""
+            row = row_by_hour.get(hkey)
+            if not row:
+                continue
+
+            met = _thb_export_row_metrics(row, oee_expected=oee_expected)
+            b["cut"] = int(round(met["pn"]))
+            b["tpH"] = round(met["tp_h"], 6)
+            b["txH"] = round(met["tx_h"], 6)
+            b["twH"] = round(met["tw_h"], 6)
+            b["idPct"] = round(met["id"] * 100.0, 4)
+            b["oeePct"] = round(met["oee"] * 100.0, 4)
+            b["paPct"] = round(met["pa"] * 100.0, 4)
+            b["plan"] = round(met["pp"], 6)
+            b["planned"] = round(met["pp"], 6)
+            b["produccionPlaneada"] = round(met["pp"], 6)
+            b["excel_metrics"] = met
+
+    if str(result.get("period") or "").strip().lower() == "day":
+        result["oee_chart"] = _thb_oee_chart_from_export_rows(all_rows, oee_expected=oee_expected)
+
+    return result
 
 def _ensure_thb_template_capacity(ws, needed_rows: int, body_start: int = 7, body_end: int = 38, total_row: int = 40):
     """
@@ -2999,6 +3489,65 @@ def _write_thb_template_totals(ws, body_start: int, body_end: int, total_row: in
     ws.cell(total_row, 21).value = f'=IFERROR(Q{total_row}/K{total_row},"")'
     ws.cell(total_row, 22).value = f'=IFERROR(H{total_row}/G{total_row},"")'
 
+
+
+
+def _thb_productivity_operator_name_from_data(
+        df_verif: pd.DataFrame,
+        *,
+        period: str,
+        period_value: str,
+        operator: str = "",
+) -> str:
+    """
+    Nombre que se muestra en el título "Productividad por hora THB".
+    - Si el usuario filtró una operaria, se usa esa operaria.
+    - Si está en General, se toma automáticamente la operaria más frecuente
+      del periodo mostrado en Verificación de Medidas.
+    Solo alimenta el título del dashboard; no cambia KPIs ni exportación.
+    """
+    op = str(operator or "").strip()
+    if op and op.lower() != "general":
+        return op
+
+    try:
+        if df_verif is None or not isinstance(df_verif, pd.DataFrame) or df_verif.empty:
+            return ""
+
+        cols = _resolve_thb_cols(df_verif)
+        if not cols.col_nombre or cols.col_nombre not in df_verif.columns:
+            return ""
+        if not cols.col_fecha:
+            return ""
+
+        dt = _thb_build_dt(df_verif, cols.col_fecha, cols.col_hora)
+        pv = _thb_normalize_period_value(period, period_value)
+        r0, r1 = _thb_period_bounds(period, pv)
+
+        if r0 is not None and r1 is not None:
+            mask = pd.to_datetime(dt, errors="coerce").notna() & (dt >= r0) & (dt < r1)
+            sub = df_verif.loc[mask].copy()
+        else:
+            sub = df_verif.copy()
+
+        if sub.empty:
+            return ""
+
+        names = sub[cols.col_nombre].dropna().astype(str).str.strip()
+        names = names[
+            names.ne("")
+            & ~names.str.lower().isin(["general", "nan", "none", "null", "—"])
+        ]
+        if names.empty:
+            return ""
+
+        # Modo por frecuencia: representa mejor quién estuvo cortando en el periodo.
+        try:
+            return str(names.mode().iloc[0]).strip()
+        except Exception:
+            return str(names.iloc[-1]).strip()
+    except Exception:
+        return ""
 
 def _build_thb_export_workbook(day_exports: list[dict], period: str) -> io.BytesIO:
     from openpyxl import load_workbook
@@ -3210,6 +3759,7 @@ def export_thb_excel():
                 day=day,
                 buckets=result_day.get("kpis", {}).get("hourly_buckets", []),
                 operator=operator,
+                df_paradas=df_paradas,
             )
             if not rows:
                 continue
@@ -3961,6 +4511,35 @@ def run_analysis_api():
                     time_end=(time_end if time_apply else ""),
                     df_paradas=df_paradas,
                 )
+
+                # ✅ THB: el dashboard debe mostrar los mismos OEE/PA/TW/TX,
+                # producción total y producción planeada que se calculan
+                # en el Excel descargable "Descargar Excel THB".
+                if isinstance(result, dict) and result.get("status") == "ok":
+                    thb_oee_expected = _thb_export_oee_expected(default=0.70)
+                    thb_day_exports = _build_thb_export_day_exports(
+                        df_verif=df_verif,
+                        df_paradas=df_paradas,
+                        period=period,
+                        period_value=period_value,
+                        operator=operator,
+                        base_result=result,
+                    )
+                    result = _thb_apply_excel_metrics_to_result(
+                        result,
+                        thb_day_exports,
+                        oee_expected=thb_oee_expected,
+                    )
+
+                    thb_operator_title_name = _thb_productivity_operator_name_from_data(
+                        df_verif,
+                        period=period,
+                        period_value=period_value,
+                        operator=operator,
+                    )
+                    if thb_operator_title_name:
+                        result["productivity_operator_name"] = thb_operator_title_name
+                        result["current_operator_name"] = thb_operator_title_name
 
             elif machine == "HP":
                 if filename == GSHEET_HP_TOKEN:

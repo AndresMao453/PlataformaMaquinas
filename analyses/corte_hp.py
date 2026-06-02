@@ -2306,6 +2306,50 @@ def analyze_hp(
 
     }
 
+    # Nombre automático para el título de Productividad por hora HP.
+    # No altera filtros ni cálculos: solo toma la operaria más frecuente ya
+    # asignada al rango analizado desde la hoja de Verificación.
+    def _hp_auto_operator_name() -> str:
+        def _clean_op_name(x: Any) -> str:
+            s = str(x or "").strip()
+            if not s:
+                return ""
+            if s.lower() in ("general", "nan", "none", "null", "—", "-"):
+                return ""
+            return s
+
+        sel = _clean_op_name(operator)
+        if sel:
+            return sel
+
+        parts = []
+        try:
+            if df_corte_w is not None and "_op" in df_corte_w.columns:
+                parts.append(df_corte_w["_op"])
+        except Exception:
+            pass
+
+        try:
+            if df_par_work is not None and not df_par_work.empty and "_op" in df_par_work.columns:
+                parts.append(df_par_work["_op"])
+        except Exception:
+            pass
+
+        if not parts:
+            return ""
+
+        ops = pd.concat(parts, ignore_index=True).apply(_clean_op_name)
+        ops = ops[ops.astype(str).str.strip().ne("")]
+        if ops.empty:
+            return ""
+
+        try:
+            return str(ops.value_counts().idxmax()).strip()
+        except Exception:
+            return str(ops.iloc[0]).strip()
+
+    hp_auto_operator_name = _hp_auto_operator_name()
+
     pareto = _pareto_paradas_hp(df_par_work, top_n=25)
     oee_chart = _build_hp_oee_chart_from_buckets(buckets) if p == "day" else {"labels": [], "oee": [],
                                                                               "operacional": [], "disponibilidad": [],
@@ -2319,6 +2363,8 @@ def analyze_hp(
         "period": period,
         "period_value": period_value,
         "operator": operator,
+        "productivity_operator_name": hp_auto_operator_name,
+        "current_operator_name": hp_auto_operator_name,
         "time_start": time_start,
         "time_end": time_end,
         "rows_total": int(len(df_corte_w)),

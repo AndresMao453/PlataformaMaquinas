@@ -1172,21 +1172,12 @@ def _compute_hourly_buckets(
     buckets: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------
-    # Mantenimiento preventivo semanal
+    # Nota THB Productividad por hora
     # ------------------------------------------------------------
-    # Regla operativa solicitada:
-    # - Todos los lunes.
-    # - Solo en la primera hora real mostrada en Productividad por hora.
-    # - Descuenta 30 minutos de capacidad para la planeación de esa hora.
-    #
-    # Se aplica sobre capacitySec, que es la base que usa el frontend para
-    # calcular la planeación de la tarjeta horaria. No altera TW/TX/Comida,
-    # porque esos tiempos siguen representando la distribución visual de la hora.
-    try:
-        is_monday_preventive = pd.Timestamp(selected_day).weekday() == 0  # lunes = 0
-    except Exception:
-        is_monday_preventive = False
-
+    # En las tarjetas NO se descuenta mantenimiento 108 fijo de los lunes.
+    # Si existe una parada 108 registrada, queda dentro de TX como cualquier
+    # parada normal. El descuento especial de 108 se maneja únicamente en
+    # el Excel descargable THB, según la regla solicitada.
     first_active_hour: Optional[int] = None
 
     for h in range(24):
@@ -1320,31 +1311,41 @@ def _compute_hourly_buckets(
         # --------------------------------------------------------
         default_unpaid_sec = float(_thb_default_unpaid_break_seconds_for_hour(h))
 
-        # Comida NO paga por esa hora
-        meal_raw = max(default_unpaid_sec, float(stop_105_raw))
+        # 07:00-08:00 tiene 15 min no pagados por entrada 07:15.
+        # Ese tiempo NO es comida y NO debe aparecer como causa "Comida"
+        # en Productividad por hora. Sí reduce la capacidad pagada a 0.75 h.
+        entry_unpaid_raw = default_unpaid_sec if int(h) == 7 else 0.0
+        meal_default_raw = 0.0 if int(h) == 7 else default_unpaid_sec
+
+        # Comida NO paga por esa hora: solo desayuno/almuerzo fijos o 105 real.
+        meal_raw = max(meal_default_raw, float(stop_105_raw))
         meal_raw = max(0.0, min(3600.0, meal_raw))
 
         # TX = SOLO paradas distintas de 105, con corte real por hora
         tx_raw = max(0.0, float(stop_total_raw) - float(stop_105_raw))
 
         # No puede exceder el tiempo pagable de la hora
-        paid_raw = max(0.0, 3600.0 - meal_raw)
+        paid_raw = max(0.0, 3600.0 - entry_unpaid_raw - meal_raw)
         tx_raw = min(tx_raw, paid_raw)
 
-        # TW = lo que queda de la hora después de TX y Comida
-        tw_raw = max(0.0, 3600.0 - meal_raw - tx_raw)
+        # TW = lo que queda de la hora después de entrada no pagada, TX y Comida
+        tw_raw = max(0.0, 3600.0 - entry_unpaid_raw - meal_raw - tx_raw)
 
         # --------------------------------------------------------
         # Cuantización a minutos para visualización estable
         # --------------------------------------------------------
+        em = int(round(entry_unpaid_raw / 60.0))
+        em = max(0, min(60, em))
+
         mm = int(round(meal_raw / 60.0))
-        mm = max(0, min(60, mm))
+        mm = max(0, min(60 - em, mm))
 
         om = int(round(tx_raw / 60.0))
-        om = max(0, min(60 - mm, om))
+        om = max(0, min(60 - em - mm, om))
 
-        pm = max(0, 60 - mm - om)
+        pm = max(0, 60 - em - mm - om)
 
+        entry_unpaid_q = em * 60
         meal_q = mm * 60
         other_q = om * 60
         prod_q = pm * 60
@@ -1352,13 +1353,11 @@ def _compute_hourly_buckets(
         # --------------------------------------------------------
         # Capacidad usada para planeación por hora
         # --------------------------------------------------------
-        # Lunes: descontar 30 min de mantenimiento preventivo únicamente
-        # en la primera hora real que aparece en Productividad por hora.
+        # Para tarjetas THB, la hora 07:00 cuenta 0.75 h por entrada 07:15.
+        # No se descuenta 108 fijo aquí; si existe 108 registrada, queda en TX.
         planned_maintenance_sec = 0
-        if is_monday_preventive and first_active_hour is not None and int(h) == int(first_active_hour):
-            planned_maintenance_sec = 30 * 60
 
-        capacity_q = max(0, 3600 - meal_q - planned_maintenance_sec)
+        capacity_q = max(0, 3600 - entry_unpaid_q - meal_q - planned_maintenance_sec)
 
         bucket = {
             "hourLabel": f"{h:02d}:00",
@@ -1367,6 +1366,7 @@ def _compute_hourly_buckets(
             "plannedMaintenanceSec": int(planned_maintenance_sec),
             "prodSec": int(prod_q),
             "mealSec": int(meal_q),
+            "entryUnpaidSec": int(entry_unpaid_q),
             "otherDeadSec": int(other_q),
             "deadSec": int(meal_q + other_q),
             "unknownSec": 0,
