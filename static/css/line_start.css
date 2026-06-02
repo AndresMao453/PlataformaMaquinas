@@ -4504,7 +4504,7 @@ img{
 #prodHourTitleSub .prod-hour-ticker-track{
   gap: 10px !important;
   align-items: center !important;
-  animation-duration: 60s !important;
+  animation-duration: 120s !important;
 }
 
 #prodHourTitleSub .prod-ticker-item,
