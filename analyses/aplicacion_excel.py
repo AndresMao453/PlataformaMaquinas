@@ -238,6 +238,11 @@ UNION1_HORA_ENTRADA = 7.25
 # (p. ej. 7:15→8:00 = 45 min => TP = 0.75 en la franja de las 7).
 UNION2_HORA_ENTRADA = 7.25
 
+# Hora de entrada del turno de Aplicación 1 y Aplicación 2.
+# Debe ser la misma regla de Unión: 7:15 => TP = 0.75 en la franja 7:00-8:00.
+APLICACION1_HORA_ENTRADA = 7.25
+APLICACION2_HORA_ENTRADA = 7.25
+
 
 def _crimpado_oee_esperado(machine: str = "", machine_id: str = "") -> float:
     """Devuelve el OEE esperado según máquina."""
@@ -317,6 +322,64 @@ def _crimpado_union2_tp_fijo_h(hour: Any) -> float:
     if h < h_ent:
         return 0.0
 
+    return 1.0
+
+
+def _crimpado_aplicacion1_tp_fijo_h(hour: Any) -> float:
+    """
+    Tiempo Pagado (TP) fijo por hora para APLICACIÓN 1.
+    Usa la misma regla de Unión:
+      - 7:15 de entrada => TP 0.75 en la hora 7.
+      - 8:00 descuenta 15 min no pagos.
+      - 13:00 descuenta 30 min no pagos.
+      - Las demás paradas van a TX, no reducen TP.
+    """
+    try:
+        h = int(hour)
+    except Exception:
+        return 1.0
+
+    if h == 8:
+        return 1.0 - (15.0 / 60.0)
+    if h == 13:
+        return 1.0 - (30.0 / 60.0)
+
+    entrada = float(getattr(config, "APLICACION1_HORA_ENTRADA", APLICACION1_HORA_ENTRADA) or APLICACION1_HORA_ENTRADA)
+    h_ent = int(entrada)
+    frac_ent = entrada - h_ent
+    if h == h_ent and frac_ent > 0:
+        return max(0.0, 1.0 - frac_ent)
+    if h < h_ent:
+        return 0.0
+    return 1.0
+
+
+def _crimpado_aplicacion2_tp_fijo_h(hour: Any) -> float:
+    """
+    Tiempo Pagado (TP) fijo por hora para APLICACIÓN 2.
+    Usa la misma regla de Unión:
+      - 7:15 de entrada => TP 0.75 en la hora 7.
+      - 8:00 descuenta 15 min no pagos.
+      - 13:00 descuenta 30 min no pagos.
+      - Las demás paradas van a TX, no reducen TP.
+    """
+    try:
+        h = int(hour)
+    except Exception:
+        return 1.0
+
+    if h == 8:
+        return 1.0 - (15.0 / 60.0)
+    if h == 13:
+        return 1.0 - (30.0 / 60.0)
+
+    entrada = float(getattr(config, "APLICACION2_HORA_ENTRADA", APLICACION2_HORA_ENTRADA) or APLICACION2_HORA_ENTRADA)
+    h_ent = int(entrada)
+    frac_ent = entrada - h_ent
+    if h == h_ent and frac_ent > 0:
+        return max(0.0, 1.0 - frac_ent)
+    if h < h_ent:
+        return 0.0
     return 1.0
 
 
@@ -468,6 +531,68 @@ def _duration_to_seconds_series(s: pd.Series) -> pd.Series:
     sec = pd.to_numeric(sec, errors="coerce").fillna(0.0).astype(float)
     sec[sec < 0] = 0.0
     return sec
+
+
+
+def _parse_excel_date_series_app(s: pd.Series) -> pd.Series:
+    """
+    Convierte Fecha de Aplicación/Unión a datetime normalizado.
+    Soporta fechas reales, texto dd/mm/yyyy, ISO y serial Excel/Sheets
+    como 46177.
+    """
+    if s is None:
+        return pd.Series([], dtype="datetime64[ns]")
+
+    ser = pd.Series(s).copy()
+
+    if pd.api.types.is_datetime64_any_dtype(ser):
+        return pd.to_datetime(ser, errors="coerce").dt.normalize()
+
+    if pd.api.types.is_numeric_dtype(ser):
+        return pd.to_datetime(
+            pd.to_numeric(ser, errors="coerce"),
+            unit="D",
+            origin="1899-12-30",
+            errors="coerce",
+        ).dt.normalize()
+
+    txt = ser.astype(str).str.replace("\u00a0", " ", regex=False).str.strip()
+    txt = txt.replace({"": None, "nan": None, "None": None, "NaT": None, "null": None})
+
+    out = pd.Series(pd.NaT, index=ser.index, dtype="datetime64[ns]")
+
+    # Serial Excel como texto.
+    num = pd.to_numeric(txt, errors="coerce")
+    mask_serial = num.notna() & ~txt.astype(str).str.contains(r"[/-]", regex=True, na=False)
+    if mask_serial.any():
+        out.loc[mask_serial] = pd.to_datetime(
+            num.loc[mask_serial],
+            unit="D",
+            origin="1899-12-30",
+            errors="coerce",
+        )
+
+    # ISO yyyy-mm-dd / yyyy/mm/dd.
+    mask_iso = txt.astype(str).str.match(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}", na=False)
+    if mask_iso.any():
+        out.loc[mask_iso] = pd.to_datetime(
+            txt.loc[mask_iso].astype(str).str.replace("/", "-", regex=False),
+            errors="coerce",
+            yearfirst=True,
+            dayfirst=False,
+        )
+
+    # Formato colombiano dd/mm/yyyy.
+    mask_dmy = out.isna() & txt.astype(str).str.match(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$", na=False)
+    if mask_dmy.any():
+        out.loc[mask_dmy] = pd.to_datetime(txt.loc[mask_dmy], errors="coerce", dayfirst=True)
+
+    # Fallback final.
+    rem = out.isna()
+    if rem.any():
+        out.loc[rem] = pd.to_datetime(txt.loc[rem], errors="coerce", dayfirst=True)
+
+    return pd.to_datetime(out, errors="coerce").dt.normalize()
 
 
 def _normalize_crimpado_duration_column(df: pd.DataFrame) -> pd.DataFrame:
@@ -741,6 +866,12 @@ def load_resumen_pulsos(path: str, machine: str = "APLICACION", machine_id: str 
             ]
         else:  # APLICACION
             sheet_candidates = [
+                # ✅ Nuevo libro Aplicación: resumen productivo por intervalo inicio → finalizar.
+                "APLICACION2_Resumen_Hora" if mid == "2" else "APLICACION1_Resumen_Hora",
+                "Aplicacion2_Resumen_Hora" if mid == "2" else "Aplicacion1_Resumen_Hora",
+                "APLICACION_Resumen_Hora",
+                "Resumen_Hora_APLICACION",
+                # Compatibilidad con libros anteriores.
                 "APLICACION2_Resumen_Pulsos" if mid == "2" else "APLICACION1_Resumen_Pulsos",
                 "Aplicacion2_Resumen_Pulsos" if mid == "2" else "Aplicacion1_Resumen_Pulsos",
                 "APLICACION_Resumen_Pulsos",
@@ -764,12 +895,13 @@ def load_resumen_pulsos(path: str, machine: str = "APLICACION", machine_id: str 
 
     keep_cols = [
         "Nombre", "Fecha", "Hora", "Pulsos", "Terminal", "Aplicación",
+        "Aplicacion Modo 1", "Aplicacion Modo 2", "Aplicacion Modo 3",
         "Moto", "Masa", "Cantidad de cables", "Duracion", "Duracion_s",
     ]
     cols = [c for c in keep_cols if c in df.columns]
     df = df[cols].copy()
 
-    df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce", dayfirst=True)
+    df["Fecha"] = _parse_excel_date_series_app(df["Fecha"])
 
     if "Hora" in df.columns:
         prefer_closed_hour = (m == "UNION") and ("Duracion_s" in df.columns or "Cantidad de cables" in df.columns)
@@ -782,7 +914,7 @@ def load_resumen_pulsos(path: str, machine: str = "APLICACION", machine_id: str 
         df["Terminal"] = df["Terminal"].astype(str)
     if "Aplicación" in df.columns:
         df["Aplicación"] = df["Aplicación"].astype(str)
-    for extra_col in ("Moto", "Masa", "Cantidad de cables"):
+    for extra_col in ("Aplicacion Modo 1", "Aplicacion Modo 2", "Aplicacion Modo 3", "Moto", "Masa", "Cantidad de cables"):
         if extra_col in df.columns:
             df[extra_col] = df[extra_col].astype(str).replace({"nan": "", "None": ""}).str.strip()
 
@@ -842,7 +974,7 @@ def load_paradas(path: str, machine: str = "APLICACION", machine_id: str = "") -
     # el resto del modelo siga usando "Duracion" y "downtime_s".
     df = _normalize_crimpado_duration_column(df)
     if "Fecha" in df.columns:
-        df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce", dayfirst=True)
+        df["Fecha"] = _parse_excel_date_series_app(df["Fecha"])
     for _tcol in ("Hora de Inicio", "Hora de Fin"):
         if _tcol in df.columns:
             df[_tcol] = _parse_crimpado_hour_series(df[_tcol], prefer_closed_hour=False)
@@ -889,7 +1021,7 @@ def _dates_union(res_df: pd.DataFrame, par_df: pd.DataFrame) -> List[pd.Timestam
         if df is None or df.empty or "Fecha" not in df.columns:
             return pd.Series([], dtype="datetime64[ns]")
 
-        s = pd.to_datetime(df["Fecha"], errors="coerce", dayfirst=True)
+        s = _parse_excel_date_series_app(df["Fecha"])
         s = s.dropna()
         if s.empty:
             return pd.Series([], dtype="datetime64[ns]")
@@ -1397,7 +1529,7 @@ def run_aplicacion_analysis(
         productive_by_slot: Dict[tuple, float] = {}
         if res_f is not None and not res_f.empty and ("Fecha" in res_f.columns) and ("Hora" in res_f.columns):
             tmp = res_f.dropna(subset=["Fecha", "Hora"]).copy()
-            tmp["Fecha_d"] = pd.to_datetime(tmp["Fecha"], errors="coerce").dt.date
+            tmp["Fecha_d"] = _parse_excel_date_series_app(tmp["Fecha"]).dt.date
             tmp["Hora_h"] = tmp["Hora"].apply(lambda t: int(t.hour) if hasattr(t, "hour") else np.nan)
             tmp["Hora_h"] = pd.to_numeric(tmp["Hora_h"], errors="coerce")
             tmp = tmp.dropna(subset=["Fecha_d", "Hora_h"]).copy()
@@ -1461,7 +1593,7 @@ def run_aplicacion_analysis(
         ):
             ptmp = par_f.dropna(subset=["Fecha", "Hora de Inicio"]).copy()
             if not ptmp.empty:
-                ptmp["Fecha0"] = pd.to_datetime(ptmp["Fecha"], errors="coerce").dt.normalize()
+                ptmp["Fecha0"] = _parse_excel_date_series_app(ptmp["Fecha"])
 
                 sec0 = ptmp["Hora de Inicio"].apply(_timeobj_to_seconds_local)
                 sec0 = pd.to_numeric(sec0, errors="coerce").fillna(0).astype(int)
@@ -1810,7 +1942,7 @@ def run_aplicacion_analysis(
 
     if "Fecha" in res_f.columns and "Hora" in res_f.columns and not res_f.empty:
         tmp = res_f.dropna(subset=["Fecha", "Hora"]).copy()
-        tmp["Fecha_d"] = pd.to_datetime(tmp["Fecha"], errors="coerce").dt.date
+        tmp["Fecha_d"] = _parse_excel_date_series_app(tmp["Fecha"]).dt.date
         tmp["Hora_h"] = tmp["Hora"].apply(lambda t: int(t.hour) if hasattr(t, "hour") else np.nan)
         tmp["Hora_s"] = tmp["Hora"].apply(_timeobj_to_seconds_local)
         tmp = tmp.dropna(subset=["Fecha_d", "Hora_h"]).copy()
@@ -1827,7 +1959,7 @@ def run_aplicacion_analysis(
 
     if "Fecha" in par_f.columns and not par_f.empty:
         ptmp = par_f.copy()
-        ptmp["Fecha_d"] = pd.to_datetime(ptmp["Fecha"], errors="coerce").dt.date
+        ptmp["Fecha_d"] = _parse_excel_date_series_app(ptmp["Fecha"]).dt.date
 
         if "Hora de Inicio" in ptmp.columns:
             ptmp["HoraIni_h"] = ptmp["Hora de Inicio"].apply(lambda t: int(t.hour) if hasattr(t, "hour") else np.nan)
@@ -1981,7 +2113,28 @@ def run_aplicacion_analysis(
     # Por defecto usan la META (mejor ciclo) como TC de cada referencia,
     # configurable en config.UNION1_TC_MODO / config.UNION2_TC_MODO.
     try:
-        if _crimpado_is_union1(machine, machine_id):
+        if _crimpado_is_aplicacion_dynamic(machine, machine_id):
+            # ✅ APLICACIÓN 1/2: mismo modelo dinámico de Unión, pero por
+            # Terminal + Aplicacion Modo 1 + Modo 2 + Modo 3.
+            mix_tc_lookup, mix_tc_default_h_uni = _crimpado_build_appmix_lookup(
+                res_df=res_df,
+                machine=machine,
+                machine_id=machine_id,
+                operator=operator,
+                modo=str(
+                    getattr(
+                        config,
+                        "APLICACION2_TC_MODO" if _crimpado_is_aplicacion2(machine, machine_id) else "APLICACION1_TC_MODO",
+                        "meta",
+                    ) or "meta"
+                ),
+            )
+            mix_standards_table = []
+            if mix_tc_lookup:
+                tc_lookup.update(mix_tc_lookup)
+            if (tc_default_h_uni is None or float(tc_default_h_uni or 0.0) <= 0.0) and mix_tc_default_h_uni:
+                tc_default_h_uni = float(mix_tc_default_h_uni)
+        elif _crimpado_is_union1(machine, machine_id):
             # ✅ UNIÓN 1: estándar por referencia AISLADO (hoja UNION1_Metas_Ref).
             mix_tc_lookup, mix_tc_default_h_uni = _crimpado_build_mix_lookup_union1(
                 res_df=res_df,
@@ -2030,7 +2183,7 @@ def run_aplicacion_analysis(
         if res_f is not None and not res_f.empty and "Fecha" in res_f.columns:
             res_day = _filter_period(res_f, "day", day0.strftime("%Y-%m-%d"), "Fecha").copy()
             if not res_day.empty:
-                fecha = pd.to_datetime(res_day["Fecha"], errors="coerce", dayfirst=True).dt.normalize()
+                fecha = _parse_excel_date_series_app(res_day["Fecha"])
                 if "Hora" in res_day.columns:
                     sec = res_day["Hora"].apply(_timeobj_to_seconds).fillna(0)
                     dt_res = fecha + pd.to_timedelta(sec, unit="s")
@@ -2073,7 +2226,21 @@ def run_aplicacion_analysis(
                 dead_sec, meal_sec, other_sec, hh, machine=machine, machine_id=machine_id
             )
 
-            if _crimpado_is_union1(machine, machine_id):
+            if _crimpado_is_aplicacion1(machine, machine_id):
+                # ✅ APLICACIÓN 1: misma regla de Unión para TP.
+                # Entrada 7:15, desayuno 15 min, almuerzo 30 min.
+                # Las demás paradas van a TX, no reducen TP.
+                tp_h = _crimpado_aplicacion1_tp_fijo_h(hh)
+                tx_h = max(0.0, other_sec / 3600.0)
+                tx_h = min(tx_h, tp_h)
+                tw_h = max(0.0, tp_h - tx_h)
+            elif _crimpado_is_aplicacion2(machine, machine_id):
+                # ✅ APLICACIÓN 2: misma regla de Unión para TP.
+                tp_h = _crimpado_aplicacion2_tp_fijo_h(hh)
+                tx_h = max(0.0, other_sec / 3600.0)
+                tx_h = min(tx_h, tp_h)
+                tw_h = max(0.0, tp_h - tx_h)
+            elif _crimpado_is_union1(machine, machine_id):
                 # ✅ UNIÓN 1: misma regla de TP que Unión 2, con su propia función.
                 # TP SIEMPRE 1.00 salvo comida (8/13) y entrada parcial (7:15).
                 # Las demás paradas van a TX, no reducen TP.
@@ -2091,12 +2258,20 @@ def run_aplicacion_analysis(
                 tx_h = min(tx_h, tp_h)
                 tw_h = max(0.0, tp_h - tx_h)
             else:
-                # Igual al Excel: 105 reduce TP; las demás paradas son TX.
+                # Fallback histórico: 105 reduce TP; las demás paradas son TX.
                 tp_h = max(0.0, (3600.0 - meal_sec) / 3600.0)
                 tx_h = max(0.0, other_sec / 3600.0)
                 tw_h = max(0.0, tp_h - tx_h)
 
-            if _crimpado_is_union1(machine, machine_id):
+            if _crimpado_is_aplicacion_dynamic(machine, machine_id):
+                # ✅ APLICACIÓN 1/2: TC de la hora = duración total ÷ planeado,
+                # usando Terminal + Modos como referencia independiente.
+                tc_h_uni = _crimpado_tc_hora_appmix(
+                    hour_df,
+                    tc_lookup=tc_lookup,
+                    tc_default_h_uni=tc_default_h_uni,
+                )
+            elif _crimpado_is_union1(machine, machine_id):
                 # ✅ UNIÓN 1: TC de la hora = duración total ÷ planeado (sin totazo).
                 tc_h_uni = _crimpado_tc_hora_union1(
                     hour_df,
@@ -2525,7 +2700,7 @@ def _format_crimpado_equipo(machine: str, machine_id: str = "") -> str:
 def _app_export_date_series(df: pd.DataFrame) -> pd.Series:
     if df is None or df.empty or "Fecha" not in df.columns:
         return pd.Series([], dtype="datetime64[ns]")
-    s = pd.to_datetime(df["Fecha"], errors="coerce", dayfirst=True)
+    s = _parse_excel_date_series_app(df["Fecha"])
     return s.dropna().dt.normalize()
 
 
@@ -3057,6 +3232,261 @@ def _crimpado_tc_from_resumen_for_hour(
     return tc_default_h_uni if tc_default_h_uni and tc_default_h_uni > 0 else None
 
 
+
+def _crimpado_is_aplicacion1(machine: str = "", machine_id: str = "") -> bool:
+    """
+    Identifica APLICACIÓN - Máquina 1.
+    Se acepta machine_id vacío por compatibilidad, porque el backend histórico
+    tomaba Aplicación M1 como default.
+    """
+    m = str(machine or "").strip().upper()
+    mid = str(machine_id or "").strip()
+    return (m == "APLICACION") and (mid in ("", "1"))
+
+
+def _crimpado_is_aplicacion2(machine: str = "", machine_id: str = "") -> bool:
+    """Identifica APLICACIÓN - Máquina 2."""
+    return (str(machine or "").strip().upper() == "APLICACION") and (str(machine_id or "").strip() == "2")
+
+
+def _crimpado_is_aplicacion_dynamic(machine: str = "", machine_id: str = "") -> bool:
+    """Aplicación M1/M2 con TC dinámico por Terminal + modos."""
+    return _crimpado_is_aplicacion1(machine, machine_id) or _crimpado_is_aplicacion2(machine, machine_id)
+
+
+def _crimpado_app_mode_value(x: Any) -> str:
+    """
+    Normaliza los modos de Aplicación:
+    Aplicacion Modo 1 / 2 / 3.
+    """
+    return _crimpado_mix_value(x)
+
+
+def _crimpado_appmix_candidate_keys(
+    terminal: Any = "",
+    modo1: Any = "",
+    modo2: Any = "",
+    modo3: Any = "",
+    aplicacion: Any = "",
+) -> List[str]:
+    """
+    Orden de búsqueda del estándar para Aplicación:
+    1) Terminal + Modo 1 + Modo 2 + Modo 3
+    2) Terminal + Modo 1 + Modo 2
+    3) Terminal + Modo 1 + Modo 3
+    4) Terminal + Modo 1
+    5) Terminal
+    6) Aplicación global (Manual/Carrete) si existe
+    7) Global
+    """
+    t = _crimpado_terminal_key(terminal)
+    m1 = _crimpado_app_mode_value(modo1)
+    m2 = _crimpado_app_mode_value(modo2)
+    m3 = _crimpado_app_mode_value(modo3)
+    app = _crimpado_aplicacion_key(aplicacion)
+
+    keys: List[str] = []
+    if t and m1 and m2 and m3:
+        keys.append(f"APPMIX::{t}::{m1}::{m2}::{m3}")
+    if t and m1 and m2:
+        keys.append(f"APPMIX_T_M1_M2::{t}::{m1}::{m2}")
+    if t and m1 and m3:
+        keys.append(f"APPMIX_T_M1_M3::{t}::{m1}::{m3}")
+    if t and m1:
+        keys.append(f"APPMIX_T_M1::{t}::{m1}")
+    if t:
+        keys.append(f"APPMIX_T::{t}")
+    if app:
+        keys.append(f"APPMIX_APP::{app}")
+    keys.append("APPMIX_GLOBAL")
+
+    seen = set()
+    out = []
+    for k in keys:
+        if k and k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+
+def _crimpado_appmix_tc_from_lookup(row_or_dict: Any, tc_lookup: Optional[Dict[str, float]]) -> Optional[float]:
+    """Busca el TC estándar de Aplicación usando Terminal + Modo 1/2/3."""
+    if not tc_lookup:
+        return None
+
+    def _get(obj: Any, key: str) -> Any:
+        try:
+            if isinstance(obj, dict):
+                return obj.get(key)
+            return obj.get(key)
+        except Exception:
+            return None
+
+    terminal = _get(row_or_dict, "Terminal")
+    modo1 = _get(row_or_dict, "Aplicacion Modo 1")
+    modo2 = _get(row_or_dict, "Aplicacion Modo 2")
+    modo3 = _get(row_or_dict, "Aplicacion Modo 3")
+    aplicacion = _get(row_or_dict, "Aplicación")
+
+    for k in _crimpado_appmix_candidate_keys(terminal, modo1, modo2, modo3, aplicacion):
+        val = tc_lookup.get(k)
+        if val is not None and float(val or 0.0) > 0:
+            return float(val)
+    return None
+
+
+def _crimpado_build_appmix_lookup(
+    res_df: pd.DataFrame,
+    machine: str = "",
+    machine_id: str = "",
+    operator: str = "",
+    modo: str = "meta",
+) -> Tuple[Dict[str, float], Optional[float]]:
+    """
+    Estándar de TC por combinación para APLICACIÓN 1 y 2.
+
+    La combinación de Aplicación no es Moto/Masa/Cables como Unión.
+    Para el libro APLICACION_1 la referencia real es:
+      Terminal + Aplicacion Modo 1 + Aplicacion Modo 2 + Aplicacion Modo 3.
+
+    Usa el mismo criterio de Unión:
+      - meta: mejor ciclo observado = MIN(Duración_s / Pulsos).
+      - promedio: SUM(Duración_s) / SUM(Pulsos).
+
+    Devuelve lookup en horas/unidad y default global.
+    """
+    if not _crimpado_is_aplicacion_dynamic(machine, machine_id):
+        return {}, None
+    if res_df is None or res_df.empty:
+        return {}, None
+
+    required = {
+        "Terminal", "Aplicacion Modo 1", "Aplicacion Modo 2",
+        "Aplicacion Modo 3", "Duracion_s", "Pulsos",
+    }
+    if not required.issubset(set(res_df.columns)):
+        return {}, None
+
+    df = res_df.copy()
+    op = str(operator or "").strip()
+    if op and op.lower() != "general" and "Nombre" in df.columns:
+        df = df[df["Nombre"].astype(str).str.strip().eq(op)].copy()
+    if df.empty:
+        return {}, None
+
+    df["__pulsos"] = pd.to_numeric(df["Pulsos"], errors="coerce").fillna(0.0).astype(float)
+    df["__dur_s"] = pd.to_numeric(df["Duracion_s"], errors="coerce").fillna(0.0).astype(float)
+    df["__terminal"] = df["Terminal"].map(_crimpado_terminal_key)
+    df["__m1"] = df["Aplicacion Modo 1"].map(_crimpado_app_mode_value)
+    df["__m2"] = df["Aplicacion Modo 2"].map(_crimpado_app_mode_value)
+    df["__m3"] = df["Aplicacion Modo 3"].map(_crimpado_app_mode_value)
+
+    if "Aplicación" in df.columns:
+        df["__app"] = df["Aplicación"].map(_crimpado_aplicacion_key)
+    else:
+        df["__app"] = ""
+
+    df = df[(df["__pulsos"] > 0) & (df["__dur_s"] > 0)].copy()
+    df = df[(df["__terminal"] != "") & (df["__m1"] != "") & (df["__m2"] != "") & (df["__m3"] != "")].copy()
+    if df.empty:
+        return {}, None
+
+    df["__tc_s"] = df["__dur_s"] / df["__pulsos"]
+    min_tc_s = float(getattr(config, "CRIMPADO_MIX_TC_MIN_S", 3.0) or 3.0)
+    max_tc_s = float(getattr(config, "CRIMPADO_MIX_TC_MAX_S", 180.0) or 180.0)
+    df = df[(df["__tc_s"] >= min_tc_s) & (df["__tc_s"] <= max_tc_s)].copy()
+    if df.empty:
+        return {}, None
+
+    usar_meta = str(modo or "meta").strip().lower() == "meta"
+    lookup: Dict[str, float] = {}
+
+    def _add_group(keys: List[str], key_builder) -> None:
+        g = (
+            df.groupby(keys, dropna=False)
+              .agg(
+                  pulsos=("__pulsos", "sum"),
+                  duracion_s=("__dur_s", "sum"),
+                  mejor_tc_s=("__tc_s", "min"),
+              )
+              .reset_index()
+        )
+        for _, r in g.iterrows():
+            pulsos = float(r.get("pulsos", 0.0) or 0.0)
+            dur_s = float(r.get("duracion_s", 0.0) or 0.0)
+            mejor_tc_s = float(r.get("mejor_tc_s", 0.0) or 0.0)
+            if dur_s <= 0 or pulsos <= 0:
+                continue
+            tc_s = mejor_tc_s if usar_meta else (dur_s / pulsos)
+            if tc_s <= 0:
+                continue
+            key = key_builder(r)
+            if key:
+                lookup[key] = tc_s / 3600.0
+
+    _add_group(["__terminal", "__m1", "__m2", "__m3"], lambda r: f"APPMIX::{r['__terminal']}::{r['__m1']}::{r['__m2']}::{r['__m3']}")
+    _add_group(["__terminal", "__m1", "__m2"], lambda r: f"APPMIX_T_M1_M2::{r['__terminal']}::{r['__m1']}::{r['__m2']}")
+    _add_group(["__terminal", "__m1", "__m3"], lambda r: f"APPMIX_T_M1_M3::{r['__terminal']}::{r['__m1']}::{r['__m3']}")
+    _add_group(["__terminal", "__m1"], lambda r: f"APPMIX_T_M1::{r['__terminal']}::{r['__m1']}")
+    _add_group(["__terminal"], lambda r: f"APPMIX_T::{r['__terminal']}")
+    if "__app" in df.columns and df["__app"].astype(str).str.strip().ne("").any():
+        _add_group(["__app"], lambda r: f"APPMIX_APP::{r['__app']}")
+
+    if usar_meta:
+        default_h = (float(df["__tc_s"].min()) / 3600.0) if not df.empty else None
+    else:
+        tot_p = float(df["__pulsos"].sum())
+        tot_d = float(df["__dur_s"].sum())
+        default_h = ((tot_d / tot_p) / 3600.0) if tot_p > 0 else None
+    if default_h:
+        lookup["APPMIX_GLOBAL"] = float(default_h)
+
+    return lookup, default_h
+
+
+def _crimpado_tc_hora_appmix(
+    hour_df: pd.DataFrame,
+    tc_lookup: Optional[Dict[str, float]] = None,
+    tc_default_h_uni: Optional[float] = None,
+) -> Optional[float]:
+    """
+    TIEMPO DE CICLO POR HORA — APLICACIÓN 1/2.
+
+    Igual que Unión:
+      Planeado hora = SUM_bloques(Duración_s_bloque / TC_combo_bloque[s])
+      TC hora       = (SUM Duración_s / Planeado hora) / 3600
+
+    Cada bloque se mide con su Terminal + Modo 1/2/3.
+    """
+    tc_lookup = tc_lookup or {}
+    if hour_df is None or hour_df.empty:
+        return tc_default_h_uni if (tc_default_h_uni and tc_default_h_uni > 0) else None
+    if "Duracion_s" not in hour_df.columns:
+        return tc_default_h_uni if (tc_default_h_uni and tc_default_h_uni > 0) else None
+
+    total_dur_s = 0.0
+    planeado_u = 0.0
+
+    for _, r in hour_df.iterrows():
+        dur_s = _crimpado_num_float(r.get("Duracion_s", 0.0)) or 0.0
+        if dur_s <= 0:
+            continue
+
+        tc_h = _crimpado_appmix_tc_from_lookup(r, tc_lookup)
+        if (tc_h is None or tc_h <= 0):
+            tc_h = tc_default_h_uni
+        if tc_h is None or tc_h <= 0:
+            continue
+
+        tc_s = float(tc_h) * 3600.0
+        total_dur_s += dur_s
+        planeado_u += dur_s / tc_s
+
+    if planeado_u > 0 and total_dur_s > 0:
+        return (total_dur_s / planeado_u) / 3600.0
+    return tc_default_h_uni if (tc_default_h_uni and tc_default_h_uni > 0) else None
+
+
 def _crimpado_is_union1(machine: str = "", machine_id: str = "") -> bool:
     """
     Identifica UNIÓN - Máquina 1. Usa la MISMA lógica que Unión 2
@@ -3394,14 +3824,18 @@ def _crimpado_tc_hora_union1(
 
 def _crimpado_fixed_non_paid_sec_for_hour(hour: Any, machine: str = "", machine_id: str = "") -> float:
     """
-    Tiempo no pago fijo para Unión 1 y Unión 2.
+    Tiempo no pago fijo para Aplicación 1/2 y Unión 1/2.
     Se trata como comida/tiempo no pago, NO como TX (tiempo perdido):
       - 08:00-09:00 -> 15 min desayuno
       - 13:00-14:00 -> 30 min almuerzo
     Estos minutos descuentan del Tiempo Pagado (TP) y nunca entran en TX.
     El resto de paradas sí van a TX con normalidad.
     """
-    if not (_crimpado_is_union1(machine, machine_id) or _crimpado_is_union2(machine, machine_id)):
+    if not (
+        _crimpado_is_aplicacion_dynamic(machine, machine_id)
+        or _crimpado_is_union1(machine, machine_id)
+        or _crimpado_is_union2(machine, machine_id)
+    ):
         return 0.0
     try:
         h = int(hour)
@@ -3423,7 +3857,8 @@ def _crimpado_apply_fixed_non_paid_to_parts(
     machine_id: str = "",
 ) -> Tuple[float, float, float, float]:
     """
-    Ajusta una hora para garantizar el desayuno/almuerzo no pago de Unión 1.
+    Ajusta una hora para garantizar desayuno/almuerzo no pago en
+    Aplicación 1/2 y Unión 1/2.
     Retorna (dead_sec, meal_sec, other_sec, prod_sec).
 
     La regla evita duplicar la parada 105: si ya hay 105 registrada, se toma
@@ -3519,7 +3954,7 @@ def _crimpado_rows_for_day(
             res_day = res_day[res_day["Nombre"].astype(str).str.strip().eq(op)].copy()
 
         if not res_day.empty:
-            fecha = pd.to_datetime(res_day["Fecha"], errors="coerce", dayfirst=True).dt.normalize()
+            fecha = _parse_excel_date_series_app(res_day["Fecha"])
             if "Hora" in res_day.columns:
                 sec = res_day["Hora"].apply(_timeobj_to_seconds).fillna(0)
                 dt_res = fecha + pd.to_timedelta(sec, unit="s")
@@ -3567,7 +4002,19 @@ def _crimpado_rows_for_day(
             dead_sec, meal_sec, other_sec, hh, machine=machine, machine_id=machine_id
         )
 
-        if _crimpado_is_union1(machine, machine_id):
+        if _crimpado_is_aplicacion1(machine, machine_id):
+            # ✅ APLICACIÓN 1 (exportación): misma regla de TP que Unión.
+            tp_h = _crimpado_aplicacion1_tp_fijo_h(hh)
+            tx_h = max(0.0, other_sec / 3600.0)
+            tx_h = min(tx_h, tp_h)
+            tw_h = max(0.0, tp_h - tx_h)
+        elif _crimpado_is_aplicacion2(machine, machine_id):
+            # ✅ APLICACIÓN 2 (exportación): misma regla de TP que Unión.
+            tp_h = _crimpado_aplicacion2_tp_fijo_h(hh)
+            tx_h = max(0.0, other_sec / 3600.0)
+            tx_h = min(tx_h, tp_h)
+            tw_h = max(0.0, tp_h - tx_h)
+        elif _crimpado_is_union1(machine, machine_id):
             # ✅ UNIÓN 1 (exportación): misma regla de TP que Unión 2, función propia.
             tp_h = _crimpado_union1_tp_fijo_h(hh)
             tx_h = max(0.0, other_sec / 3600.0)
@@ -3581,7 +4028,7 @@ def _crimpado_rows_for_day(
             tx_h = min(tx_h, tp_h)
             tw_h = max(0.0, tp_h - tx_h)
         else:
-            # En crimpado la parada 105 no se mete a TX; reduce el tiempo pagado.
+            # Fallback histórico: la parada 105 no se mete a TX; reduce TP.
             tp_h = max(0.0, (3600.0 - meal_sec) / 3600.0)
             tx_h = max(0.0, other_sec / 3600.0)
             tw_h = max(0.0, tp_h - tx_h)
@@ -3589,7 +4036,14 @@ def _crimpado_rows_for_day(
         # TC = tiempo de ciclo nominal por terminal desde RESUMEN_TIEMPOS.
         # La hoja trae Promedio (segundos); se convierte a horas decimales (h/uni).
         # Si hay varias terminales en la misma hora, se usa promedio ponderado por Pulsos.
-        if _crimpado_is_union1(machine, machine_id):
+        if _crimpado_is_aplicacion_dynamic(machine, machine_id):
+            # ✅ APLICACIÓN 1/2 (exportación): mismo TC dinámico que dashboard.
+            tc_h_uni = _crimpado_tc_hora_appmix(
+                hour_df,
+                tc_lookup=tc_lookup,
+                tc_default_h_uni=tc_default_h_uni,
+            )
+        elif _crimpado_is_union1(machine, machine_id):
             # ✅ UNIÓN 1 (exportación): TC de la hora = duración total ÷ planeado.
             tc_h_uni = _crimpado_tc_hora_union1(
                 hour_df,
@@ -3679,7 +4133,27 @@ def get_crimpado_export_day_exports(
     # Unión 1 y Unión 2 usan la misma lógica, cada una con su función y modo
     # propios, para que el Excel descargado coincida con el dashboard.
     try:
-        if _crimpado_is_union1(m, mid):
+        if _crimpado_is_aplicacion_dynamic(m, mid):
+            # ✅ APLICACIÓN 1/2 (exportación): estándar dinámico por
+            # Terminal + Aplicacion Modo 1 + Modo 2 + Modo 3.
+            mix_tc_lookup, mix_tc_default_h_uni = _crimpado_build_appmix_lookup(
+                res_df=res_df,
+                machine=m,
+                machine_id=mid,
+                operator=op,
+                modo=str(
+                    getattr(
+                        config,
+                        "APLICACION2_TC_MODO" if _crimpado_is_aplicacion2(m, mid) else "APLICACION1_TC_MODO",
+                        "meta",
+                    ) or "meta"
+                ),
+            )
+            if mix_tc_lookup:
+                tc_lookup.update(mix_tc_lookup)
+            if (tc_default_h_uni is None or float(tc_default_h_uni or 0.0) <= 0.0) and mix_tc_default_h_uni:
+                tc_default_h_uni = float(mix_tc_default_h_uni)
+        elif _crimpado_is_union1(m, mid):
             # ✅ UNIÓN 1 (exportación): estándar por referencia aislado.
             # Usa META por defecto (config.UNION1_TC_MODO), igual que en vivo.
             mix_tc_lookup, mix_tc_default_h_uni = _crimpado_build_mix_lookup_union1(

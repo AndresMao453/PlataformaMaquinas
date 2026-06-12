@@ -9,9 +9,9 @@ SECRET_KEY = "dev-secret-key-change-me"
 # =========================
 # Google Sheets - Aplicación / Unión
 # =========================
-GSHEET_ID = "16WX3jqnbmYCglR2jH_1uHyWH-DKFuh80uEynKVghnyE"
-GSHEET_GID_APLICACION = 1418050425
-GSHEET_GID_UNION = 369782990
+GSHEET_ID = "1xCx3fegK_Xm4dXQnCvFIBDh0AHsKr6yIjdsSqG-YdpE"
+GSHEET_GID_APLICACION = 1283368656
+GSHEET_GID_UNION = 1848654694
 GSHEET_TTL_S = 600
 APP_ANALYSIS_TTL_S = 600
 APP_CACHE_MAX_ITEMS = 120
