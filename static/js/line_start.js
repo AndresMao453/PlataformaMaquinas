@@ -2135,7 +2135,7 @@ const __PROD_MOTIVATION_WORDS = [
 const PROD_MOTIVATION_EVERY_MS = 5 * 60 * 1000;
 
 // Tiempo visible de la hora
-const PROD_MOTIVATION_WORD_MS = 8000;
+const PROD_MOTIVATION_WORD_MS = 1000;
 
 function ensureProdMotivationOverlay(hostEl){
   if(!hostEl) return null;
