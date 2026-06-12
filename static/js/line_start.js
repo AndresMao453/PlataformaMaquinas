@@ -2127,24 +2127,15 @@ function _prodMotivationCurrentTimeText(){
   return `HORA: ${horaCo}`;
 }
 
-const PROD_MOTIVATION_PATRIA_IMG = "/static/img/firme_patria.png";
-
 const __PROD_MOTIVATION_WORDS = [
-  { text: "TÚ", cls: "prod-mot-blue" },
-  { text: "ERES", cls: "prod-mot-green" },
-  { text: "CAPAZ", cls: "prod-mot-purple" },
-  { text: "DE MEJORAR", cls: "prod-mot-orange" },
-  { text: "TU", cls: "prod-mot-cyan" },
-  { text: "RENDIMIENTO", cls: "prod-mot-indigo" },
-  { text: "ÁNIMO", cls: "prod-mot-red" },
-  { text: _prodMotivationCurrentTimeText, cls: "prod-mot-time", ms: 3500 },
+  { text: _prodMotivationCurrentTimeText, cls: "prod-mot-time", ms: 8000 },
 ];
 
-// Cada cuánto aparece el mensaje completo
-const PROD_MOTIVATION_EVERY_MS = 60000;
+// Cada cuánto aparece la hora: 5 minutos
+const PROD_MOTIVATION_EVERY_MS = 5 * 60 * 1000;
 
-// Velocidad entre palabra y palabra
-const PROD_MOTIVATION_WORD_MS = 900;
+// Tiempo visible de la hora
+const PROD_MOTIVATION_WORD_MS = 8000;
 
 function ensureProdMotivationOverlay(hostEl){
   if(!hostEl) return null;
@@ -2249,10 +2240,6 @@ function startProdMotivationOverlay(hostEl){
 
   if(__prodMotivationCycleTimer) return;
 
-  // Primer mensaje después de unos segundos
-  setTimeout(() => {
-    playProdMotivationOverlay(hostEl);
-  }, 3500);
 
   // Luego aparece cada cierto tiempo
   __prodMotivationCycleTimer = setInterval(() => {
@@ -2969,6 +2956,7 @@ function renderProdHour(result){
 
   title.style.display = "block";
   wrap.style.display = "block";
+  startProdMotivationOverlay(wrap);
 
   // ✅ Modo TV: si los datos tardan en cargar, el scroll se dispara DESPUÉS
   // de que Productividad por hora ya quedó renderizada.

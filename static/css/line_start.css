@@ -4800,3 +4800,23 @@ img{
     font-size: 14px !important;
   }
 }
+
+
+.agua-video{
+  width: min(420px, 92%);
+  height: auto;
+  border-radius: 28px;
+  object-fit: contain;
+  background: transparent;
+  filter: drop-shadow(0 30px 40px rgba(0,0,0,.32));
+  animation: aguaFloat 2.2s ease-in-out infinite;
+}
+
+@keyframes aguaFloat{
+  0%, 100%{
+    transform: translateY(0) scale(1);
+  }
+  50%{
+    transform: translateY(-8px) scale(1.02);
+  }
+}

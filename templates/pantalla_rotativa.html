@@ -4,14 +4,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pantalla rotativa FASECOL</title>
+
   <style>
+    :root{
+      --bg:#0f172a;
+      --text:#0f172a;
+      --white:#ffffff;
+      --blue:#1e66ff;
+      --green:#22c55e;
+      --cyan:#0ea5e9;
+    }
+
     html, body{
       margin:0;
       padding:0;
       width:100%;
       height:100%;
       overflow:hidden;
-      background:#0f172a;
+      background:var(--bg);
       font-family:Arial, Helvetica, sans-serif;
     }
 
@@ -49,12 +59,258 @@
       animation:pulse 1.5s ease-in-out infinite;
     }
 
+
+    /* =========================
+       Overlay base para pausas / agua
+       ========================= */
+    .wellness-overlay{
+      position:fixed;
+      inset:0;
+      z-index:20000;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      color:#fff;
+      text-align:center;
+      padding:36px;
+      backdrop-filter:blur(8px);
+    }
+
+    .wellness-overlay.show{
+      display:flex;
+    }
+
+    .wellness-card{
+      width:min(1060px, 92vw);
+      min-height:540px;
+      border-radius:46px;
+      border:1px solid rgba(255,255,255,.22);
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.22), rgba(255,255,255,.08));
+      box-shadow:
+        0 35px 110px rgba(0,0,0,.38),
+        inset 0 1px 0 rgba(255,255,255,.24);
+      display:grid;
+      grid-template-columns:1.03fr .97fr;
+      gap:26px;
+      align-items:center;
+      padding:46px;
+      overflow:hidden;
+      position:relative;
+    }
+
+    .wellness-card::before{
+      content:"";
+      position:absolute;
+      inset:-40%;
+      background:conic-gradient(from 120deg, transparent, rgba(255,255,255,.11), transparent 34%);
+      animation:shine 5.5s linear infinite;
+      pointer-events:none;
+    }
+
+    .wellness-content,
+    .wellness-figure{
+      position:relative;
+      z-index:1;
+    }
+
+    .wellness-kicker{
+      display:inline-flex;
+      align-items:center;
+      gap:10px;
+      padding:10px 16px;
+      border-radius:999px;
+      font-weight:950;
+      text-transform:uppercase;
+      letter-spacing:.12em;
+      font-size:16px;
+      border:1px solid rgba(255,255,255,.26);
+    }
+
+    .wellness-title{
+      margin:22px 0 10px;
+      font-size:78px;
+      line-height:.92;
+      font-weight:950;
+      letter-spacing:-.06em;
+      text-shadow:0 14px 30px rgba(0,0,0,.24);
+    }
+
+    .wellness-subtitle{
+      margin:0 auto;
+      max-width:540px;
+      font-size:26px;
+      line-height:1.25;
+      font-weight:800;
+      color:rgba(255,255,255,.88);
+    }
+
+    .wellness-time{
+      margin-top:26px;
+      display:inline-flex;
+      align-items:center;
+      gap:12px;
+      padding:13px 18px;
+      border-radius:999px;
+      background:rgba(255,255,255,.14);
+      color:#fff;
+      font-weight:950;
+      font-size:20px;
+      border:1px solid rgba(255,255,255,.18);
+    }
+
+    .wellness-figure{
+      display:grid;
+      place-items:center;
+      min-height:390px;
+    }
+
+    .wellness-video{
+      width:min(430px, 92%);
+      max-height:420px;
+      object-fit:contain;
+      border-radius:30px;
+      background:rgba(255,255,255,.08);
+      box-shadow:
+        0 30px 55px rgba(0,0,0,.28),
+        inset 0 1px 0 rgba(255,255,255,.16);
+      filter:drop-shadow(0 25px 34px rgba(0,0,0,.26));
+      animation:videoFloat 2.2s ease-in-out infinite;
+    }
+
+    .video-frame{
+      width:100%;
+      display:grid;
+      place-items:center;
+      position:relative;
+    }
+
+    .video-frame::before{
+      content:"";
+      position:absolute;
+      width:74%;
+      height:74%;
+      border-radius:999px;
+      background:rgba(255,255,255,.10);
+      filter:blur(18px);
+      z-index:-1;
+    }
+
+    .video-fallback{
+      display:none;
+      margin-top:14px;
+      font-size:14px;
+      font-weight:800;
+      color:rgba(255,255,255,.72);
+    }
+
+    /* =========================
+       Pausas Activas 11:00 - 11:05
+       ========================= */
+    #pausasOverlay{
+      background:
+        radial-gradient(circle at 20% 20%, rgba(34,197,94,.28), transparent 34%),
+        radial-gradient(circle at 80% 28%, rgba(59,130,246,.24), transparent 35%),
+        rgba(15,23,42,.84);
+    }
+
+    #pausasOverlay .wellness-kicker{
+      background:rgba(34,197,94,.20);
+      color:#bbf7d0;
+    }
+
+    #pausasOverlay .wellness-video{
+      border:2px solid rgba(187,247,208,.25);
+    }
+
+    /* =========================
+       Toma Agua 11:05 - 11:07
+       ========================= */
+    #aguaOverlay{
+      z-index:21000;
+      background:
+        radial-gradient(circle at 16% 16%, rgba(14,165,233,.28), transparent 35%),
+        radial-gradient(circle at 82% 25%, rgba(59,130,246,.28), transparent 38%),
+        radial-gradient(circle at 54% 92%, rgba(34,197,94,.16), transparent 38%),
+        rgba(15,23,42,.86);
+    }
+
+    #aguaOverlay .wellness-kicker{
+      background:rgba(14,165,233,.20);
+      color:#bae6fd;
+    }
+
+    #aguaOverlay .wellness-video{
+      border:2px solid rgba(186,230,253,.25);
+    }
+
     @keyframes pulse{
       0%, 100%{ transform:scale(1); opacity:1; }
       50%{ transform:scale(.78); opacity:.65; }
     }
+
+    @keyframes shine{
+      to{ transform:rotate(360deg); }
+    }
+
+    @keyframes videoFloat{
+      0%, 100%{
+        transform:translateY(0) scale(1);
+      }
+      50%{
+        transform:translateY(-8px) scale(1.02);
+      }
+    }
+
+    @media (max-width: 820px){
+      .wellness-card{
+        grid-template-columns:1fr;
+        min-height:auto;
+        padding:30px;
+      }
+
+      .wellness-title{
+        font-size:54px;
+      }
+
+      .wellness-subtitle{
+        font-size:20px;
+      }
+
+      .wellness-figure{
+        min-height:290px;
+      }
+
+      .wellness-video{
+        width:min(340px, 92%);
+        max-height:320px;
+      }
+
+      .tv-clock-toast{
+        left:50%;
+        right:auto;
+        top:50%;
+        width:min(520px, calc(100vw - 28px));
+        justify-content:center;
+        padding:18px 22px;
+      }
+
+      .clock-time{
+        font-size:44px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce){
+      *,
+      *::before,
+      *::after{
+        animation:none !important;
+        transition:none !important;
+      }
+    }
   </style>
 </head>
+
 <body>
   <iframe id="frameDashboard" title="Dashboard rotativo FASECOL"></iframe>
 
@@ -63,10 +319,90 @@
     <span id="vistaActual">Cargando…</span>
   </div>
 
+
+  <!-- =========================
+       PAUSAS ACTIVAS
+       Video requerido:
+       static/videos/pausas_activas.mp4
+       ========================= -->
+  <div class="wellness-overlay" id="pausasOverlay" aria-live="polite">
+    <div class="wellness-card">
+      <div class="wellness-content">
+        <div class="wellness-kicker">⏱ 11:00 a 11:05</div>
+        <h1 class="wellness-title">Pausas Activas</h1>
+        <p class="wellness-subtitle">
+          Respira, estira los brazos y mueve el cuerpo por unos minutos.
+        </p>
+        <div class="wellness-time">
+          Hora actual: <span id="pausasClock">--:--</span>
+        </div>
+      </div>
+
+      <div class="wellness-figure">
+        <div class="video-frame">
+          <video
+            class="wellness-video"
+            id="pausasVideo"
+            autoplay
+            loop
+            muted
+            playsinline
+            preload="auto"
+          >
+            <source src="{{ url_for('static', filename='videos/pausas_activas.mp4') }}" type="video/mp4">
+          </video>
+          <div class="video-fallback">
+            No se encontró el video: static/videos/pausas_activas.mp4
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================
+       TOMAR AGUA
+       Video requerido:
+       static/videos/tomar_agua.mp4
+       ========================= -->
+  <div class="wellness-overlay" id="aguaOverlay" aria-live="polite">
+    <div class="wellness-card">
+      <div class="wellness-content">
+        <div class="wellness-kicker">💧 11:05 a 11:07</div>
+        <h1 class="wellness-title">Toma agua</h1>
+        <p class="wellness-subtitle">
+          Hidrátate un momento, toma agua y recarga energía para continuar la jornada.
+        </p>
+        <div class="wellness-time">
+          Hora actual: <span id="aguaClock">--:--</span>
+        </div>
+      </div>
+
+      <div class="wellness-figure">
+        <div class="video-frame">
+          <video
+            class="wellness-video"
+            id="aguaVideo"
+            autoplay
+            loop
+            muted
+            playsinline
+            preload="auto"
+          >
+            <source src="{{ url_for('static', filename='videos/tomar_agua.mp4') }}" type="video/mp4">
+          </video>
+          <div class="video-fallback">
+            No se encontró el video: static/videos/tomar_agua.mp4
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Tiempo que permanece cada pantalla antes de pasar a la siguiente.
-    // 90000 = 90 segundos. Puedes subirlo o bajarlo según el TV.
+    // 90000 = 90 segundos.
     const TIEMPO_CAMBIO_MS = 90000;
+
 
     const vistas = [
       {
@@ -92,18 +428,163 @@
     ];
 
     let indice = 0;
+
     const frame = document.getElementById("frameDashboard");
     const label = document.getElementById("vistaActual");
 
+
+    const pausasOverlay = document.getElementById("pausasOverlay");
+    const pausasClock = document.getElementById("pausasClock");
+    const pausasVideo = document.getElementById("pausasVideo");
+
+    const aguaOverlay = document.getElementById("aguaOverlay");
+    const aguaClock = document.getElementById("aguaClock");
+    const aguaVideo = document.getElementById("aguaVideo");
+
+    // =========================
+    // Modo prueba por URL
+    // =========================
+    // Ejemplos:
+    //   /pantalla_rotativa?test_pausas=1
+    //   /pantalla_rotativa?test_agua=1
+    //   /pantalla_rotativa?test_hora=11:02:00
+    //   /pantalla_rotativa?test_hora=11:06:00
+    const TEST_PARAMS = new URLSearchParams(window.location.search);
+    const TEST_PAUSAS = TEST_PARAMS.get("test_pausas") === "1";
+    const TEST_AGUA = TEST_PARAMS.get("test_agua") === "1";
+    const TEST_HORA_RAW = String(TEST_PARAMS.get("test_hora") || "").trim();
+
+    const bogotaFormatter = new Intl.DateTimeFormat("es-CO", {
+      timeZone: "America/Bogota",
+      hourCycle: "h23",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    });
+
+    function _timePartsFromNumbers(hour, minute, second){
+      const h = Math.max(0, Math.min(23, Number(hour) || 0));
+      const m = Math.max(0, Math.min(59, Number(minute) || 0));
+      const ss = Math.max(0, Math.min(59, Number(second) || 0));
+
+      return {
+        hour: h,
+        minute: m,
+        second: ss,
+        hh: String(h).padStart(2, "0"),
+        mm: String(m).padStart(2, "0"),
+        ss: String(ss).padStart(2, "0")
+      };
+    }
+
+    function _getForcedTestTimeParts(){
+      if(!TEST_HORA_RAW) return null;
+
+      const m = TEST_HORA_RAW.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+      if(!m) return null;
+
+      return _timePartsFromNumbers(m[1], m[2], m[3] || 0);
+    }
+
+    function getBogotaTimeParts(){
+      const forced = _getForcedTestTimeParts();
+      if(forced) return forced;
+
+      const parts = bogotaFormatter.formatToParts(new Date());
+      const obj = {};
+
+      parts.forEach(p => {
+        obj[p.type] = p.value;
+      });
+
+      return _timePartsFromNumbers(obj.hour || 0, obj.minute || 0, obj.second || 0);
+    }
+
     function cambiarVista(){
       const vista = vistas[indice];
+
       label.textContent = vista.nombre;
       frame.src = vista.url + "&_tv_ts=" + Date.now();
+
       indice = (indice + 1) % vistas.length;
     }
 
+    function _playVideo(video){
+      if(!video) return;
+
+      try{
+        video.muted = true;
+        video.loop = true;
+        video.play().catch(() => {});
+      }catch(e){}
+    }
+
+    function _pauseVideo(video){
+      if(!video) return;
+
+      try{
+        video.pause();
+        video.currentTime = 0;
+      }catch(e){}
+    }
+
+    function _showOverlay(overlay, video, show){
+      if(!overlay) return;
+
+      overlay.classList.toggle("show", !!show);
+
+      if(show){
+        _playVideo(video);
+      }else{
+        _pauseVideo(video);
+      }
+    }
+
+    function actualizarRelojYAlertas(){
+      const t = getBogotaTimeParts();
+      const hhmm = `${t.hh}:${t.mm}`;
+
+      if(pausasClock) pausasClock.textContent = hhmm;
+      if(aguaClock) aguaClock.textContent = hhmm;
+
+      // Tomar agua tiene prioridad sobre Pausas Activas.
+      // Visible desde 11:05:00 hasta 11:06:59.
+      const tomaAgua =
+        TEST_AGUA ||
+        ((t.hour === 11) && (t.minute >= 5) && (t.minute < 7));
+
+      // Pausas Activas: visible desde 11:00:00 hasta 11:04:59.
+      const pausaActiva =
+        !tomaAgua &&
+        (TEST_PAUSAS || ((t.hour === 11) && (t.minute >= 0) && (t.minute < 5)));
+
+      // Hora: aparece como aviso grande sobre Productividad por hora
+      // cada 5 minutos, solo unos segundos para no tapar el dashboard.
+
+      _showOverlay(aguaOverlay, aguaVideo, tomaAgua);
+      _showOverlay(pausasOverlay, pausasVideo, pausaActiva);
+    }
+
+    function _setupVideoFallback(video){
+      if(!video) return;
+
+      video.addEventListener("error", () => {
+        const box = video.closest(".video-frame");
+        const fallback = box ? box.querySelector(".video-fallback") : null;
+        if(fallback){
+          fallback.style.display = "block";
+        }
+      });
+    }
+
+    _setupVideoFallback(pausasVideo);
+    _setupVideoFallback(aguaVideo);
+
     cambiarVista();
     setInterval(cambiarVista, TIEMPO_CAMBIO_MS);
+
+    actualizarRelojYAlertas();
+    setInterval(actualizarRelojYAlertas, 1000);
 
     window.addEventListener("message", (ev) => {
       if(ev?.data?.type === "fasecol-tv-ready"){
