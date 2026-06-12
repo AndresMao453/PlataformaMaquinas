@@ -971,6 +971,71 @@ def line_start(line_key: str):
     # ✅ GET
     # =========================
     if request.method == "GET":
+        # =====================================================
+        # ✅ MODO TV / PANTALLA ROTATIVA
+        # =====================================================
+        # La pantalla rotativa entra por URL directa, por ejemplo:
+        #   /line/corte?auto=tv&machine=THB
+        #   /line/aplicacion?auto=tv&subcat=aplicacion&machine_id=1
+        #   /line/aplicacion?auto=tv&subcat=aplicacion&machine_id=2
+        #   /line/aplicacion?auto=tv&subcat=union&machine_id=1
+        #   /line/aplicacion?auto=tv&subcat=union&machine_id=2
+        #
+        # Antes el GET ignoraba esos parámetros y siempre abría stage="upload".
+        # En modo TV eso podía dejar la vista en selección y no llegaba a
+        # Productividad por hora. Aquí solo se salta esa selección manual para TV.
+        auto_raw = (request.args.get("auto") or request.args.get("tv") or "").strip().lower()
+        is_tv_auto = auto_raw in ("tv", "1", "true", "yes", "si", "sí")
+
+        if is_tv_auto:
+            # -------------------------
+            # CORTE TV: THB / HP
+            # -------------------------
+            if line_key == "corte":
+                tv_machine = (request.args.get("machine") or "THB").strip().upper()
+                if tv_machine not in ("THB", "HP"):
+                    tv_machine = "THB"
+
+                tv_filename = GSHEET_HP_TOKEN if tv_machine == "HP" else GSHEET_THB_TOKEN
+
+                return render_template(
+                    "line_start.html",
+                    line_key=line_key,
+                    line_title=ui["title"],
+                    line_desc=ui["desc"],
+                    stage="select_sheet",
+                    filename=tv_filename,
+                    machine=tv_machine,
+                    subcat="",
+                    machine_id="",
+                )
+
+            # -------------------------
+            # APLICACIÓN / UNIÓN TV
+            # -------------------------
+            if line_key == "aplicacion":
+                tv_subcat = (request.args.get("subcat") or "aplicacion").strip().lower()
+                if tv_subcat not in ("aplicacion", "union"):
+                    tv_subcat = "aplicacion"
+
+                tv_machine_id = (request.args.get("machine_id") or "1").strip()
+                if tv_machine_id not in ("1", "2"):
+                    tv_machine_id = "1"
+
+                tv_machine = "APLICACION" if tv_subcat == "aplicacion" else "UNION"
+
+                return render_template(
+                    "line_start.html",
+                    line_key=line_key,
+                    line_title=ui["title"],
+                    line_desc=ui["desc"],
+                    stage="select_sheet",
+                    filename=GSHEET_APP_TOKEN,
+                    machine=tv_machine,
+                    subcat=tv_subcat,
+                    machine_id=tv_machine_id,
+                )
+
         # ✅ Ciclo/Aplicadores: entra directo (sin upload)
         if line_key == "ciclo_aplicadores":
             return render_template(
