@@ -146,7 +146,8 @@ def _pick_gsheet_params(machine: str, machine_id: str) -> Tuple[str, int, int, i
 
     Mapeo:
     - APLICACION M1: config.GSHEET_ID  + GSHEET_GID_APLICACION  / GSHEET_GID_UNION
-    - APLICACION M2: config.GSHEET_ID2 + GSHEET_GID_APLICACION2 / GSHEET_GID_UNION2
+    - APLICACION M2: config.GSHEET_ID5 + GSHEET_GID_APLICACION5 / GSHEET_GID_UNION5
+      (fallback compat: GSHEET_ID2 / GSHEET_GID_APLICACION2 / GSHEET_GID_UNION2)
     - UNION M1:      config.GSHEET_ID3 + GSHEET_GID_APLICACION3 / GSHEET_GID_UNION3
     - UNION M2:      config.GSHEET_ID4 + GSHEET_GID_APLICACION4 / GSHEET_GID_UNION4
     """
@@ -174,19 +175,29 @@ def _pick_gsheet_params(machine: str, machine_id: str) -> Tuple[str, int, int, i
     )
 
     # Aplicación - Máquina 2
+    # Usa el bloque independiente APLICACIÓN — Máquina 2 del config.py
+    # (GSHEET_ID5 / GSHEET_GID_APLICACION5 / GSHEET_GID_UNION5).
+    # Se dejan los valores anteriores como fallback de compatibilidad para no romper
+    # configuraciones existentes.
     if m == "APLICACION" and mid == "2":
         sheet_id = str(
-            getattr(config, "GSHEET_ID2", sheet_id)
+            getattr(config, "GSHEET_ID5", None)
+            or getattr(config, "APLICACION_SHEET_ID5", None)
+            or getattr(config, "GSHEET_ID2", sheet_id)
             or getattr(config, "APLICACION_SHEET_ID2", sheet_id)
             or sheet_id
         ).strip()
         gid_res = int(
-            getattr(config, "GSHEET_GID_APLICACION2", gid_res)
+            getattr(config, "GSHEET_GID_APLICACION5", 0)
+            or getattr(config, "APLICACION_GID_APLICACION5", 0)
+            or getattr(config, "GSHEET_GID_APLICACION2", gid_res)
             or getattr(config, "APLICACION_GID_APLICACION2", gid_res)
             or gid_res
         )
         gid_par = int(
-            getattr(config, "GSHEET_GID_UNION2", gid_par)
+            getattr(config, "GSHEET_GID_UNION5", 0)
+            or getattr(config, "APLICACION_GID_UNION5", 0)
+            or getattr(config, "GSHEET_GID_UNION2", gid_par)
             or getattr(config, "APLICACION_GID_UNION2", gid_par)
             or gid_par
         )

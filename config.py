@@ -40,6 +40,13 @@ GSHEET_ID4 = "1-He6-tg5l5N1ayf4bDQz1aHAgMcmm12bOIjbXGrJ05I"
 GSHEET_GID_APLICACION4 = 1876028636
 GSHEET_GID_UNION4 = 536757828
 
+# =========================
+# APLICACIÓN — Máquina 2
+# =========================
+GSHEET_ID5 = "1i_Vxjnzpg216S77AtSOclyfe9tIoM_GITqwonOjErgM"
+GSHEET_GID_APLICACION5 = 800349176
+GSHEET_GID_UNION5 = 847861322
+
 # ===== Aliases compat (aplicacion_excel.py viejo) =====
 APLICACION_SHEET_ID = GSHEET_ID
 APLICACION_GID_APLICACION = GSHEET_GID_APLICACION
@@ -92,6 +99,8 @@ CRIMPADO_MIX_MIN_PULSOS = 50
 CRIMPADO_MIX_TC_MIN_S = 3.0
 CRIMPADO_MIX_TC_MAX_S = 180.0
 
+
+
 # =========================
 # Unión 2 — Modo del TC por hora
 # =========================
@@ -101,3 +110,4 @@ CRIMPADO_MIX_TC_MAX_S = 180.0
 # La lógica del TC por hora (duración ÷ planeado, por referencia, sin mezclar)
 # NO cambia con esto; solo cambia el estándar de comparación de cada referencia.
 UNION2_TC_MODO = "meta"
+
