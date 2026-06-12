@@ -2132,7 +2132,7 @@ const __PROD_MOTIVATION_WORDS = [
 ];
 
 // Cada cuánto aparece la hora: 5 minutos
-const PROD_MOTIVATION_EVERY_MS = 10000;
+const PROD_MOTIVATION_EVERY_MS = 5 * 60 * 1000;
 
 // Tiempo visible de la hora
 const PROD_MOTIVATION_WORD_MS = 1000;
