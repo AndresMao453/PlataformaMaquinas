@@ -59,9 +59,9 @@ APLICACION_SHEET_TTL_S = GSHEET_TTL_S
 # =========================
 HP_SHEET_ID = "1RcogFd-F4tq7y5d587hsHIE6GsJQipP5HrdxFnNbhcs"
 
-HP_GID_VERIF = 1379580514   # "Verificacion de Medidas"
-HP_GID_PARADAS = 1455660642  # "Paradas"
-HP_GID_CORTE = 770923758    # "Corte"
+HP_GID_VERIF = 1796517127   # "Verificacion de Medidas"
+HP_GID_PARADAS = 1636294929  # "Paradas"
+HP_GID_CORTE = 502613494    # "Corte"
 
 
 # =========================
